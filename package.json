@@ -2,6 +2,7 @@
   "name": "taigent",
   "version": "0.1.0",
   "description": "Headless CLI that applies declarative Taiga manifests (plan -> review -> apply).",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sondoquang/taigent.git"
