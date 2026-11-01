@@ -10,6 +10,9 @@
 // - Validation errors are 400 with DRF-style `{ field: [message] }` bodies. The fake is STRICTER than
 //   Taiga on one point: unknown payload fields are rejected (Taiga silently ignores them), so typos
 //   such as `project_id` instead of `project` fail loudly in tests.
+// - PATCH implements OCC like taiga-back: `version` is required, and a stale version is refused with
+//   400 {"version": "..."} only when a field in the payload was modified since that version.
+// - Epic ↔ story links are unique per (epic, user_story); a duplicate POST is a 400.
 
 import { once } from 'node:events';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
