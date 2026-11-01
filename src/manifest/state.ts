@@ -3,6 +3,7 @@
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { isFileNotFound } from '../guards.ts';
 
 export const STATE_FILE = 'state.json';
 
@@ -26,7 +27,7 @@ export async function readState(path: string, project: StateFile['project']): Pr
   try {
     text = await readFile(path, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { project, items: {} };
+    if (isFileNotFound(error)) return { project, items: {} };
     throw error;
   }
   // Written only by writeState; a hand-broken file surfaces as a JSON parse error.

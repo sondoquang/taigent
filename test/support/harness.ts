@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { isFileNotFound } from '../../src/guards.ts';
 import type { StateFile } from '../../src/manifest/state.ts';
 import { startFakeTaiga, type FakeTaiga } from './fake-taiga.ts';
 
@@ -99,7 +100,7 @@ export async function startHarness(t: TestContext): Promise<Harness> {
       try {
         return JSON.parse(await readFile(statePath(slug), 'utf8')) as StateFile;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        if (isFileNotFound(error)) return undefined;
         throw error;
       }
     },

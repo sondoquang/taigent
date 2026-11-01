@@ -1,7 +1,9 @@
 // CLI: argument parsing, wiring of Manifest → Taiga client → Planner → Executor, output and exit codes.
 
+import { relative } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ExitCode } from './exit-codes.ts';
+import { errorMessage } from './guards.ts';
 import { executePlan, type ApplyReport } from './executor.ts';
 import { loadBacklog } from './manifest/backlog.ts';
 import { ManifestError } from './manifest/errors.ts';
@@ -57,7 +59,7 @@ function parseOptions(argv: string[]): Options | 'help' {
       },
     });
   } catch (error) {
-    throw new UsageError((error as Error).message);
+    throw new UsageError(errorMessage(error));
   }
   const { values, positionals } = parsed;
   if (values.help) return 'help';
@@ -145,9 +147,13 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       process.stderr.write(json ? '' : `${USAGE}\n\n`);
       return fail(ExitCode.Usage, 'usage', error, json);
     }
-    if (error instanceof ManifestError) return fail(ExitCode.Validation, 'validation', error, json, { issues: error.issues });
+    if (error instanceof ManifestError) {
+      // Report manifest files relative to the working directory, as the user wrote them.
+      const relativeError = new ManifestError(error.issues.map((issue) => ({ ...issue, file: relative(cwd, issue.file) })));
+      return fail(ExitCode.Validation, 'validation', relativeError, json, { issues: relativeError.issues });
+    }
     if (error instanceof TaigaError) return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
-    process.stderr.write(`taigent: internal error: ${(error as Error).stack ?? String(error)}\n`);
+    process.stderr.write(`taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);
     return ExitCode.Internal;
   }
 }

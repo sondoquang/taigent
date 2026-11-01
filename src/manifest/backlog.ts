@@ -2,7 +2,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { parse } from 'yaml';
-import { isRecord } from '../guards.ts';
+import { errorMessage, isFileNotFound, isRecord } from '../guards.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
 
 export const BACKLOG_FILE = 'backlog.yaml';
@@ -29,7 +29,7 @@ export async function loadBacklog(path: string): Promise<Backlog> {
   try {
     text = await readFile(path, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (!isFileNotFound(error)) throw error;
     throw new ManifestError([{ file: path, path: '', rule: 'file-exists', message: 'manifest file not found' }]);
   }
 
@@ -37,7 +37,7 @@ export async function loadBacklog(path: string): Promise<Backlog> {
   try {
     doc = parse(text) ?? {};
   } catch (error) {
-    throw new ManifestError([{ file: path, path: '', rule: 'yaml-syntax', message: (error as Error).message }]);
+    throw new ManifestError([{ file: path, path: '', rule: 'yaml-syntax', message: errorMessage(error) }]);
   }
 
   const issues: ManifestIssue[] = [];

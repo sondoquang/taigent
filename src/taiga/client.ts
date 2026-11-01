@@ -1,7 +1,7 @@
 // Taiga client: owns all HTTP to the Taiga REST API (https://docs.taiga.io/api.html).
 // Knows Taiga endpoints only, never manifests. Every request disables pagination.
 
-import { isRecord } from '../guards.ts';
+import { errorMessage, isRecord } from '../guards.ts';
 
 /** Thrown for any Taiga/network failure. Maps to ExitCode.Taiga. Never contains credentials. */
 export class TaigaError extends Error {
@@ -139,8 +139,9 @@ export class TaigaClient {
         body: options.body === undefined ? undefined : JSON.stringify(options.body),
       });
     } catch (error) {
-      const cause = (error as Error & { cause?: Error }).cause;
-      throw new TaigaError(`cannot reach Taiga at ${this.apiUrl}: ${cause?.message ?? (error as Error).message}`);
+      // fetch() reports the real reason (ECONNREFUSED, DNS failure, ...) as the error's cause.
+      const reason = error instanceof Error && error.cause !== undefined ? error.cause : error;
+      throw new TaigaError(`cannot reach Taiga at ${this.apiUrl}: ${errorMessage(reason)}`);
     }
 
     const text = await response.text();

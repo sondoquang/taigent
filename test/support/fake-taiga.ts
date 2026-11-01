@@ -65,6 +65,8 @@ export interface InterceptRule {
   status: number;
   body?: unknown;
   headers?: Record<string, string>;
+  /** How many matching requests to let through untouched before intercepting (default 0). */
+  after?: number;
   /** How many matching requests to intercept (default 1). */
   times?: number;
 }
@@ -285,6 +287,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     );
     if (index === -1) return undefined;
     const rule = intercepts[index]!;
+    if ((rule.after ?? 0) > 0) {
+      rule.after! -= 1;
+      return undefined;
+    }
     rule.times = (rule.times ?? 1) - 1;
     if (rule.times <= 0) intercepts.splice(index, 1);
     return rule;
