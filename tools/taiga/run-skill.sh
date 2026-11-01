@@ -61,7 +61,7 @@ request="$skill${1+ $*}"
 cr=$(printf '\r')
 
 if [ "$agent" = claude ]; then
-  set -- claude -p "/$request" --output-format "$format" --allowedTools
+  set -- claude -p "/$request" --output-format "$format" --permission-mode acceptEdits --allowedTools
 else
   set -- codex exec --sandbox workspace-write
   [ "$format" = json ] && set -- "$@" --json

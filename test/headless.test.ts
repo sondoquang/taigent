@@ -107,12 +107,15 @@ async function dryRun(shell: Shell, args: string[]): Promise<string[]> {
 for (const shell of SHELLS) {
   const skip = available(shell) ? false : `${shell.command} is not installed`;
 
-  test(`${shell.name}: claude runs the skill as a slash command with the allowlist and JSON output`, { skip }, async () => {
+  // acceptEdits: workspace edits pass, every other tool needs the allowlist (else denied in -p), whatever the
+  // user's default mode (e.g. `auto`, which would let unlisted commands run) says.
+  test(`${shell.name}: claude runs the skill as a slash command, edits allowed, other tools only from the allowlist`, { skip }, async () => {
     const command = await dryRun(shell, ['claude', 'taiga-plan-backlog', 'docs/specs/auth.md', 'for vigo-auth']);
 
     assert.deepEqual(command, [
       'claude', '-p', '/taiga-plan-backlog docs/specs/auth.md for vigo-auth',
       '--output-format', 'json',
+      '--permission-mode', 'acceptEdits',
       '--allowedTools', ...(await readAllowlist()),
     ]);
   });

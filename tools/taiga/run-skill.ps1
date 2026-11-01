@@ -52,7 +52,7 @@ $Rules = @(
 )
 
 if ($Agent -ceq 'claude') {
-  $Command = @('claude', '-p', "/$Request", '--output-format', $Format, '--allowedTools') + $Rules
+  $Command = @('claude', '-p', "/$Request", '--output-format', $Format, '--permission-mode', 'acceptEdits', '--allowedTools') + $Rules
 }
 else {
   $Tools = @($Rules | Where-Object { $_.StartsWith('mcp__taiga__') } | ForEach-Object { "'$($_.Substring('mcp__taiga__'.Length))'" }) -join ','

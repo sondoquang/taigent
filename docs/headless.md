@@ -23,7 +23,7 @@ tools/taiga/run-skill.sh --output-format text codex taiga-plan-backlog docs/spec
 | `<claude\|codex>` | The agent CLI to start. Anything else: `unknown agent`, exit 2 |
 | `<skill>` | A directory of `.agents/skills/` holding a `SKILL.md`, e.g. `taiga-status-report`. Anything else: `unknown skill`, exit 2 |
 | `[skill arguments...]` | Joined with spaces after the skill name into the prompt |
-| `--output-format json` (default) | Claude `--output-format json` (one JSON result); Codex `--json` (JSON Lines events) |
+| `--output-format json` (default) | Claude `--output-format json` (Claude Code 2.1.302 prints a JSON array of the session's messages; the last, `"type": "result"`, holds `result`, `is_error` and `permission_denials`); Codex `--json` (JSON Lines events) |
 | `--output-format text` | Plain text: Claude `--output-format text`; Codex without `--json` |
 | `--dry-run` | Print the command as a JSON array of arguments instead of running it (no agent starts) |
 
@@ -36,7 +36,7 @@ Taiga MCP server and `taigent` with them.
 ## Commands built
 
 ```
-claude -p "/<skill> <args>" --output-format json --allowedTools <every rule of allowlist.txt>
+claude -p "/<skill> <args>" --output-format json --permission-mode acceptEdits --allowedTools <every rule of allowlist.txt>
 codex exec --sandbox workspace-write --json
   -c "mcp_servers.taiga.enabled_tools=['listProjects',…]"
   -c "mcp_servers.taiga.default_tools_approval_mode='approve'"
@@ -44,9 +44,12 @@ codex exec --sandbox workspace-write --json
 ```
 
 - **Claude Code** runs a skill when the prompt starts with `/<skill>`, including skills with
-  `disable-model-invocation: true`. In `-p` mode a tool call that neither `--allowedTools` nor the skill's
-  `allowed-tools` pre-approves is denied (listed in `permission_denials` of the JSON result); nothing waits for an
-  answer. Compound shell commands (`cd … &&`, `; echo $?`) are denied too, which is why the skills run each
+  `disable-model-invocation: true`. `--permission-mode acceptEdits` mirrors Codex's `workspace-write`: file
+  edits in the workspace pass, and any other tool call that neither `--allowedTools` nor the skill's
+  `allowed-tools` pre-approves is denied (listed in `permission_denials` of the JSON result); nothing waits for
+  an answer. The mode is pinned because a personal default can widen the run: with `"auto"` (the classifier
+  mode) an unlisted `npx taigent skills check` ran, with `acceptEdits` it was denied (Claude Code 2.1.302,
+  Windows). Compound shell commands (`cd … &&`, `; echo $?`) are denied too, which is why the skills run each
   `npx taigent …` command on its own.
 - A skill's `allowed-tools` apply only in the turn that invoked it. The wrapper starts new sessions only; to
   answer a skill's question in a follow-up turn (`claude -p --resume <session_id> "<answer>"`), repeat
