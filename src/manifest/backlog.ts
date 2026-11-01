@@ -1,10 +1,9 @@
 // Manifest module: loads and validates `taiga/<slug>/backlog.yaml`. No network I/O.
 
-import { readFile } from 'node:fs/promises';
-import { parse } from 'yaml';
-import { errorMessage, isFileNotFound, isRecord } from '../guards.ts';
+import { isRecord } from '../guards.ts';
 import { checkKey, checkTag } from './conventions.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
+import { readManifestYaml } from './yaml.ts';
 
 export const BACKLOG_FILE = 'backlog.yaml';
 
@@ -19,24 +18,16 @@ export interface Backlog {
   epics: EpicSpec[];
 }
 
+/** Every item key declared in the backlog (epics, stories and tasks). */
+export function backlogKeys(backlog: Backlog): Set<string> {
+  return new Set(backlog.epics.map((epic) => epic.key));
+}
+
 const EPIC_FIELDS: Record<string, true> = { key: true, subject: true, description: true, tags: true };
 
 /** Reads and validates the backlog manifest at `path`; throws ManifestError listing every issue. */
 export async function loadBacklog(path: string): Promise<Backlog> {
-  let text: string;
-  try {
-    text = await readFile(path, 'utf8');
-  } catch (error) {
-    if (!isFileNotFound(error)) throw error;
-    throw new ManifestError([{ file: path, path: '', rule: 'file-exists', message: 'manifest file not found' }]);
-  }
-
-  let doc: unknown;
-  try {
-    doc = parse(text) ?? {};
-  } catch (error) {
-    throw new ManifestError([{ file: path, path: '', rule: 'yaml-syntax', message: errorMessage(error) }]);
-  }
+  const doc = await readManifestYaml(path);
 
   const issues: ManifestIssue[] = [];
   const issue = (at: string, rule: string, message: string) => issues.push({ file: path, path: at, rule, message });

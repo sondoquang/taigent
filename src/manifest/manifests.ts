@@ -7,6 +7,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isFileNotFound } from '../guards.ts';
 import { BACKLOG_FILE, loadBacklog, type Backlog } from './backlog.ts';
+import { DOCS_FILE, loadDocs, type Docs } from './docs.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
 import { loadProject, PROJECT_FILE, type ProjectManifest } from './project.ts';
 
@@ -14,6 +15,7 @@ import { loadProject, PROJECT_FILE, type ProjectManifest } from './project.ts';
 export interface Manifests {
   project?: ProjectManifest;
   backlog?: Backlog;
+  docs?: Docs;
 }
 
 export type ManifestKind = keyof Manifests;
@@ -39,6 +41,7 @@ type AnyManifestEntry = { [K in ManifestKind]: ManifestEntry<K> }[ManifestKind];
 export const MANIFESTS: readonly AnyManifestEntry[] = [
   { kind: 'project', file: PROJECT_FILE, load: (path, context) => loadProject(path, context.slug) },
   { kind: 'backlog', file: BACKLOG_FILE, load: (path) => loadBacklog(path) },
+  { kind: 'docs', file: DOCS_FILE, load: (path, context) => loadDocs(path, context) },
 ];
 
 export interface LoadedProject {
