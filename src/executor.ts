@@ -4,10 +4,9 @@
 import type { ItemType } from './items.ts';
 import type { AttributeValue } from './manifest/backlog.ts';
 import { readState, writeState, type StateFile } from './manifest/state.ts';
-import type { Operation, Plan, PlanProject, RemoteState } from './planner.ts';
+import { RESULT, tally, type Result } from './operations.ts';
+import { PLAN_ACTIONS, type Operation, type Plan, type PlanProject, type RemoteState } from './planner.ts';
 import { TaigaConflictError, TaigaError, type ItemPatch, type TaigaClient, type TaigaItem } from './taiga/client.ts';
-
-export type OperationResult = 'created' | 'updated' | 'linked' | 'unchanged';
 
 export interface AppliedOperation {
   action: Operation['action'];
@@ -17,13 +16,18 @@ export interface AppliedOperation {
   ref: number;
   /** For `link`: key of the epic the story was linked to. */
   epic?: string;
-  result: OperationResult;
+  result: Result;
 }
 
 export interface ApplyReport {
   project: PlanProject;
   operations: AppliedOperation[];
-  summary: Record<OperationResult, number>;
+  summary: Record<Result, number>;
+}
+
+/** Human-readable description of an applied operation, for the text form of the report. */
+export function describeAppliedOperation(op: AppliedOperation): string {
+  return op.action === 'link' ? `story ${op.key} -> epic ${op.epic}` : `${op.type} ${op.key}  #${op.ref} (id ${op.id})`;
 }
 
 /** Id of an item recorded earlier in this run (parents always precede their children in a plan). */
@@ -72,26 +76,25 @@ async function writeAttributes(
 export async function executePlan(plan: Plan, client: TaigaClient, statePath: string, attributes: RemoteState['customAttributes']): Promise<ApplyReport> {
   const state = await readState(statePath, plan.project);
   const operations: AppliedOperation[] = [];
-  const summary: Record<OperationResult, number> = { created: 0, updated: 0, linked: 0, unchanged: 0 };
 
   for (const op of plan.operations) {
     let applied: AppliedOperation;
     if (op.action === 'skip') {
       state.items[op.key] = { type: op.type, id: op.id, ref: op.ref, version: op.version };
-      applied = { action: op.action, type: op.type, key: op.key, id: op.id, ref: op.ref, result: 'unchanged' };
+      applied = { action: op.action, type: op.type, key: op.key, id: op.id, ref: op.ref, result: RESULT[op.action] };
     } else {
       try {
         if (op.action === 'link') {
           const story = state.items[op.key]!;
           await client.linkEpicUserStory(recordedId(state, op.epic), story.id);
-          applied = { action: op.action, type: op.type, key: op.key, id: story.id, ref: story.ref, epic: op.epic, result: 'linked' };
+          applied = { action: op.action, type: op.type, key: op.key, id: story.id, ref: story.ref, epic: op.epic, result: RESULT[op.action] };
         } else {
           const item = op.action === 'create' ? await create(op, plan, state, client) : await update(op, client);
           state.items[op.key] = { type: op.type, id: item.id, ref: item.ref, version: item.version };
           const values = op.action === 'create' ? op.custom_attributes : op.changes.custom_attributes?.to;
           const valuesVersion = op.action === 'update' ? op.changes.custom_attributes?.version : undefined;
           if (values) await writeAttributes(op.type, item.id, values, valuesVersion, attributes, client);
-          applied = { action: op.action, type: op.type, key: op.key, id: item.id, ref: item.ref, result: op.action === 'create' ? 'created' : 'updated' };
+          applied = { action: op.action, type: op.type, key: op.key, id: item.id, ref: item.ref, result: RESULT[op.action] };
         }
       } catch (error) {
         if (!(error instanceof TaigaError)) throw error;
@@ -105,10 +108,9 @@ export async function executePlan(plan: Plan, client: TaigaClient, statePath: st
       await writeState(statePath, state);
     }
     operations.push(applied);
-    summary[applied.result] += 1;
   }
 
   // Final write also refreshes the cache when nothing was created (e.g. the state file had been deleted).
   await writeState(statePath, state);
-  return { project: plan.project, operations, summary };
+  return { project: plan.project, operations, summary: tally(PLAN_ACTIONS, operations) };
 }

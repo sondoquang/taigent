@@ -11,6 +11,7 @@ import type { Backlog } from './manifest/backlog.ts';
 import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
 import { WIKI_TARGET_PREFIX, type AttachmentSpec, type Docs } from './manifest/docs.ts';
 import type { ItemType } from './items.ts';
+import { FILL_ACTIONS, RESULT, summarize, tally, type FillAction, type FillResult, type PlanSummary } from './operations.ts';
 import { srcTag, type PlanProject } from './planner.ts';
 import { TaigaConflictError, TaigaError, type AttachmentTargetType, type TaigaClient, type TaigaItem } from './taiga/client.ts';
 
@@ -43,20 +44,16 @@ export type UploadOperation =
   | ({ action: 'create'; type: 'attachment'; previous: PreviousAttachment[] } & AttachmentFields)
   | ({ action: 'skip'; type: 'attachment'; id: number } & AttachmentFields);
 
-export interface UploadPlan {
+export interface UploadPlan extends PlanSummary<FillAction> {
   project: PlanProject;
-  changes: boolean;
-  summary: { create: number; update: number; skip: number };
   operations: UploadOperation[];
 }
-
-export type UploadResult = 'created' | 'updated' | 'unchanged';
 
 export interface UploadReport {
   project: PlanProject;
   /** `id`: the wiki page, or the attachment (the new one when created). */
-  operations: (UploadOperation & { id: number; result: UploadResult })[];
-  summary: Record<UploadResult, number>;
+  operations: (UploadOperation & { id: number; result: FillResult })[];
+  summary: Record<FillResult, number>;
 }
 
 /** Taiga (or its reverse proxy) refused an upload as too large (HTTP 413). */
@@ -169,9 +166,7 @@ export async function planUpload(docs: Docs, backlog: Backlog | undefined, proje
     else operations.push({ action: 'create', type: 'attachment', previous: existing.map(({ id, size, sha1 }) => ({ id, size, sha1 })), ...fields });
   }
 
-  const summary = { create: 0, update: 0, skip: 0 };
-  for (const op of operations) summary[op.action] += 1;
-  return { project, changes: summary.create + summary.update > 0, summary, operations };
+  return { project, ...summarize(FILL_ACTIONS, operations), operations };
 }
 
 /** Human-readable description of one operation, shared by the plan and the report. */
@@ -191,10 +186,8 @@ export function describeUploadOperation(op: UploadOperation): string {
 export async function executeUpload(plan: UploadPlan, client: TaigaClient, cwd: string): Promise<UploadReport> {
   const wikiIds = new Map<string, number>();
   const operations: UploadReport['operations'] = [];
-  const summary: Record<UploadResult, number> = { created: 0, updated: 0, unchanged: 0 };
 
   for (const op of plan.operations) {
-    const result: UploadResult = op.action === 'create' ? 'created' : op.action === 'update' ? 'updated' : 'unchanged';
     const file = resolve(cwd, op.file);
     let id: number;
     try {
@@ -228,8 +221,7 @@ export async function executeUpload(plan: UploadPlan, client: TaigaClient, cwd: 
       }
       throw new TaigaError(`${what} failed: ${error.message}`, error.status);
     }
-    operations.push({ ...op, id, result });
-    summary[result] += 1;
+    operations.push({ ...op, id, result: RESULT[op.action] });
   }
-  return { project: plan.project, operations, summary };
+  return { project: plan.project, operations, summary: tally(FILL_ACTIONS, operations) };
 }

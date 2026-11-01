@@ -7,6 +7,7 @@ import { ITEM_TYPES, type ItemType } from './items.ts';
 import { WIKI_HOME_SLUG, type ProjectModule } from './manifest/conventions.ts';
 import type { CustomAttributeSpec, ProjectManifest } from './manifest/project.ts';
 import { readState, writeState } from './manifest/state.ts';
+import { FILL_ACTIONS, RESULT, summarize, tally, type FillAction, type FillResult, type PlanSummary } from './operations.ts';
 import {
   TaigaError,
   type ModuleFlag,
@@ -42,19 +43,15 @@ export type BootstrapOperation =
   | { action: 'create'; type: 'wiki'; slug: string; content: string }
   | { action: 'skip'; type: 'wiki'; slug: string };
 
-export interface BootstrapPlan {
+export interface BootstrapPlan extends PlanSummary<FillAction> {
   project: { id: number | null; slug: string; name: string; exists: boolean };
-  changes: boolean;
-  summary: { create: number; update: number; skip: number };
   operations: BootstrapOperation[];
 }
 
-export type BootstrapResult = 'created' | 'updated' | 'unchanged';
-
 export interface BootstrapReport {
   project: { id: number; slug: string };
-  operations: (BootstrapOperation & { result: BootstrapResult })[];
-  summary: Record<BootstrapResult, number>;
+  operations: (BootstrapOperation & { result: FillResult })[];
+  summary: Record<FillResult, number>;
 }
 
 const moduleFlag = (module: ProjectModule) => `is_${module}_activated` as ModuleFlag;
@@ -142,18 +139,15 @@ export function planBootstrap(manifest: ProjectManifest, remote: BootstrapRemote
     );
   }
 
-  const summary = { create: 0, update: 0, skip: 0 };
-  for (const op of operations) summary[op.action] += 1;
   return {
     project: { id: project?.id ?? null, slug: manifest.slug, name: manifest.name, exists: project !== undefined },
-    changes: summary.create + summary.update > 0,
-    summary,
+    ...summarize(FILL_ACTIONS, operations),
     operations,
   };
 }
 
 /** Human-readable description of one operation, shared by the plan and the report. */
-export function describeOperation(op: BootstrapOperation): string {
+export function describeBootstrapOperation(op: BootstrapOperation): string {
   switch (op.type) {
     case 'project':
       return op.action === 'create'
@@ -191,10 +185,8 @@ export async function executeBootstrap(
     await writeState(statePath, state);
   };
   const operations: BootstrapReport['operations'] = [];
-  const summary: Record<BootstrapResult, number> = { created: 0, updated: 0, unchanged: 0 };
 
   for (const op of plan.operations) {
-    const result: BootstrapResult = op.action === 'create' ? 'created' : op.action === 'update' ? 'updated' : 'unchanged';
     try {
       if (op.type === 'project' && op.action === 'create') {
         project = await client.createProject(op.fields);
@@ -233,12 +225,11 @@ export async function executeBootstrap(
       }
     } catch (error) {
       if (!(error instanceof TaigaError)) throw error;
-      throw new TaigaError(`bootstrap step "${describeOperation(op)}" failed: ${error.message}`, error.status);
+      throw new TaigaError(`bootstrap step "${describeBootstrapOperation(op)}" failed: ${error.message}`, error.status);
     }
-    operations.push({ ...op, result });
-    summary[result] += 1;
+    operations.push({ ...op, result: RESULT[op.action] });
   }
 
   await saveProject(project!);
-  return { project: { id: project!.id, slug: project!.slug }, operations, summary };
+  return { project: { id: project!.id, slug: project!.slug }, operations, summary: tally(FILL_ACTIONS, operations) };
 }

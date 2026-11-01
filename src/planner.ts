@@ -2,6 +2,7 @@
 
 import { ITEM_TYPES, type ItemType } from './items.ts';
 import type { AttributeValue, Backlog, StorySpec } from './manifest/backlog.ts';
+import { summarize, type Action, type PlanSummary } from './operations.ts';
 import { TaigaError, type TaigaAttributeValues, type TaigaCustomAttribute, type TaigaItem, type TaigaTask } from './taiga/client.ts';
 
 /** Identity tag of a manifest item on Taiga. Lowercase because Taiga lowercases every tag it stores. */
@@ -52,7 +53,8 @@ export type Operation =
   | { action: 'link'; type: 'story'; key: string; epic: string }
   | { action: 'skip'; type: ItemType; key: string; id: number; ref: number; version: number };
 
-export type Action = Operation['action'];
+/** The actions of a backlog plan. */
+export const PLAN_ACTIONS = ['create', 'update', 'link', 'skip'] as const;
 
 /** An item tagged `src:<key>` on Taiga whose key is no longer in the manifest. Reported, never deleted. */
 export interface Orphan {
@@ -63,13 +65,36 @@ export interface Orphan {
   subject: string;
 }
 
-export interface Plan {
+export interface Plan extends PlanSummary<Action> {
   project: PlanProject;
-  /** True when applying would write to Taiga. */
-  changes: boolean;
-  summary: Record<Action, number>;
   operations: Operation[];
   orphans: Orphan[];
+}
+
+/** ` Name: from -> to; …` for the attribute values an operation sets. */
+function formatAttributes(from: Record<string, unknown>, to: Record<string, unknown>): string {
+  return Object.entries(to)
+    .map(([name, value]) => `${name}: ${name in from ? `${JSON.stringify(from[name])} -> ` : ''}${JSON.stringify(value)}`)
+    .join('; ');
+}
+
+/** Human-readable description of one operation, for the text form of the plan. */
+export function describePlanOperation(op: Operation): string {
+  switch (op.action) {
+    case 'create': {
+      const attributes = op.custom_attributes ? `  [custom attributes ${formatAttributes({}, op.custom_attributes)}]` : '';
+      return `create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}${attributes}`;
+    }
+    case 'update': {
+      const changed = op.changes.custom_attributes;
+      const attributes = changed ? `  [custom attributes ${formatAttributes(changed.from, changed.to)}]` : '';
+      return `update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}${attributes}`;
+    }
+    case 'link':
+      return `link   story ${op.key} -> epic ${op.epic}`;
+    case 'skip':
+      return `${op.type} ${op.key}  (#${op.ref}, id ${op.id}, unchanged)`;
+  }
 }
 
 /** Story description template: free text, then acceptance criteria as a checklist, then the spec link. */
@@ -181,7 +206,5 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
     }
   }
 
-  const summary: Record<Action, number> = { create: 0, update: 0, link: 0, skip: 0 };
-  for (const op of operations) summary[op.action] += 1;
-  return { project: remote.project, changes: operations.some((op) => op.action !== 'skip'), summary, operations, orphans };
+  return { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans };
 }

@@ -2,20 +2,21 @@
 
 import { relative } from 'node:path';
 import { parseArgs } from 'node:util';
+import { describeBootstrapOperation, executeBootstrap, findTemplate, planBootstrap } from './bootstrap.ts';
 import { ExitCode } from './exit-codes.ts';
+import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
-import { describeOperation, executeBootstrap, findTemplate, planBootstrap, type BootstrapPlan, type BootstrapReport } from './bootstrap.ts';
-import { executePlan, type ApplyReport } from './executor.ts';
+import type { ItemType } from './items.ts';
+import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
-import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
-import type { ItemType } from './items.ts';
 import { readSavedProject } from './manifest/state.ts';
-import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
+import type { Action, PlanSummary, Result } from './operations.ts';
+import { buildPlan, describePlanOperation, srcTag, type Plan } from './planner.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, TaigaClient, TaigaConflictError, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
-import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError, type UploadPlan, type UploadReport } from './upload.ts';
+import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError } from './upload.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
@@ -116,31 +117,6 @@ function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
   return names.map((name) => env[name]!);
 }
 
-/** ` Name: from -> to; …` for the attribute values an operation sets. */
-function formatAttributes(from: Record<string, unknown>, to: Record<string, unknown>): string {
-  return Object.entries(to)
-    .map(([name, value]) => `${name}: ${name in from ? `${JSON.stringify(from[name])} -> ` : ''}${JSON.stringify(value)}`)
-    .join('; ');
-}
-
-function formatOperation(op: Operation): string {
-  switch (op.action) {
-    case 'create': {
-      const attributes = op.custom_attributes ? `  [custom attributes ${formatAttributes({}, op.custom_attributes)}]` : '';
-      return `  + create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}${attributes}`;
-    }
-    case 'update': {
-      const changed = op.changes.custom_attributes;
-      const attributes = changed ? `  [custom attributes ${formatAttributes(changed.from, changed.to)}]` : '';
-      return `  ~ update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}${attributes}`;
-    }
-    case 'link':
-      return `  + link   story ${op.key} -> epic ${op.epic}`;
-    case 'skip':
-      return `    skip   ${op.type} ${op.key}  (#${op.ref}, id ${op.id}, unchanged)`;
-  }
-}
-
 /**
  * Connects to Taiga from the environment: TAIGA_TOKEN when set (username/password, if also set, are
  * the fallback when Taiga rejects it), else a TAIGA_USERNAME/TAIGA_PASSWORD login.
@@ -167,35 +143,59 @@ function retryUnitMs(env: NodeJS.ProcessEnv): number | undefined {
   return value;
 }
 
-function formatPlan(plan: Plan): string {
-  const lines = [`Plan for project ${plan.project.slug} (id ${plan.project.id}):`];
-  lines.push(...plan.operations.map(formatOperation));
-  if (plan.operations.length === 0) lines.push('  (manifest has no items)');
-  if (plan.orphans.length > 0) {
-    lines.push('Orphans (tagged src: on Taiga but not in the manifest; never deleted):');
-    for (const orphan of plan.orphans) {
-      lines.push(`  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`);
-    }
-  }
-  const { create, update, link, skip } = plan.summary;
-  lines.push(
-    plan.changes
-      ? `${create} to create, ${update} to update, ${link} to link, ${skip} unchanged.`
-      : 'No changes. Taiga matches the manifest.',
-  );
+const MARKER: Record<Action, string> = { create: '  + ', update: '  ~ ', link: '  + ', skip: '    skip ' };
+
+/** Text form of a plan: a title, one line per operation, `extra` lines (e.g. orphans), then the counts. */
+function formatPlanText<A extends Action, O extends { action: A }>(
+  title: string,
+  plan: PlanSummary<A> & { operations: O[] },
+  describe: (op: O) => string,
+  texts: { empty: string; matches: string; extra?: string[] },
+): string {
+  const lines = [title, ...plan.operations.map((op) => `${MARKER[op.action]}${describe(op)}`)];
+  if (plan.operations.length === 0) lines.push(`  (${texts.empty})`);
+  lines.push(...(texts.extra ?? []));
+  const counts = Object.entries<number>(plan.summary).map(([action, n]) => `${n} ${action === 'skip' ? 'unchanged' : `to ${action}`}`);
+  lines.push(plan.changes ? `${counts.join(', ')}.` : `No changes. Taiga matches ${texts.matches}.`);
   return `${lines.join('\n')}\n`;
 }
 
-function formatReport(report: ApplyReport): string {
-  const lines = [`Applied to project ${report.project.slug} (id ${report.project.id}):`];
-  for (const op of report.operations) {
-    if (op.result === 'created') lines.push(`  + created ${op.type} ${op.key}  #${op.ref} (id ${op.id})`);
-    if (op.result === 'updated') lines.push(`  ~ updated ${op.type} ${op.key}  #${op.ref} (id ${op.id})`);
-    if (op.result === 'linked') lines.push(`  + linked  story ${op.key} -> epic ${op.epic}`);
-  }
-  const { created, updated, linked, unchanged } = report.summary;
-  lines.push(`${created} created, ${updated} updated, ${linked} linked, ${unchanged} unchanged.`);
+/** Text form of a report: a title, one line per operation that wrote something, then the counts. */
+function formatReportText<O extends { result: Result }>(
+  title: string,
+  report: { operations: O[]; summary: Partial<Record<Result, number>> },
+  describe: (op: O) => string,
+): string {
+  const lines = [title, ...report.operations.filter((op) => op.result !== 'unchanged').map((op) => `  ${op.result} ${describe(op)}`)];
+  lines.push(`${Object.entries(report.summary).map(([result, n]) => `${n} ${result}`).join(', ')}.`);
   return `${lines.join('\n')}\n`;
+}
+
+function formatOrphans(plan: Plan): string[] {
+  if (plan.orphans.length === 0) return [];
+  return [
+    'Orphans (tagged src: on Taiga but not in the manifest; never deleted):',
+    ...plan.orphans.map((orphan) => `  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`),
+  ];
+}
+
+/** Prints `value` as JSON with --json, else `text()`. */
+function emit(options: Options, value: unknown, text: () => string): void {
+  process.stdout.write(options.json ? `${JSON.stringify(value, null, 2)}\n` : text());
+}
+
+/**
+ * The review gate of plan/apply, bootstrap and upload. Unless the run may write (`--yes` without `--dry-run`; never
+ * for `plan`), it prints the plan and returns the exit code: 0 without changes, 3 for `plan` and `--dry-run`, and a
+ * usage error (2) for a writing command without `--yes`. Returns undefined when the run goes on to write.
+ */
+function reviewGate(options: Options, plan: { changes: boolean }, text: () => string): number | undefined {
+  const review = options.command === 'plan' || options.dryRun;
+  if (options.yes && !review) return undefined;
+  emit(options, plan, text);
+  if (!plan.changes) return ExitCode.Ok;
+  if (review) return ExitCode.Changes;
+  throw new UsageError(`refusing to ${options.command} without --yes; review the operations above, then re-run with --yes`);
 }
 
 /** Validates one project's manifests, or every project under the manifests root. Offline: no env needed. */
@@ -226,28 +226,6 @@ async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string
   return ExitCode.Ok;
 }
 
-function formatBootstrapPlan(plan: BootstrapPlan): string {
-  const { project } = plan;
-  const lines = [`Bootstrap plan for project ${project.slug} (${project.exists ? `id ${project.id}` : 'new'}):`];
-  for (const op of plan.operations) {
-    const marker = op.action === 'create' ? '  + ' : op.action === 'update' ? '  ~ ' : '    skip ';
-    lines.push(`${marker}${describeOperation(op)}`);
-  }
-  lines.push(
-    plan.changes
-      ? `${plan.summary.create} to create, ${plan.summary.update} to update, ${plan.summary.skip} unchanged.`
-      : 'No changes. Taiga matches the manifest.',
-  );
-  return `${lines.join('\n')}\n`;
-}
-
-function formatBootstrapReport(report: BootstrapReport): string {
-  const lines = [`Bootstrapped project ${report.project.slug} (id ${report.project.id}):`];
-  for (const op of report.operations) if (op.result !== 'unchanged') lines.push(`  ${op.result} ${describeOperation(op)}`);
-  lines.push(`${report.summary.created} created, ${report.summary.updated} updated, ${report.summary.unchanged} unchanged.`);
-  return `${lines.join('\n')}\n`;
-}
-
 /** `bootstrap`: create the project declared in project.yaml, or fill what an existing one lacks. */
 async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
   const slug = options.project!;
@@ -274,38 +252,17 @@ async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: strin
   const wikiHomeExists = project !== undefined && manifest.wikiHome !== undefined && (await client.findWikiPage(project.id, WIKI_HOME_SLUG)) !== undefined;
   const plan = planBootstrap(manifest, { me, project, template, memberships, wikiHomeExists });
 
-  if (options.dryRun || !options.yes) {
-    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatBootstrapPlan(plan));
-    if (!plan.changes) return ExitCode.Ok;
-    if (options.dryRun) return ExitCode.Changes;
-    throw new UsageError('refusing to bootstrap without --yes; review the operations above, then re-run with --yes');
-  }
+  const gate = reviewGate(options, plan, () =>
+    formatPlanText(`Bootstrap plan for project ${plan.project.slug} (${plan.project.exists ? `id ${plan.project.id}` : 'new'}):`, plan, describeBootstrapOperation, {
+      empty: 'project.yaml declares nothing',
+      matches: 'the manifest',
+    }),
+  );
+  if (gate !== undefined) return gate;
 
   const report = await executeBootstrap(plan, project, client, layout.state);
-  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatBootstrapReport(report));
+  emit(options, report, () => formatReportText(`Bootstrapped project ${report.project.slug} (id ${report.project.id}):`, report, describeBootstrapOperation));
   return ExitCode.Ok;
-}
-
-function formatUploadPlan(plan: UploadPlan): string {
-  const lines = [`Upload plan for project ${plan.project.slug} (id ${plan.project.id}):`];
-  for (const op of plan.operations) {
-    const marker = op.action === 'create' ? '  + ' : op.action === 'update' ? '  ~ ' : '    skip ';
-    lines.push(`${marker}${describeUploadOperation(op)}`);
-  }
-  if (plan.operations.length === 0) lines.push('  (docs.yaml declares nothing)');
-  lines.push(
-    plan.changes
-      ? `${plan.summary.create} to create, ${plan.summary.update} to update, ${plan.summary.skip} unchanged.`
-      : 'No changes. Taiga matches docs.yaml.',
-  );
-  return `${lines.join('\n')}\n`;
-}
-
-function formatUploadReport(report: UploadReport): string {
-  const lines = [`Uploaded to project ${report.project.slug} (id ${report.project.id}):`];
-  for (const op of report.operations) if (op.result !== 'unchanged') lines.push(`  ${op.result} ${describeUploadOperation(op)}  -> id ${op.id}`);
-  lines.push(`${report.summary.created} created, ${report.summary.updated} updated, ${report.summary.unchanged} unchanged.`);
-  return `${lines.join('\n')}\n`;
 }
 
 /** `upload`: upsert docs.yaml's wiki pages by slug and add its attachments that Taiga lacks. */
@@ -316,15 +273,18 @@ async function runUpload(options: Options, env: NodeJS.ProcessEnv, cwd: string):
   const project = await client.getProjectBySlug(slug);
   const plan = await planUpload(manifests.docs!, manifests.backlog, { id: project.id, slug: project.slug }, client, cwd);
 
-  if (options.dryRun || !options.yes) {
-    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatUploadPlan(plan));
-    if (!plan.changes) return ExitCode.Ok;
-    if (options.dryRun) return ExitCode.Changes;
-    throw new UsageError('refusing to upload without --yes; review the operations above, then re-run with --yes');
-  }
+  const gate = reviewGate(options, plan, () =>
+    formatPlanText(`Upload plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describeUploadOperation, {
+      empty: 'docs.yaml declares nothing',
+      matches: 'docs.yaml',
+    }),
+  );
+  if (gate !== undefined) return gate;
 
   const report = await executeUpload(plan, client, cwd);
-  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatUploadReport(report));
+  emit(options, report, () =>
+    formatReportText(`Uploaded to project ${report.project.slug} (id ${report.project.id}):`, report, (op) => `${describeUploadOperation(op)}  -> id ${op.id}`),
+  );
   return ExitCode.Ok;
 }
 
@@ -404,15 +364,17 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
     attributeValues,
   });
 
-  if (options.command === 'plan' || options.dryRun || !options.yes) {
-    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatPlan(plan));
-    if (!plan.changes) return ExitCode.Ok;
-    if (options.command === 'plan' || options.dryRun) return ExitCode.Changes;
-    throw new UsageError('refusing to apply without --yes; review the plan above, then re-run with --yes');
-  }
+  const gate = reviewGate(options, plan, () =>
+    formatPlanText(`Plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describePlanOperation, {
+      empty: 'manifest has no items',
+      matches: 'the manifest',
+      extra: formatOrphans(plan),
+    }),
+  );
+  if (gate !== undefined) return gate;
 
   const report = await executePlan(plan, client, layout.state, project.customAttributes);
-  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatReport(report));
+  emit(options, report, () => formatReportText(`Applied to project ${report.project.slug} (id ${report.project.id}):`, report, describeAppliedOperation));
   return ExitCode.Ok;
 }
 
