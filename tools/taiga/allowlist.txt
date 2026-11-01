@@ -10,11 +10,13 @@ Bash(npx taigent plan *)
 Bash(npx taigent apply *)
 Bash(npx taigent bootstrap *)
 Bash(npx taigent upload *)
+Bash(npx taigent closed *)
 PowerShell(npx taigent validate *)
 PowerShell(npx taigent plan *)
 PowerShell(npx taigent apply *)
 PowerShell(npx taigent bootstrap *)
 PowerShell(npx taigent upload *)
+PowerShell(npx taigent closed *)
 
 # Taiga MCP read tools (taiga-mcp-server@1.9.20).
 mcp__taiga__listProjects

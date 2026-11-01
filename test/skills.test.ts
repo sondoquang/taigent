@@ -201,7 +201,7 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
 }
 
 /** `taigent` commands a skill may pre-approve; the writing ones make a skill explicit-only. */
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload'];
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'closed'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
 
@@ -239,7 +239,7 @@ test('each taiga-* skill pre-approves only the taigent commands of its step', as
     'taiga-apply-backlog': shellRules('validate', 'plan', 'apply'),
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),
-    'taiga-status-report': [],
+    'taiga-status-report': shellRules('closed'),
     'taiga-setup': [],
   };
 
@@ -249,7 +249,7 @@ test('each taiga-* skill pre-approves only the taigent commands of its step', as
   }
 });
 
-test('taiga-status-report reads Taiga through MCP only and may be invoked implicitly', async () => {
+test('taiga-status-report reads Taiga through MCP read tools and taigent closed, and may be invoked implicitly', async () => {
   const { frontmatter, allowedTools, openai } = await readSkill('taiga-status-report');
 
   assert.notEqual(frontmatter['disable-model-invocation'], true);
@@ -257,7 +257,7 @@ test('taiga-status-report reads Taiga through MCP only and may be invoked implic
   for (const tool of ['listProjects', 'listEpics', 'listUserStories', 'getUserStory', 'listMilestones', 'getMilestone', 'getMilestoneStats', 'advancedSearch']) {
     assert.ok(allowedTools.includes(`mcp__taiga__${tool}`), `allowed-tools has mcp__taiga__${tool}`);
   }
-  assert.ok(allowedTools.every((tool) => MCP_READ_TOOLS.has(tool)), allowedTools.join(' '));
+  assert.ok(allowedTools.every((tool) => MCP_READ_TOOLS.has(tool) || shellRules('closed').includes(tool)), allowedTools.join(' '));
 });
 
 test('taiga-setup gives the same Taiga MCP server entries as the repository configs', async () => {

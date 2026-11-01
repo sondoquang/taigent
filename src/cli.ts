@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
+import { dayRange, formatClosedText, parseDay, readClosed } from './closed.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
@@ -26,11 +27,13 @@ Commands:
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
+  closed    List your stories, tasks and issues that Taiga closed from --from to --to (read-only)
   skills sync   Copy the Taigent skills (taiga-*, ask-taigent) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
 
 Options:
-  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/
+  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for closed)
+  --from, --to      closed: first and last day (YYYY-MM-DD, inclusive, local time zone)
   --json            Machine-readable output on stdout
   --yes             Confirm writes (bootstrap, apply, upload)
   --dry-run         List the operations without writing anything (exit 3 when there are changes)
@@ -46,7 +49,7 @@ Environment (a variable not set in the environment is read from ./.env):
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes),
             3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'skills'] as const;
+const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'closed', 'skills'] as const;
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
@@ -58,8 +61,11 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 interface Options {
   command: Command;
-  /** Required by every command except `validate` and `skills`. */
+  /** Required by every command except `validate`, `closed` and `skills`. */
   project?: string;
+  /** `closed`: first and last day, YYYY-MM-DD. */
+  from?: string;
+  to?: string;
   /** `skills` subcommand. */
   skillsAction?: SkillsAction;
   json: boolean;
@@ -92,6 +98,8 @@ function parseOptions(argv: string[]): Options | 'help' {
       allowPositionals: true,
       options: {
         project: { type: 'string' },
+        from: { type: 'string' },
+        to: { type: 'string' },
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
@@ -114,13 +122,25 @@ function parseOptions(argv: string[]): Options | 'help' {
   }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
-    if (command !== 'validate' && command !== 'skills') throw new UsageError('--project <slug> is required');
+    if (command !== 'validate' && command !== 'skills' && command !== 'closed') throw new UsageError('--project <slug> is required');
   } else if (!SLUG_PATTERN.test(values.project)) {
     throw new UsageError(`invalid project slug "${values.project}"`);
+  }
+  if (command === 'closed') {
+    for (const name of ['from', 'to'] as const) {
+      const value = values[name];
+      if (value === undefined) throw new UsageError(`closed needs --${name} <YYYY-MM-DD>`);
+      if (!parseDay(value)) throw new UsageError(`--${name} must be a calendar day as YYYY-MM-DD, got "${value}"`);
+    }
+    if (parseDay(values.from!)! > parseDay(values.to!)!) throw new UsageError(`--from ${values.from} is after --to ${values.to}`);
+  } else if (values.from !== undefined || values.to !== undefined) {
+    throw new UsageError('--from and --to apply only to closed');
   }
   return {
     command: command as Command,
     project: values.project,
+    from: values.from,
+    to: values.to,
     skillsAction,
     json: values.json,
     yes: values.yes,
@@ -396,6 +416,16 @@ async function runPlan(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `closed`: the user's stories, tasks and issues that Taiga closed in the day range. Read-only. */
+async function runClosed(run: Run): Promise<number> {
+  const { options } = run;
+  const client = await connectTaiga(run);
+  const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
+  const report = await readClosed(client, dayRange(options.from!, options.to!), project);
+  emit(run, report, () => formatClosedText(report));
+  return ExitCode.Ok;
+}
+
 function dispatch(run: Run): Promise<number> {
   switch (run.options.command) {
     case 'validate':
@@ -406,6 +436,8 @@ function dispatch(run: Run): Promise<number> {
       return runUpload(run);
     case 'skills':
       return runSkills(run);
+    case 'closed':
+      return runClosed(run);
     case 'plan':
     case 'apply':
       return runPlan(run);

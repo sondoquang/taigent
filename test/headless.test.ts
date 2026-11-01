@@ -33,7 +33,7 @@ const MCP_WRITE_TOOLS = [
   'updateWikiPage', 'uploadAttachment', 'watchWikiPage',
 ];
 
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload'];
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'closed'];
 
 async function readAllowlist(): Promise<string[]> {
   return (await readFile(ALLOWLIST, 'utf8'))
