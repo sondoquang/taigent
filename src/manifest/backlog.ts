@@ -3,12 +3,10 @@
 import { readFile } from 'node:fs/promises';
 import { parse } from 'yaml';
 import { errorMessage, isFileNotFound, isRecord } from '../guards.ts';
+import { checkKey, checkTag } from './conventions.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
 
 export const BACKLOG_FILE = 'backlog.yaml';
-
-/** Stable item keys: uppercase letters/digits in dash-separated groups, e.g. `AUTH-LOGIN`. */
-export const KEY_PATTERN = /^[A-Z0-9]+(?:-[A-Z0-9]+)*$/;
 
 export interface EpicSpec {
   key: string;
@@ -65,18 +63,11 @@ export async function loadBacklog(path: string): Promise<Backlog> {
       if (!Object.hasOwn(EPIC_FIELDS, field)) issue(`${at}.${field}`, 'known-field', `unknown epic field \`${field}\``);
     }
     const { key, subject, description = '', tags = [] } = raw;
-    if (typeof key !== 'string' || !KEY_PATTERN.test(key)) {
-      issue(`${at}.key`, 'key-format', `key is required and must match ${KEY_PATTERN} (e.g. AUTH-LOGIN)`);
-    } else if (seenKeys.has(key)) {
-      issue(`${at}.key`, 'key-unique', `duplicate key ${key} (first used at ${seenKeys.get(key)})`);
-    } else {
-      seenKeys.set(key, `${at}.key`);
-    }
+    checkKey(key, `${at}.key`, issue, seenKeys);
     if (typeof subject !== 'string' || subject.trim() === '') issue(`${at}.subject`, 'required', 'subject is required');
     if (typeof description !== 'string') issue(`${at}.description`, 'type', 'must be a string');
-    if (!Array.isArray(tags) || !tags.every((tag) => typeof tag === 'string' && tag !== '')) {
-      issue(`${at}.tags`, 'type', 'must be a list of non-empty strings');
-    }
+    if (!Array.isArray(tags)) issue(`${at}.tags`, 'type', 'must be a list of tags');
+    else tags.forEach((tag: unknown, i) => checkTag(tag, `${at}.tags[${i}]`, issue));
     epics.push({ key, subject, description, tags } as EpicSpec);
   });
 
