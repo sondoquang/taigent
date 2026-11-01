@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "taiga": {
+      "command": "npx",
+      "args": ["-y", "taiga-mcp-server@1.9.20"],
+      "env": {
+        "TAIGA_API_URL": "${TAIGA_API_URL}",
+        "TAIGA_USERNAME": "${TAIGA_USERNAME}",
+        "TAIGA_PASSWORD": "${TAIGA_PASSWORD}"
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga Apply Backlog"
+  short_description: "Plan, confirm, then apply a backlog to Taiga"
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,7 @@
+# Project-scoped Codex config (loaded only when this project is trusted).
+# Secrets are never stored here: env_vars forwards them from your environment.
+[mcp_servers.taiga]
+command = "npx"
+args = ["-y", "taiga-mcp-server@1.9.20"]
+env_vars = ["TAIGA_API_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD"]
+required = true

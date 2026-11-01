@@ -1,0 +1,4 @@
+# Files with a shebang must keep LF endings, also in Windows checkouts (core.autocrlf): sh fails on \r, and
+# npm rewrites a CRLF bin script's shebang to LF on install (leaving bin/taigent.js modified after `npm ci`).
+*.sh text eol=lf
+bin/*.js text eol=lf
