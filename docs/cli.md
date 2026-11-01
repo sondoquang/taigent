@@ -65,6 +65,8 @@ epics:
           - Wrong password shows an error
         spec: docs/specs/auth.md                     # optional link/path to the spec
         tags: [type:feature]
+        custom_attributes:                           # optional, on epics, stories and tasks
+          Due note: before launch                    # attribute name (as on Taiga) → string, number or boolean
         tasks:                                       # optional; created under this story
           - key: AUTH-LOGIN-API
             subject: Login endpoint
@@ -126,6 +128,17 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
   them with the item's current `version` (OCC). Tags are only added: tags people put on Taiga stay, and removing
   a tag from the manifest does not remove it from Taiga. Status, assignee, sprint, points and ordering are never
   sent.
+- **Custom attribute values**: an item's `custom_attributes` are matched to the project's attributes of that item
+  type by exact name (`GET /projects/by_slug` lists them; bootstrap creates them from `project.yaml`). `plan` reads
+  `GET /{epics,userstories,tasks}/custom-attributes-values/{id}` of existing items that declare values and lists the
+  declared values that differ. `apply` writes them with `PATCH …/custom-attributes-values/{id}
+  {attributes_values, version}` (keys are attribute ids as strings; values objects have their own `version`, read
+  by plan for existing items, so a value changed on Taiga meanwhile is a `conflict`). Taiga replaces the whole
+  object, so apply sends the current values plus the manifest's: values of undeclared attributes stay, and removing
+  a value from the manifest does not clear it on Taiga. New items get their values right after creation.
+  An attribute name the project does not define fails `plan`/`apply` before any write, with exit 5 (Taiga was
+  contacted to learn the names, so it is not a manifest error, exit 4), listing every unknown name with its key
+  and the names that exist.
 - **Orphans**: items carrying a `src:` tag whose key is no longer in the manifest are listed by `plan` and never
   deleted. They are not changes (they do not make `plan` exit 3).
 
@@ -169,6 +182,9 @@ Common options: `--project <slug>` (required except for `validate`), `--json` (m
 ```
 
 `create.parent` is the epic key (story) or story key (task). `update.changes` holds only the fields that differ.
+Custom attribute values add `custom_attributes: { "<name>": value }` to `create`, and
+`changes.custom_attributes: { from: { "<name>": value | null }, to: { "<name>": value }, version }` to `update`
+(`null`: not set on Taiga; `version`: the values object's). An update of values alone does not PATCH the item.
 
 `apply --yes --json` prints an `ApplyReport`: `{ project, operations: [{ action, type, key, id, ref, epic?, result }],
 summary: { created, updated, linked, unchanged } }`; `result` is `created`, `updated`, `linked` or `unchanged`, and
@@ -264,7 +280,7 @@ summary: { created, updated, unchanged } }`.
 | 2 | Usage or configuration error: unknown command/flag, missing env var, `apply`/`bootstrap` with changes but no `--yes` |
 | 3 | `plan` or `--dry-run` found changes |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
-| 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
+| 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
 
 ## Code map
 
@@ -272,9 +288,9 @@ summary: { created, updated, unchanged } }`.
 |---|---|---|
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`) |
 | Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog`, `loadDocs`, conventions rules (`conventions.ts`), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`), `TaigaError`, `TaigaConflictError` |
-| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)` |
-| Executor | `src/executor.ts` | `executePlan(plan, client, statePath)`, `ApplyConflictError` (carries `key`) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`, `getAttributeValues`/`updateAttributeValues`), `TaigaError`, `TaigaConflictError` |
+| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)`, `ATTRIBUTE_ITEM_TYPE` |
+| Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `ApplyConflictError` (carries `key`) |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 
 Adding a manifest kind: write `load<Kind>(path, context)` that reads with `readManifestYaml`, reports every
@@ -297,3 +313,7 @@ payloads like Taiga (and additionally rejects unknown fields). Extend the fake r
 Bootstrap fixtures: `fake.addUser`, `fake.addProject({ admins, is_private, modules, tagsColors })`,
 `fake.addCustomAttribute`, `fake.addMembership`, `fake.addWikiPage`; `fake.state.templates` holds `scrum` (id 1)
 and `kanban` (id 2) with Epics off; `fake.settings.projectSlugPrefix = true` mimics DEFAULT_PROJECT_SLUG_PREFIX.
+Custom attribute values: every epic/story/task gets an empty values object (version 1) on creation, served at
+`/{epics,userstories,tasks}/custom-attributes-values/{id}` (keys must be ids of the project's attributes of that type,
+PATCH replaces the object and needs its own `version`); `fake.editAttributeValues(itemType, itemId, values)` sets them
+like a user would; assert on `fake.state.customAttributeValues` (`{ itemType, item, version, attributes_values }`).
