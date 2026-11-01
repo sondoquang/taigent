@@ -13,6 +13,7 @@
   "scripts": {
     "taigent": "node bin/taigent.js",
     "test": "node --test \"test/**/*.test.ts\"",
+    "test:live": "node --test \"test/live/*.live.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
