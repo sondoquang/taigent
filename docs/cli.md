@@ -255,14 +255,42 @@ Other operation shapes: `{ action, type: "custom-attribute", itemType, name, fie
 `{ project: { id, slug }, operations: [<operation> + { result: "created" | "updated" | "unchanged" }],
 summary: { created, updated, unchanged } }`.
 
+## Skills
+
+The agent skills that drive this CLI are `taiga-*` [Agent Skills](https://agentskills.io/specification), one
+canonical copy in `.agents/skills/` (Codex reads it) and a byte-identical copy in `.claude/skills/` (Claude Code
+reads it). Edit only `.agents/skills/taiga-*`, then copy:
+
+- `taigent skills sync [--json]`: replaces every `.claude/skills/taiga-*` copy that differs from its source and
+  removes copies whose source is gone. Other skills (the vendored ones without the `taiga-` prefix) are never
+  read or written.
+- `taigent skills check [--json]`: exit 0 when the copies match, 3 when they differ (listing each file as
+  `missing`, `changed` or `extra`). `npm test` runs it on the repository, so a forgotten sync fails the suite.
+
+Both work on the working directory (run them from the repository root; no `.agents/skills` there is exit 2), are
+offline and need no `TAIGA_*` variable. `skills check --json` prints
+`{ "inSync": false, "skills": ["taiga-apply-backlog", …], "differences": [{ "skill", "file", "status" }] }`
+(`file` is relative to the skill directory); `skills sync --json` prints `{ "skills", "synced", "removed" }`
+(skill names).
+
+| Skill | Invocation | Does |
+|---|---|---|
+| `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`) | Spec/PRD → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
+| `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
+
+Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply` (as `Bash(...)` and, for Claude Code's
+Windows PowerShell tool, `PowerShell(...)` rules) and Taiga MCP read tools. They grant, not restrict: the gate
+before `apply --yes` is the skill's explicit confirmation step. Codex's skill docs do not document
+`allowed-tools`; there, approvals come from `.codex/config.toml` and the sandbox.
+
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, `apply`/`bootstrap` with changes but no `--yes` |
-| 3 | `plan` or `--dry-run` found changes |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, `apply`/`bootstrap` with changes but no `--yes`, `skills` outside a repository root |
+| 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
 
@@ -276,6 +304,7 @@ summary: { created, updated, unchanged } }`.
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath)`, `ApplyConflictError` (carries `key`) |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
+| Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: `.agents/skills/taiga-*` → `.claude/skills/taiga-*` |
 
 Adding a manifest kind: write `load<Kind>(path, context)` that reads with `readManifestYaml`, reports every
 problem through an `issue(path, rule, message)` sink (reusing the `check*` functions of `conventions.ts`) and
