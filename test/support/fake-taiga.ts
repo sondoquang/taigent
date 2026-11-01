@@ -67,8 +67,9 @@ export interface InterceptRule {
   /** Path below /api/v1, e.g. `/epics` or a RegExp matched against it. */
   path: string | RegExp;
   status: number;
-  /** Canned body, or a function of the intercepted request (e.g. a server echoing what it received). */
-  body?: unknown | ((request: RecordedRequest) => unknown);
+  body?: unknown;
+  /** Builds the body from the intercepted request instead (e.g. a server echoing what it received). */
+  bodyFrom?: (request: RecordedRequest) => unknown;
   headers?: Record<string, string>;
   /** How many matching requests to let through untouched before intercepting (default 0). */
   after?: number;
@@ -376,7 +377,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       if (path === undefined) throw notFound();
       if (typeof body === 'string') throw new HttpError(400, { _error_message: 'JSON parse error' });
       const rule = takeIntercept(method, path);
-      const replyBody = typeof rule?.body === 'function' ? rule.body(request) : rule?.body;
+      const replyBody = rule?.bodyFrom ? rule.bodyFrom(request) : rule?.body;
       reply = rule ? { status: rule.status, body: replyBody, headers: rule.headers } : route(req, path, url.searchParams, body);
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;

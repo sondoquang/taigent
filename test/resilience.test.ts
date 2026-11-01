@@ -152,3 +152,76 @@ test('a refused login names the URL and the variables to check', async (t) => {
   assert.ok(message.includes(`login to ${h.fake.url} failed`), message);
   assert.match(message, /TAIGA_USERNAME.*TAIGA_PASSWORD/);
 });
+
+test('stdout, stderr and --json output never contain a password or token, on success and on every error path', async (t) => {
+  const h = await startHarness(t);
+  h.fake.addProject({ slug: 'demo' });
+  await h.writeManifest('demo', 'backlog.yaml', BACKLOG);
+  await h.writeManifest('broken', 'backlog.yaml', 'epics: [{ key: bad key }]\n');
+  const wrongPassword = 'wrong-secret-pass';
+  const bogusToken = 'bogus-secret-token';
+  const noCredentials = { TAIGA_USERNAME: undefined, TAIGA_PASSWORD: undefined };
+  const outputs: string[] = [];
+
+  /** Runs `args` as text and as --json (calling `setup` before each run) and checks the exit code. */
+  async function scenario(
+    name: string,
+    expectedCode: number,
+    args: string[],
+    env: Record<string, string | undefined> = {},
+    setup: () => void = () => {},
+  ): Promise<void> {
+    for (const extra of [[], ['--json']]) {
+      setup();
+      const result = await h.taigent([...args, ...extra], { env: { TAIGENT_RETRY_UNIT_MS: '0', ...env } });
+      assert.equal(result.code, expectedCode, `${name} ${extra.join('')}: ${result.stderr}`);
+      outputs.push(`--- ${name} ${extra.join('')}\n${result.stdout}\n${result.stderr}`);
+    }
+  }
+
+  // Success paths, including a token renewed mid-run and TAIGA_TOKEN.
+  await scenario('plan', 3, ['plan', '--project', 'demo']);
+  await scenario('apply with refresh', 0, ['apply', '--project', 'demo', '--yes'], {}, () => h.fake.expireTokens({ after: 1 }));
+  await scenario('relogin', 0, ['plan', '--project', 'demo'], {}, () => h.fake.expireTokens({ after: 1, refresh: true }));
+  const token = h.fake.issueToken();
+  await scenario('TAIGA_TOKEN', 0, ['plan', '--project', 'demo'], { TAIGA_TOKEN: token, ...noCredentials });
+
+  // Usage, configuration and validation errors.
+  await scenario('usage', 2, ['plan']);
+  await scenario('missing username', 2, ['plan', '--project', 'demo'], { TAIGA_USERNAME: undefined });
+  await scenario('bad retry unit', 2, ['plan', '--project', 'demo'], { TAIGENT_RETRY_UNIT_MS: 'x' });
+  await scenario('apply without --yes', 0, ['apply', '--project', 'demo']);
+  await scenario('validation', 4, ['plan', '--project', 'broken']);
+
+  // Taiga errors: refused login, rejected token, failed re-login, throttling, unreachable host,
+  // and a Taiga that echoes the credentials and token it received back in its error bodies.
+  await scenario('wrong password', 5, ['plan', '--project', 'demo'], { TAIGA_PASSWORD: wrongPassword });
+  await scenario('rejected token', 5, ['plan', '--project', 'demo'], { TAIGA_TOKEN: bogusToken, ...noCredentials });
+  await scenario('rejected token and password', 5, ['plan', '--project', 'demo'], {
+    TAIGA_TOKEN: bogusToken,
+    TAIGA_PASSWORD: wrongPassword,
+  });
+  await scenario('failed re-login', 5, ['plan', '--project', 'demo'], {}, () => {
+    h.fake.expireTokens({ after: 1, refresh: true });
+    h.fake.intercept({ method: 'POST', path: '/auth', after: 1, status: 401, body: { detail: 'No active account' } });
+  });
+  await scenario('throttled', 5, ['plan', '--project', 'demo'], {}, () =>
+    h.fake.intercept({ method: 'GET', path: '/epics', times: 6, status: 429 }),
+  );
+  await scenario('unreachable', 5, ['plan', '--project', 'demo'], { TAIGA_API_URL: 'http://127.0.0.1:9/api/v1' });
+  await scenario('login echo', 5, ['plan', '--project', 'demo'], {}, () =>
+    h.fake.intercept({ method: 'POST', path: '/auth', status: 400, bodyFrom: (r) => ({ _error_message: `bad login ${JSON.stringify(r.body)}` }) }),
+  );
+  await scenario('header echo', 5, ['plan', '--project', 'demo'], {}, () =>
+    h.fake.intercept({ method: 'GET', path: '/epics', status: 400, bodyFrom: (r) => ({ _error_message: `bad request ${JSON.stringify(r.headers)}` }) }),
+  );
+  await h.writeManifest('demo', 'backlog.yaml', `${BACKLOG}  - { key: EXTRA, subject: Extra }\n`);
+  await scenario('mid-apply echo', 5, ['apply', '--project', 'demo', '--yes'], { TAIGA_TOKEN: token }, () =>
+    h.fake.intercept({ method: 'POST', path: '/epics', status: 500, bodyFrom: (r) => ({ echoed: r.headers.authorization }) }),
+  );
+
+  const secrets = [h.fake.user.password, wrongPassword, bogusToken, ...h.fake.issuedTokens];
+  const all = outputs.join('\n');
+  for (const secret of secrets) assert.ok(!all.includes(secret), `output leaks ${secret}:\n${all}`);
+  assert.match(all, /\[redacted\]/, 'the echoing scenarios must have exercised redaction');
+});
