@@ -121,3 +121,49 @@ test('fake Taiga enforces OCC versions on PATCH and unique epic ↔ story links'
   });
   assert.equal(fake.state.epicRelatedUserStories.length, 1);
 });
+
+async function postAttachment(fake: FakeTaiga, token: string, path: string, form: FormData | string): Promise<{ status: number; body: unknown }> {
+  const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+  if (typeof form === 'string') headers['content-type'] = 'application/json';
+  const response = await fetch(`${fake.url}${path}`, { method: 'POST', headers, body: form });
+  return { status: response.status, body: await response.json() };
+}
+
+test('fake Taiga parses multipart attachment uploads, computes size/sha1 from the bytes and rejects bad fields like Taiga', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const other = fake.addProject({ slug: 'other' });
+  const story = fake.addUserStory({ project: project.id, subject: 'Story' });
+  const token = await login(fake);
+  const form = (fields: Record<string, string>, file = true) => {
+    const data = new FormData();
+    for (const [name, value] of Object.entries(fields)) data.set(name, value);
+    if (file) data.set('attached_file', new Blob([Buffer.from('hello\n')]), 'notes.txt');
+    return data;
+  };
+
+  assert.deepEqual(await postAttachment(fake, token, '/userstories/attachments', JSON.stringify({ object_id: story.id, project: project.id })), {
+    status: 400,
+    body: { attached_file: ['No file was submitted.'] },
+  });
+  assert.deepEqual(await postAttachment(fake, token, '/userstories/attachments', form({ object_id: String(story.id), project_id: String(project.id) })), {
+    status: 400,
+    body: { project_id: ['Unknown field (the fake Taiga rejects unknown fields).'], project: ['This field is required.'] },
+  });
+  const wrongProject = await postAttachment(fake, token, '/userstories/attachments', form({ object_id: String(story.id), project: String(other.id) }));
+  assert.equal(wrongProject.status, 400);
+  const wrongType = await postAttachment(fake, token, '/tasks/attachments', form({ object_id: String(story.id), project: String(project.id) }));
+  assert.equal(wrongType.status, 400, 'object_id must be an object of the endpoint type');
+  assert.equal(fake.state.attachments.length, 0);
+
+  const ok = await postAttachment(fake, token, '/userstories/attachments', form({ object_id: String(story.id), project: String(project.id), description: 'Notes' }));
+  assert.equal(ok.status, 201);
+  assert.ok(isRecord(ok.body));
+  // `printf 'hello\n' | sha1sum`
+  assert.deepEqual(
+    { name: ok.body.name, size: ok.body.size, sha1: ok.body.sha1, object_id: ok.body.object_id, description: ok.body.description },
+    { name: 'notes.txt', size: 6, sha1: 'f572d396fae9206628714fb2ce00f72e94f2258f', object_id: story.id, description: 'Notes' },
+  );
+  assert.equal(ok.body.content, undefined, 'stored bytes are not part of the attachment object');
+});
