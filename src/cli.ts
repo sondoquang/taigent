@@ -25,7 +25,7 @@ Commands:
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
-  skills sync   Copy the taiga-* skills from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
+  skills sync   Copy the Taigent skills (taiga-*, ask-taigent) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
 
 Options:
@@ -322,7 +322,7 @@ async function runUpload(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `skills sync|check`: keep the Claude copies of the taiga-* skills identical to their source. Offline. */
+/** `skills sync|check`: keep the Claude copies of the Taigent skills identical to their source. Offline. */
 async function runSkills(run: Run): Promise<number> {
   const { options, cwd } = run;
   try {
@@ -336,7 +336,7 @@ async function runSkills(run: Run): Promise<number> {
         run,
         options.json
           ? `${JSON.stringify(report, null, 2)}\n`
-          : `${[...lines, `${report.skills.length} taiga-* skill(s) in sync.`].join('\n')}\n`,
+          : `${[...lines, `${report.skills.length} Taigent skill(s) in sync.`].join('\n')}\n`,
       );
       return ExitCode.Ok;
     }
@@ -344,7 +344,7 @@ async function runSkills(run: Run): Promise<number> {
     if (options.json) {
       print(run, `${JSON.stringify(comparison, null, 2)}\n`);
     } else if (comparison.inSync) {
-      print(run, `${comparison.skills.length} taiga-* skill(s) in sync.\n`);
+      print(run, `${comparison.skills.length} Taigent skill(s) in sync.\n`);
     } else {
       const lines = comparison.differences.map(({ skill, file, status }) => `${SKILLS_TARGET}/${skill}/${file}: ${status}`);
       print(run, `${lines.join('\n')}\nThe Claude copies differ from ${SKILLS_SOURCE}; run \`taigent skills sync\`.\n`);

@@ -1,12 +1,15 @@
-// Skills: the taiga-* Agent Skills have one source, `.agents/skills/` (read by Codex). `.claude/skills/` holds
-// byte-identical copies for Claude Code. Only `taiga-*` directories are compared or written; other skills
-// (e.g. the vendored mattpocock ones) are never touched.
+// Skills: the Taigent skills (every `taiga-*` skill plus `ask-taigent`) have one source, `.agents/skills/` (read by
+// Codex). `.claude/skills/` holds byte-identical copies for Claude Code. Only Taigent skill directories are compared
+// or written; other skills (e.g. the vendored mattpocock ones) are never touched.
 
 import { cp, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isFileNotFound } from './guards.ts';
 
-export const SKILL_PREFIX = 'taiga-';
+const SKILL_PREFIX = 'taiga-';
+/** Taigent skills whose names lack the `taiga-` prefix. */
+const UNPREFIXED_SKILLS: readonly string[] = ['ask-taigent'];
+
 /** Canonical skills directory, relative to the repository root. */
 export const SKILLS_SOURCE = '.agents/skills';
 /** Generated copy for Claude Code, relative to the repository root. */
@@ -22,7 +25,7 @@ export interface SkillDifference {
 
 export interface SkillsComparison {
   inSync: boolean;
-  /** taiga-* skills of the source, sorted. */
+  /** Taigent skills of the source, sorted. */
   skills: string[];
   differences: SkillDifference[];
 }
@@ -38,11 +41,14 @@ export interface SkillsSyncReport {
 /** The source skills directory does not exist under the given root. */
 export class SkillsSourceMissingError extends Error {}
 
-/** taiga-* skill directory names under `dir` (empty when `dir` does not exist). */
+/** Taigent skill directory names under `dir` (empty when `dir` does not exist). */
 async function listSkills(dir: string): Promise<string[]> {
   try {
     const entries = await readdir(dir, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory() && entry.name.startsWith(SKILL_PREFIX)).map((entry) => entry.name).sort();
+    return entries
+      .filter((entry) => entry.isDirectory() && (entry.name.startsWith(SKILL_PREFIX) || UNPREFIXED_SKILLS.includes(entry.name)))
+      .map((entry) => entry.name)
+      .sort();
   } catch (error) {
     if (isFileNotFound(error)) return [];
     throw error;
@@ -80,7 +86,7 @@ async function compareSkill(skill: string, sourceDir: string, targetDir: string)
   return differences;
 }
 
-/** Compares every taiga-* skill of `<root>/.agents/skills` with its copy in `<root>/.claude/skills`. */
+/** Compares every Taigent skill of `<root>/.agents/skills` with its copy in `<root>/.claude/skills`. */
 export async function compareSkills(root: string): Promise<SkillsComparison> {
   const sourceDir = join(root, SKILLS_SOURCE);
   const targetDir = join(root, SKILLS_TARGET);
@@ -97,7 +103,7 @@ export async function compareSkills(root: string): Promise<SkillsComparison> {
 }
 
 /**
- * Makes `<root>/.claude/skills/taiga-*` identical to `<root>/.agents/skills/taiga-*`: out-of-date copies are
+ * Makes every Taigent skill of `<root>/.claude/skills` identical to `<root>/.agents/skills`: out-of-date copies are
  * replaced, copies of skills gone from the source are removed.
  */
 export async function syncSkills(root: string): Promise<SkillsSyncReport> {

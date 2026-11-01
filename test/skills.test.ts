@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -75,7 +75,7 @@ test('skills check exits 3 and names every file whose Claude copy is missing, ch
   assert.match(text.stdout, /taigent skills sync/);
 });
 
-test('skills check ignores skills without the taiga- prefix', async (t) => {
+test('skills check ignores skills that are not Taigent skills', async (t) => {
   const root = await repo(t, {
     '.agents/skills/tdd/SKILL.md': 'agents copy',
     '.claude/skills/tdd/SKILL.md': 'claude copy, edited',
@@ -86,6 +86,30 @@ test('skills check ignores skills without the taiga- prefix', async (t) => {
 
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(result.json<SkillsCheck>(), { inSync: true, skills: [], differences: [] });
+});
+
+test('skills check and sync cover ask-taigent like the taiga-* skills', async (t) => {
+  const root = await repo(t, {
+    '.agents/skills/ask-taigent/SKILL.md': 'router v2',
+    '.agents/skills/ask-matt/SKILL.md': 'vendored',
+    '.agents/skills/taiga-setup/SKILL.md': 'setup',
+    '.claude/skills/ask-taigent/SKILL.md': 'router v1',
+    '.claude/skills/taiga-setup/SKILL.md': 'setup',
+  });
+
+  const check = await skills(['check', '--json'], root);
+  assert.equal(check.code, 3, check.stderr);
+  assert.deepEqual(check.json<SkillsCheck>(), {
+    inSync: false,
+    skills: ['ask-taigent', 'taiga-setup'],
+    differences: [{ skill: 'ask-taigent', file: 'SKILL.md', status: 'changed' }],
+  });
+
+  const sync = await skills(['sync', '--json'], root);
+  assert.equal(sync.code, 0, sync.stderr);
+  assert.deepEqual(sync.json(), { skills: ['ask-taigent', 'taiga-setup'], synced: ['ask-taigent'], removed: [] });
+  assert.equal(await readFile(join(root, '.claude/skills/ask-taigent/SKILL.md'), 'utf8'), 'router v2');
+  await assert.rejects(readFile(join(root, '.claude/skills/ask-matt/SKILL.md')), { code: 'ENOENT' });
 });
 
 test('skills sync makes the Claude copies identical and leaves other skills alone', async (t) => {
@@ -137,10 +161,13 @@ test('skills commands outside a repository root are a usage error (exit 2)', asy
   assert.match(noAction.stderr, /skills needs one of: sync, check/);
 });
 
-test('the repository Claude copies of the taiga-* skills match .agents/skills', async () => {
-  const result = await skills(['check'], REPO_ROOT);
+const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-upload-docs'];
+
+test('the repository holds exactly the Taigent skills, with Claude copies that match .agents/skills', async () => {
+  const result = await skills(['check', '--json'], REPO_ROOT);
 
   assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+  assert.deepEqual(result.json<SkillsCheck>().skills, TAIGENT_SKILLS);
 });
 
 /** Taiga MCP tools that only read (taiga-mcp-server@1.9.20). Write tools and banned tools are absent. */
@@ -177,13 +204,9 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
 const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
-const TAIGA_SKILLS = ['taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-upload-docs'];
 
-test('taiga-* skills follow Agent Skills and pre-approve only taigent commands and Taiga MCP read tools', async () => {
-  const names = (await readdir(join(REPO_ROOT, '.agents/skills'))).filter((name) => name.startsWith('taiga-')).sort();
-  assert.deepEqual(names, TAIGA_SKILLS);
-
-  for (const name of names) {
+test('Taigent skills follow Agent Skills and pre-approve only taigent commands and Taiga MCP read tools', async () => {
+  for (const name of TAIGENT_SKILLS) {
     const { frontmatter, allowedTools } = await readSkill(name);
     assert.equal(frontmatter.name, name);
     assert.match(frontmatter.name, /^[a-z0-9]+(-[a-z0-9]+)*$/);
@@ -194,9 +217,9 @@ test('taiga-* skills follow Agent Skills and pre-approve only taigent commands a
   }
 });
 
-test('taiga-* skills that write to Taiga run only when invoked explicitly, on Claude Code and on Codex', async () => {
+test('Taigent skills that write to Taiga run only when invoked explicitly, on Claude Code and on Codex', async () => {
   const writers: string[] = [];
-  for (const name of TAIGA_SKILLS) {
+  for (const name of TAIGENT_SKILLS) {
     const { frontmatter, allowedTools, openai } = await readSkill(name);
     if (!allowedTools.some((tool) => WRITING_COMMANDS.includes(SHELL_RULE.exec(tool)?.[2] ?? ''))) continue;
     writers.push(name);

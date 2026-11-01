@@ -1,0 +1,5 @@
+interface:
+  display_name: "Ask Taigent"
+  short_description: "Find the right Taiga skill or workflow step"
+policy:
+  allow_implicit_invocation: false

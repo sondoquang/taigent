@@ -84,7 +84,7 @@ Keep version `1.9.20`: the skills' tool notes and the banned-tool list of `docs/
 
 ## Installing the skills into another project
 
-When the user asks for it: copy every `taiga-*` directory of `<taigent root>/.agents/skills/` into the project's `.agents/skills/` (Codex reads it) and `.claude/skills/` (Claude Code reads it), then run the checks the table above lists for the skills they will use.
+When the user asks for it: copy every `taiga-*` directory and the `ask-taigent` directory of `<taigent root>/.agents/skills/` into the project's `.agents/skills/` (Codex reads it) and `.claude/skills/` (Claude Code reads it), then run the checks the table above lists for the skills they will use.
 
 ## Report
 

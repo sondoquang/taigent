@@ -348,24 +348,26 @@ summary: { created, updated, unchanged } }`, where `id` is the wiki page or the 
 
 ## Skills
 
-The agent skills that drive this CLI are `taiga-*` [Agent Skills](https://agentskills.io/specification), one
-canonical copy in `.agents/skills/` (Codex reads it) and a byte-identical copy in `.claude/skills/` (Claude Code
-reads it). Edit only `.agents/skills/taiga-*`, then copy:
+The agent skills that drive this CLI, the **Taigent skills**, are every `taiga-*` skill plus the router
+`ask-taigent`: [Agent Skills](https://agentskills.io/specification) with one canonical copy in `.agents/skills/`
+(Codex reads it) and a byte-identical copy in `.claude/skills/` (Claude Code reads it). Edit only the
+`.agents/skills/` copy, then copy:
 
-- `taigent skills sync [--json]`: replaces every `.claude/skills/taiga-*` copy that differs from its source and
-  removes copies whose source is gone. Other skills (the vendored ones without the `taiga-` prefix) are never
-  read or written.
+- `taigent skills sync [--json]`: replaces every `.claude/skills/` copy of a Taigent skill that differs from its
+  source and removes copies whose source is gone. Other skills (the vendored mattpocock ones) are never read or
+  written.
 - `taigent skills check [--json]`: exit 0 when the copies match, 3 when they differ (listing each file as
   `missing`, `changed` or `extra`). `npm test` runs it on the repository, so a forgotten sync fails the suite.
 
 Both work on the working directory (run them from the repository root; no `.agents/skills` there is exit 2), are
 offline and need no `TAIGA_*` variable. `skills check --json` prints
-`{ "inSync": false, "skills": ["taiga-apply-backlog", …], "differences": [{ "skill", "file", "status" }] }`
+`{ "inSync": false, "skills": ["ask-taigent", "taiga-apply-backlog", …], "differences": [{ "skill", "file", "status" }] }`
 (`file` is relative to the skill directory); `skills sync --json` prints `{ "skills", "synced", "removed" }`
 (skill names).
 
 | Skill | Invocation | Does |
 |---|---|---|
+| `ask-taigent` | User only (as below) | Router: which Taigent skill, workflow step or CLI command fits a situation, the plan → review → apply rules, and how to maintain the skills. Reads only |
 | `taiga-setup` | Model or user | Checks Node.js and the `TAIGA_*` variables (set or missing, never values), `npx --no -- taigent --help`, and the Taiga MCP server (`listProjects`); names each fix, adds the `taiga` MCP entry to `.mcp.json`/`.codex/config.toml` once the user agrees, and copies the skills into another project on request |
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
@@ -417,7 +419,7 @@ cite are then read from `node_modules/taigent/`. `taiga-status-report` needs onl
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
-| Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: `.agents/skills/taiga-*` → `.claude/skills/taiga-*` |
+| Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `ask-taigent`), `.agents/skills/` → `.claude/skills/` |
 
 Every plan/execute command has the same three steps: a reader (`read*Remote`, all I/O), a pure planner, an executor.
 The CLI only wires them (`runPlan`, `runBootstrap`, `runUpload`) and prints.
