@@ -9,7 +9,7 @@ import { ApplyConflictError, executePlan, type ApplyReport } from './executor.ts
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
-import { WIKI_HOME_SLUG } from './manifest/project.ts';
+import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
 import { readSavedProject, type ItemType } from './manifest/state.ts';
 import { ATTRIBUTE_ITEM_TYPE, buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';

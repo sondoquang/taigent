@@ -18,9 +18,6 @@ import { readManifestYaml } from './yaml.ts';
 
 export const PROJECT_FILE = 'project.yaml';
 
-/** Slug of the wiki page created from `wiki_home`. */
-export const WIKI_HOME_SLUG = 'home';
-
 export const CUSTOM_ATTRIBUTE_ITEM_TYPES = ['epic', 'userstory', 'task'] as const;
 export type CustomAttributeItemType = (typeof CUSTOM_ATTRIBUTE_ITEM_TYPES)[number];
 

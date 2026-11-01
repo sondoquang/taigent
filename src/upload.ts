@@ -9,7 +9,8 @@ import { readFile } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
 import { ApplyConflictError } from './executor.ts';
 import type { Backlog } from './manifest/backlog.ts';
-import { HOME_WIKI_SLUG, WIKI_TARGET_PREFIX, type AttachmentSpec, type Docs } from './manifest/docs.ts';
+import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
+import { WIKI_TARGET_PREFIX, type AttachmentSpec, type Docs } from './manifest/docs.ts';
 import type { ItemType } from './manifest/state.ts';
 import { srcTag, type PlanProject } from './planner.ts';
 import { TaigaConflictError, TaigaError, type AttachmentObjectType, type TaigaClient, type TaigaItem } from './taiga/client.ts';
@@ -122,7 +123,7 @@ async function resolveTargets(
         if (!page) {
           throw new TaigaError(
             `attachment target ${target}: wiki page "${slug}" does not exist on Taiga` +
-              (slug === HOME_WIKI_SLUG ? ' (bootstrap creates it from wiki_home in project.yaml)' : ''),
+              (slug === WIKI_HOME_SLUG ? ' (bootstrap creates it from wiki_home in project.yaml)' : ''),
           );
         }
         wikiIds.set(slug, page.id);

@@ -5,7 +5,7 @@ import { stat } from 'node:fs/promises';
 import { basename, dirname, extname, resolve } from 'node:path';
 import { isFileNotFound, isRecord } from '../guards.ts';
 import { backlogKeys } from './backlog.ts';
-import { checkAttachmentName, checkKeyReference, checkWikiSlug } from './conventions.ts';
+import { checkAttachmentName, checkKeyReference, checkWikiSlug, WIKI_HOME_SLUG } from './conventions.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
 import type { LoadContext } from './manifests.ts';
 import { readManifestYaml } from './yaml.ts';
@@ -14,9 +14,6 @@ export const DOCS_FILE = 'docs.yaml';
 
 /** Attachment targets: `wiki:<slug>` for a wiki page, otherwise a backlog key. */
 export const WIKI_TARGET_PREFIX = 'wiki:';
-
-/** The wiki page bootstrap creates from project.yaml; attachments may target it without declaring it here. */
-export const HOME_WIKI_SLUG = 'home';
 
 export interface WikiPageSpec {
   slug: string;
@@ -127,7 +124,7 @@ export async function loadDocs(path: string, context: Pick<LoadContext, 'loaded'
     } else if (target.startsWith(WIKI_TARGET_PREFIX)) {
       const slug = target.slice(WIKI_TARGET_PREFIX.length);
       parsedTarget = { kind: 'wiki', slug };
-      if (slug !== HOME_WIKI_SLUG && !wikiSlugs.has(slug)) {
+      if (slug !== WIKI_HOME_SLUG && !wikiSlugs.has(slug)) {
         issue(`${at}.target`, 'wiki-reference', `no wiki page with slug ${slug} in docs.yaml`);
       }
     } else {

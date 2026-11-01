@@ -3,8 +3,8 @@
 // (create the project, enable modules, create/color tags, create custom attributes, invite members, create
 // the wiki home). It never disables, renames or deletes anything. `executeBootstrap` runs that plan.
 
-import type { ProjectModule } from './manifest/conventions.ts';
-import { WIKI_HOME_SLUG, type CustomAttributeItemType, type CustomAttributeSpec, type ProjectManifest } from './manifest/project.ts';
+import { WIKI_HOME_SLUG, type ProjectModule } from './manifest/conventions.ts';
+import type { CustomAttributeItemType, CustomAttributeSpec, ProjectManifest } from './manifest/project.ts';
 import { readState, writeState } from './manifest/state.ts';
 import {
   TaigaError,

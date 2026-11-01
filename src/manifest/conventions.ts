@@ -182,6 +182,9 @@ export function checkKeyReference(ref: string, at: string, issue: IssueSink, key
 /** Wiki slugs: lowercase kebab-case, e.g. `home`, `spec-auth-login`, `adr-0001-use-rest`. */
 export const WIKI_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+/** The project's entry page (conventions §8), created by bootstrap from `wiki_home` in project.yaml. */
+export const WIKI_HOME_SLUG = 'home';
+
 /** Rule `wiki-slug`. */
 export function checkWikiSlug(slug: unknown, at: string, issue: IssueSink): slug is string {
   const valid = typeof slug === 'string' && WIKI_SLUG_PATTERN.test(slug);
