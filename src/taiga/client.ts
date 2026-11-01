@@ -53,6 +53,16 @@ export interface TaigaProject {
   id: number;
   slug: string;
   name: string;
+  /** Custom attributes defined on the project, per item type. */
+  customAttributes: Record<CustomAttributeItemType, TaigaCustomAttribute[]>;
+}
+
+/** Custom attribute values of one item (`/{epics,userstories,tasks}/custom-attributes-values/{id}`). */
+export interface TaigaAttributeValues {
+  /** Attribute id (as a string, like Taiga's JSON keys) → value. */
+  values: Record<string, unknown>;
+  /** OCC version of the values object (separate from the item's own version). */
+  version: number;
 }
 
 /** Common shape of epics, user stories and tasks. */
@@ -237,6 +247,23 @@ function parseCustomAttribute(raw: unknown): TaigaCustomAttribute {
   return { id: field(r, 'id', 'number', 'custom attribute'), name: field(r, 'name', 'string', 'custom attribute') };
 }
 
+/** `*_custom_attributes` of a project detail object. */
+function parseCustomAttributes(r: Record<string, unknown>): Record<CustomAttributeItemType, TaigaCustomAttribute[]> {
+  return {
+    epic: list(r.epic_custom_attributes ?? [], 'epic custom attributes').map(parseCustomAttribute),
+    userstory: list(r.userstory_custom_attributes ?? [], 'user story custom attributes').map(parseCustomAttribute),
+    task: list(r.task_custom_attributes ?? [], 'task custom attributes').map(parseCustomAttribute),
+  };
+}
+
+/** URL segment of an item type's custom attribute values. */
+const ATTRIBUTE_VALUES_PATH: Record<CustomAttributeItemType, string> = { epic: 'epics', userstory: 'userstories', task: 'tasks' };
+
+function parseAttributeValues(raw: unknown): TaigaAttributeValues {
+  const r = record(raw, 'custom attributes values');
+  return { values: record(r.attributes_values ?? {}, 'attributes_values'), version: field(r, 'version', 'number', 'custom attributes values') };
+}
+
 function parseProjectDetail(raw: unknown): TaigaProjectDetail {
   const r = record(raw, 'project');
   const tagsColors: Record<string, string | null> = {};
@@ -260,11 +287,7 @@ function parseProjectDetail(raw: unknown): TaigaProjectDetail {
       const x = record(member, 'member');
       return { id: field(x, 'id', 'number', 'member'), username: field(x, 'username', 'string', 'member') };
     }),
-    customAttributes: {
-      epic: list(r.epic_custom_attributes ?? [], 'epic custom attributes').map(parseCustomAttribute),
-      userstory: list(r.userstory_custom_attributes ?? [], 'user story custom attributes').map(parseCustomAttribute),
-      task: list(r.task_custom_attributes ?? [], 'task custom attributes').map(parseCustomAttribute),
-    },
+    customAttributes: parseCustomAttributes(r),
   };
 }
 
@@ -368,6 +391,7 @@ export class TaigaClient {
       id: field(raw, 'id', 'number', 'project'),
       slug: field(raw, 'slug', 'string', 'project'),
       name: field(raw, 'name', 'string', 'project'),
+      customAttributes: parseCustomAttributes(raw),
     };
   }
 
@@ -423,8 +447,19 @@ export class TaigaClient {
     return parseTask(await this.#patch(`/tasks/${id}`, patch, version));
   }
 
-  /** PATCH with the item's `version` (OCC); a stale version becomes a TaigaConflictError. */
-  async #patch(path: string, patch: ItemPatch, version: number): Promise<unknown> {
+  /** Custom attribute values of an item (Taiga creates the values object together with the item). */
+  async getAttributeValues(itemType: CustomAttributeItemType, itemId: number): Promise<TaigaAttributeValues> {
+    return parseAttributeValues(await this.#request('GET', `/${ATTRIBUTE_VALUES_PATH[itemType]}/custom-attributes-values/${itemId}`));
+  }
+
+  /** Replaces all values of an item (attribute id → value), with the values object's `version` (OCC). */
+  async updateAttributeValues(itemType: CustomAttributeItemType, itemId: number, values: Record<string, unknown>, version: number): Promise<TaigaAttributeValues> {
+    const path = `/${ATTRIBUTE_VALUES_PATH[itemType]}/custom-attributes-values/${itemId}`;
+    return parseAttributeValues(await this.#patch(path, { attributes_values: values }, version));
+  }
+
+  /** PATCH with the object's `version` (OCC); a stale version becomes a TaigaConflictError. */
+  async #patch(path: string, patch: Record<string, unknown>, version: number): Promise<unknown> {
     try {
       return await this.#request('PATCH', path, { body: { ...patch, version } });
     } catch (error) {

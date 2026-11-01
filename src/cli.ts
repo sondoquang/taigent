@@ -10,9 +10,9 @@ import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
 import { WIKI_HOME_SLUG } from './manifest/project.ts';
-import { readSavedProject } from './manifest/state.ts';
-import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
-import { TaigaAuthError, TaigaClient, TaigaError } from './taiga/client.ts';
+import { readSavedProject, type ItemType } from './manifest/state.ts';
+import { ATTRIBUTE_ITEM_TYPE, buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
+import { TaigaAuthError, TaigaClient, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
@@ -93,12 +93,24 @@ function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
   return names.map((name) => env[name]!);
 }
 
+/** ` Name: from -> to; …` for the attribute values an operation sets. */
+function formatAttributes(from: Record<string, unknown>, to: Record<string, unknown>): string {
+  return Object.entries(to)
+    .map(([name, value]) => `${name}: ${name in from ? `${JSON.stringify(from[name])} -> ` : ''}${JSON.stringify(value)}`)
+    .join('; ');
+}
+
 function formatOperation(op: Operation): string {
   switch (op.action) {
-    case 'create':
-      return `  + create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}`;
-    case 'update':
-      return `  ~ update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}`;
+    case 'create': {
+      const attributes = op.custom_attributes ? `  [custom attributes ${formatAttributes({}, op.custom_attributes)}]` : '';
+      return `  + create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}${attributes}`;
+    }
+    case 'update': {
+      const changed = op.changes.custom_attributes;
+      const attributes = changed ? `  [custom attributes ${formatAttributes(changed.from, changed.to)}]` : '';
+      return `  ~ update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}${attributes}`;
+    }
     case 'link':
       return `  + link   story ${op.key} -> epic ${op.epic}`;
     case 'skip':
@@ -270,7 +282,28 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
   for (const epic of epics) {
     if (epic.tags.some((tag) => epicTagsWithStories.has(tag))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
   }
-  const plan = buildPlan(backlog, { project: { id: project.id, slug: project.slug }, epics, stories, tasks, epicStories });
+  // Current custom attribute values, only for existing items that declare some in the manifest.
+  const attributeValues: Record<ItemType, Map<number, TaigaAttributeValues>> = { epic: new Map(), story: new Map(), task: new Map() };
+  const declaringTags = new Set<string>();
+  for (const epic of backlog.epics) {
+    for (const item of [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]) {
+      if (Object.keys(item.customAttributes).length > 0) declaringTags.add(srcTag(item.key));
+    }
+  }
+  for (const [type, items] of [['epic', epics], ['story', stories], ['task', tasks]] as const) {
+    for (const item of items) {
+      if (item.tags.some((tag) => declaringTags.has(tag))) attributeValues[type].set(item.id, await client.getAttributeValues(ATTRIBUTE_ITEM_TYPE[type], item.id));
+    }
+  }
+  const plan = buildPlan(backlog, {
+    project: { id: project.id, slug: project.slug },
+    epics,
+    stories,
+    tasks,
+    epicStories,
+    customAttributes: project.customAttributes,
+    attributeValues,
+  });
 
   if (options.command === 'plan' || options.dryRun || !options.yes) {
     process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatPlan(plan));
@@ -279,7 +312,7 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
     throw new UsageError('refusing to apply without --yes; review the plan above, then re-run with --yes');
   }
 
-  const report = await executePlan(plan, client, layout.state);
+  const report = await executePlan(plan, client, layout.state, project.customAttributes);
   process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatReport(report));
   return ExitCode.Ok;
 }
