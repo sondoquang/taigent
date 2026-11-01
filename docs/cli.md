@@ -162,7 +162,7 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
 
 ## Commands
 
-Common options: `--project <slug>` (required except for `validate`, `closed` and `skills`), `--json` (machine-readable stdout),
+Common options: `--project <slug>` (required except for `validate`, `tickets` and `skills`), `--json` (machine-readable stdout),
 `--yes`, `--dry-run`, `-h/--help`. `--dry-run` lists the operations a writing command (`bootstrap`, `apply`, `upload`)
 would run and writes nothing, not even `state.json`; it exits 3 when there are changes, 0 otherwise (`apply --dry-run`
 is the same as `plan`). Without `--yes` or `--dry-run`, a writing command prints the same operations, writes nothing
@@ -351,37 +351,88 @@ same run; `previous: [{ id, size, sha1 }]` lists the same-name attachments that 
 prints an `UploadReport`: `{ project, operations: [<operation> + { id, result: "created" | "updated" | "unchanged" }],
 summary: { created, updated, unchanged } }`, where `id` is the wiki page or the (new) attachment.
 
-## Closed
+## Tickets
 
-`taigent closed --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--json]` lists the stories, tasks and issues
-assigned to the user the CLI logs in as that Taiga closed between the two days, both included. Read-only: it needs no
-manifest and writes nothing. Days are calendar days in the machine's local time zone (`TZ`); `--project` keeps one
-project, otherwise every project the user sees. It answers what the Taiga MCP server (taiga-mcp-server@1.9.20) cannot:
-no MCP tool shows when an item was closed, and `advancedSearch` matches nothing on status, assignee or dates.
+`taigent tickets --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--json]` lists the **Period's tickets**
+(`GLOSSARY.md`) of the user the CLI logs in as: the user stories assigned to them that Taiga closed between the two
+days, or that are due between them, plus every story still open, each with its **Due status**. Tasks and issues are not
+tickets. Read-only: it needs no manifest and writes nothing. Days are calendar days in the machine's local time zone
+(`TZ`), both included; `--project` keeps one project, otherwise every project the user sees. It answers what the Taiga
+MCP server (taiga-mcp-server@1.9.20) cannot: no MCP tool shows when an item was closed, and `advancedSearch` matches
+nothing on status, assignee or dates.
 
-It reads `GET /users/me`, then `GET /userstories?assigned_users=<me>&is_closed=true`,
-`GET /tasks?assigned_to=<me>&status__is_closed=true` and `GET /issues?assigned_to=<me>&status__is_closed=true`
-(plus `project=<id>` with `--project`), and keeps the items whose closing date (`finish_date` on stories,
-`finished_date` on tasks and issues) falls in the range; a closed item without one is left out. Missing or invalid
-days, or `--from` after `--to`, are a usage error (exit 2) before Taiga is contacted. The text form gives the totals,
-then each project's items with their local closing time. `closed --json` prints a `ClosedReport`, items ordered by
-`closedAt`:
+It reads `GET /users/me`, then every `GET /userstories?assigned_users=<me>` (open and closed, plus `project=<id>` with
+`--project`; pagination disabled, so no page is missed), then `GET /projects/<id>` for each project holding a ticket,
+to turn assignee ids into usernames and find its user story custom attribute "Spent Time", then, in a project that has
+it, `GET /userstories/custom-attributes-values/<id>` for each ticket. A story is a ticket when its `finish_date` falls
+in the range, its `due_date` (a plain day) falls in it, or it is open. Due status compares calendar days: a closed
+ticket's local closing day on or before its due date is `On time`, after it `Late`; an open ticket's due date before
+today is `Overdue`, otherwise `On track`; without a due date, `No due date`. A closed story without a `finish_date`
+still counts as closed, has no `closedAt`, and is a ticket only when due in the range; its due status is `null`
+(unknown, it cannot be compared).
+
+**Effort** (`GLOSSARY.md`) is in hours. The "Spent Time" attribute is found by name in each project (trimmed, any case),
+since its id differs from project to project. A ticket whose Spent Time holds a number has that effort, source
+`spent` (0 included); otherwise its `total_points` (the sum of every role's points, 1 point = 1 hour), source
+`points`, an estimate; with neither, `effort` and `effortSource` are null and the ticket is listed in
+`notes.missingEffort` (`ref`, project slug). A project without the attribute uses points only.
+
+Missing or invalid days, or `--from` after `--to`, are a usage error (exit 2) before Taiga is contacted. The text form
+gives one line of totals (closed tickets by due status, open tickets by due status, total effort with the number of
+tickets per source), then each project with one line per ticket (ref, due status, status, due date, local closing
+time, effort, subject); an effort from points reads `5h (estimated from points)`, a missing one `no effort`.
+`tickets --json` prints a `TicketsReport`:
 
 ```json
 {
   "user": { "id": 12, "username": "son.do" },
   "project": null,
   "range": { "from": "2026-10-26", "to": "2026-11-01", "start": "2026-10-25T17:00:00.000Z", "end": "2026-11-01T17:00:00.000Z" },
-  "summary": { "story": 1, "task": 0, "issue": 0, "total": 1 },
-  "items": [
-    { "type": "story", "id": 281, "ref": 84, "subject": "Guideline flow", "status": "Done",
-      "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" }, "closedAt": "2026-11-01T04:26:49.642Z" }
-  ]
+  "today": "2026-11-01",
+  "generatedAt": "2026-11-01T07:05:12.345Z",
+  "tickets": [
+    { "id": 281, "ref": 84, "subject": "Guideline flow", "status": "Done", "isClosed": true,
+      "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" }, "assignees": ["son.do", "an.tran"],
+      "dueDate": "2026-10-30", "closedAt": "2026-11-01T04:26:49.642Z", "dueStatus": "Late",
+      "effort": 8, "effortSource": "spent" }
+  ],
+  "days": [
+    { "date": "2026-10-26", "closed": 0, "effort": 0 },
+    { "date": "2026-11-01", "closed": 18, "effort": 96 }
+  ],
+  "summary": {
+    "tickets": 21,
+    "closed": { "total": 19, "byDueStatus": { "On time": 1, "Late": 17, "No due date": 1 }, "withoutClosingDay": 0 },
+    "open": { "total": 2, "byDueStatus": { "Overdue": 2, "On track": 0, "No due date": 0 } },
+    "effort": { "hours": 104, "spent": { "hours": 60, "tickets": 11 }, "points": { "hours": 44, "tickets": 8 } },
+    "projects": [{ "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub", "tickets": 8 }]
+  },
+  "notes": {
+    "bulkCloses": [{ "count": 18, "first": "2026-11-01T04:26:30.101Z", "last": "2026-11-01T04:27:41.880Z",
+      "tickets": [{ "ref": 84, "project": "vigo-medical-hub" }, { "ref": 31, "project": "vigo-auth" }] }],
+    "missingEffort": [{ "ref": 12, "project": "internal-taigent" }]
+  }
 }
 ```
 
-`project` is the `--project` slug or null; `range.start`/`range.end` are the instants bounding the days (`end`
-excluded).
+`today` is the local day open tickets are compared with. `assignees` lists every assignee's username, or the user id
+when it matches no project member. `tickets` come closed first, by `closedAt` (those without one last), then open:
+`Overdue`, `On track`, `No due date`, each by due date.
+
+`days` holds every day from `--from` to `--to`, days without a closed ticket included (0): the tickets whose local
+closing day it is, and the sum of their effort in hours (a missing effort counts 0). A ticket closed before the period
+(a ticket because it is due in it) appears in no day.
+
+`summary` totals `tickets`: their number; closed ones by due status (`On time`, `Late`, `No due date`) plus
+`withoutClosingDay`, the closed ones with no closing day and so no due status; open ones by due status (`Overdue`,
+`On track`, `No due date`); the total effort in hours, and the hours and number of tickets of each source (`spent`,
+`points`); and the number of tickets per project, most first, then by slug. Hours are rounded to hundredths.
+
+`notes.bulkCloses` lists, by closing time, every run of 3 or more tickets each closed at most 60 seconds after the
+previous one (`count`, the `first` and `last` closing instants, and `tickets` as `ref` and project slug, like
+`missingEffort`): a closing day in such a run may be later
+than when the work was actually done. A gap over 60 seconds starts a new run; a run of 2 is not listed.
+`notes.missingEffort` lists the tickets with no effort.
 
 ## Skills
 
@@ -410,9 +461,10 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
 | `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml` (referencing documents where they already are, no copies), `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
-| `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); the tickets you closed in a period through `taigent closed`, the one shell command it runs |
+| `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools only (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); hands questions about your own tickets to `taiga-my-tickets` |
+| `taiga-my-tickets` | Model or user | Read-only report of your tickets in a period (the current week, Monday to Sunday, by default): `taigent tickets --json`, the one shell command it runs, laid out as header, summary, by day, by project, still open, notes, in the user's language |
 
-Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply|bootstrap|upload|closed` (as `Bash(...)` and, for
+Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply|bootstrap|upload|tickets` (as `Bash(...)` and, for
 Claude Code's Windows PowerShell tool, `PowerShell(...)` rules) and Taiga MCP read tools; every skill that
 pre-approves a writing command (`apply`, `bootstrap`, `upload`) is user-only on both agents (`test/skills.test.ts`
 enforces both rules). They grant, not restrict: the gate before `--yes` is the skill's explicit confirmation step.
@@ -427,7 +479,7 @@ or lists `taigent` as a dependency: otherwise npx would fetch an unrelated `taig
 Another project needs two commands at its root:
 
 ```sh
-npx skills add sondoquang/taigent          # the seven Taigent skills, for the agents it detects
+npx skills add sondoquang/taigent          # the eight Taigent skills, for the agents it detects
 npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite (append #<tag> to pin)
 ```
 
@@ -441,8 +493,8 @@ Neither command registers the Taiga MCP server: for Claude Code the user runs
 `claude mcp add -s user taiga -e TAIGA_API_URL=… -e TAIGA_USERNAME=… -e TAIGA_PASSWORD=… -- npx -y taiga-mcp-server@1.9.20`
 once (values stay in their `~/.claude.json`), or the project commits the `.mcp.json` entry of `taiga-setup` and
 each user sets the variables in their environment and approves the server. The CLI reads the variables from the
-environment or from `.env` at the project root. `taiga-status-report` needs only the Taiga MCP server, except for
-the tickets you closed in a period (`taigent closed`). The `taiga-setup` skill checks all of it and names each fix.
+environment or from `.env` at the project root. `taiga-status-report` needs only the Taiga MCP server;
+`taiga-my-tickets` needs only the CLI (`taigent tickets`). The `taiga-setup` skill checks all of it and names each fix.
 
 ## Exit codes
 
@@ -450,7 +502,7 @@ the tickets you closed in a period (`taigent closed`). The `taiga-setup` skill c
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `closed` without valid `--from`/`--to`, `skills` outside a repository root |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `skills` outside a repository root |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
@@ -464,14 +516,14 @@ the tickets you closed in a period (`taigent closed`). The `taiga-setup` skill c
 | Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`): the one item vocabulary outside the client |
 | Secrets | `src/secrets.ts` | `Secrets` (`add`, `redact`): what no output may show, shared by the CLI (environment) and the client (tokens) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listClosedAssigned` keyed by `WorkItemType`: `story`, `task`, `issue`), the only place that maps item types to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_WORK_ITEM`), `TaigaError`, `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listAssignedStories` for `tickets`), the only place that maps item types to Taiga's endpoint and field names (`TAIGA_ITEM`), `TaigaError`, `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `describePlanOperation`, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `ask-taigent`), `.agents/skills/` → `.claude/skills/` |
-| Closed | `src/closed.ts` | `parseDay`, `dayRange(from, to)`, `readClosed(client, range, project?)` → `ClosedReport`, `formatClosedText`: the read-only `closed` command |
+| Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 
 Every plan/execute command has the same three steps: a reader (`read*Remote`, all I/O), a pure planner, an executor.
 The CLI only wires them (`runPlan`, `runBootstrap`, `runUpload`) and prints.
@@ -493,18 +545,20 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
 
 - `fake.url` (TAIGA_API_URL, includes `/api/v1`) and `fake.user` (`{ id, username, password, email }`, the account
   `POST /auth` accepts; the harness logs in with it).
-- Seeding: `addEpic`, `addUserStory`, `addTask`, `addIssue` (`{ project, subject, description?, tags? }`, plus
+- Seeding: `addEpic`, `addUserStory`, `addTask` (`{ project, subject, description?, tags? }`, plus
   `user_story?` for tasks), `addEpicRelatedUserStory(epic, story)`; bootstrap fixtures `addUser`, `addProject({ slug,
   name?, members?, admins?, is_private?, modules?, tagsColors? })`, `addCustomAttribute`, `addMembership`,
   `addWikiPage`; upload fixtures `addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki",
-  object_id, name, content })`. For `closed`, set the returned item's `assigned_users` (stories) or `assigned_to`,
-  `is_closed` and `finish_date` (stories) or `finished_date`: list responses embed `project_extra_info` and
-  `status_extra_info` (closed stories `Done`, closed tasks and issues `Closed`, otherwise `New`), and the list
-  endpoints filter on `assigned_users`/`is_closed` (stories) and `assigned_to`/`status__is_closed` (tasks, issues),
-  ignoring the other names like Taiga.
+  object_id, name, content })`. For `tickets`, set the returned story's `assigned_users`, `is_closed`, `finish_date`,
+  `due_date` (YYYY-MM-DD), `total_points` (number or null) and `status_name` (its status name when open or closed, null
+  for the default): list responses embed `project_extra_info` and `status_extra_info` (closed stories `Done`, closed
+  tasks `Closed`, otherwise `New`, unless `status_name` is set), and `GET /userstories` filters on `assigned_users`,
+  ignoring the other names like Taiga. A ticket's
+  Spent Time: `addCustomAttribute({ itemType: "userstory", project, name: "Spent Time" })`, then
+  `editAttributeValues("userstory", storyId, { [attributeId]: hours })`.
 - Edits like a Taiga user (bump `version`, recorded for OCC): `editItem(item, changes)`, `editWikiPage(page, changes)`,
   `editAttributeValues(itemType, itemId, values)`.
-- `fake.state`: what Taiga holds, the place to assert outcomes. `epics`, `userStories`, `tasks`, `issues` (tags lowercased),
+- `fake.state`: what Taiga holds, the place to assert outcomes. `epics`, `userStories`, `tasks` (tags lowercased),
   `epicRelatedUserStories` (`{ epic, user_story, order }`), `projects` (`modules`, `tagsColors`, `members`, `admins`),
   `users`, `roles` (`{ id, project, name, slug }`), `memberships` (`{ project, role, user, email }`), `customAttributes`
   (`{ itemType, project, name, description, type }`), `customAttributeValues` (`{ itemType, item, version,

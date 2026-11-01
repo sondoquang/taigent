@@ -1,25 +1,14 @@
 ---
 name: taiga-status-report
-description: "Taiga progress report by sprint and by epic: done vs open stories, points, tasks, blocked items. Use for a Taiga project's status, a sprint's or an epic's progress, a quick count or lookup such as how many epics a project has, or the tickets you closed in a period (\"my tickets last week\")."
-allowed-tools: Bash(npx taigent closed *) PowerShell(npx taigent closed *) mcp__taiga__listProjects mcp__taiga__getProject mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory mcp__taiga__listMilestones mcp__taiga__getMilestone mcp__taiga__getMilestoneStats mcp__taiga__advancedSearch mcp__taiga__queryHelp mcp__taiga__validateQuery
+description: "Taiga progress report by sprint and by epic: done vs open stories, points, tasks, blocked items. Use for a Taiga project's status, a sprint's or an epic's progress, or a quick count or lookup such as how many epics a project has."
+allowed-tools: mcp__taiga__listProjects mcp__taiga__getProject mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory mcp__taiga__listMilestones mcp__taiga__getMilestone mcp__taiga__getMilestoneStats mcp__taiga__advancedSearch mcp__taiga__queryHelp mcp__taiga__validateQuery
 ---
 
 # Taiga status report
 
-Answer from Taiga's own data, **by sprint** and **by epic**, through the Taiga MCP read tools in `allowed-tools` and local files. One branch, the tickets you closed in a period, runs the read-only `npx taigent closed` instead: no MCP tool shows who closed an item or when.
+Answer from Taiga's own data, **by sprint** and **by epic**, through the Taiga MCP read tools in `allowed-tools` and local files. Questions about **your own** tickets or work in a period ("my tickets last week", "what did I finish in October") belong to the `taiga-my-tickets` skill: hand them over.
 
 Tool names below are those of the `taiga` MCP server (taiga-mcp-server@1.9.20); your agent prefixes them with the server name (Claude Code: `mcp__taiga__listProjects`). When they are missing from your tools, or `listProjects` returns an error, stop and run the `taiga-setup` skill.
-
-## Tickets you closed in a period
-
-Questions about the stories, tasks or issues **you** closed in a period ("my tickets last week", "what did I finish in October") take this branch only, never steps 1–4. The MCP tools cannot answer them: none shows a closing date, and `advancedSearch` matches nothing on status, assignee or dates.
-
-1. Check the setup: the project root's `package.json` has `taigent` as `name` or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The CLI reads the `TAIGA_*` variables from the environment or from `.env` on its own.
-2. Turn the period into a first and a last day, `YYYY-MM-DD`. When the words admit two readings ("last week" said on a Sunday), take the more recent one and name the other in your answer.
-3. Run `npx taigent closed --from <first day> --to <last day> --json`, alone in its own shell call; add `--project <slug>` when the user named one project. Exit 2 or 5: show the error and stop; for a missing `TAIGA_*` variable or a refused login, name `taiga-setup` as the fix.
-4. Answer from its JSON: the days, `summary` (total, then stories, tasks and issues), then per project its items as `#ref subject (status)`. It covers the user the CLI logs in as (`user.username`); for anyone else, say so.
-
-Done when the answer gives the days, the total, the count per type and the items per project.
 
 ## 1. Pick the project
 

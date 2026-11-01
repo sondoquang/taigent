@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
-import { dayRange, formatClosedText, parseDay, readClosed } from './closed.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
@@ -17,6 +16,7 @@ import { readBacklogRemote } from './remote.ts';
 import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
+import { dayRange, formatTicketsText, parseDay, readTickets } from './tickets.ts';
 import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
@@ -27,13 +27,13 @@ Commands:
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
-  closed    List your stories, tasks and issues that Taiga closed from --from to --to (read-only)
+  tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
   skills sync   Copy the Taigent skills (taiga-*, ask-taigent) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
 
 Options:
-  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for closed)
-  --from, --to      closed: first and last day (YYYY-MM-DD, inclusive, local time zone)
+  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets)
+  --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
   --json            Machine-readable output on stdout
   --yes             Confirm writes (bootstrap, apply, upload)
   --dry-run         List the operations without writing anything (exit 3 when there are changes)
@@ -49,7 +49,7 @@ Environment (a variable not set in the environment is read from ./.env):
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes),
             3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'closed', 'skills'] as const;
+const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'skills'] as const;
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
@@ -61,9 +61,9 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 interface Options {
   command: Command;
-  /** Required by every command except `validate`, `closed` and `skills`. */
+  /** Required by every command except `validate`, `skills` and the range commands. */
   project?: string;
-  /** `closed`: first and last day, YYYY-MM-DD. */
+  /** Range commands (`tickets`): first and last day, YYYY-MM-DD. */
   from?: string;
   to?: string;
   /** `skills` subcommand. */
@@ -122,19 +122,19 @@ function parseOptions(argv: string[]): Options | 'help' {
   }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
-    if (command !== 'validate' && command !== 'skills' && command !== 'closed') throw new UsageError('--project <slug> is required');
+    if (command !== 'validate' && command !== 'skills' && command !== 'tickets') throw new UsageError('--project <slug> is required');
   } else if (!SLUG_PATTERN.test(values.project)) {
     throw new UsageError(`invalid project slug "${values.project}"`);
   }
-  if (command === 'closed') {
+  if (command === 'tickets') {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
-      if (value === undefined) throw new UsageError(`closed needs --${name} <YYYY-MM-DD>`);
+      if (value === undefined) throw new UsageError(`${command} needs --${name} <YYYY-MM-DD>`);
       if (!parseDay(value)) throw new UsageError(`--${name} must be a calendar day as YYYY-MM-DD, got "${value}"`);
     }
     if (parseDay(values.from!)! > parseDay(values.to!)!) throw new UsageError(`--from ${values.from} is after --to ${values.to}`);
   } else if (values.from !== undefined || values.to !== undefined) {
-    throw new UsageError('--from and --to apply only to closed');
+    throw new UsageError('--from and --to apply only to tickets');
   }
   return {
     command: command as Command,
@@ -416,13 +416,13 @@ async function runPlan(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `closed`: the user's stories, tasks and issues that Taiga closed in the day range. Read-only. */
-async function runClosed(run: Run): Promise<number> {
+/** `tickets`: the user's Period's tickets with their due status. Read-only. */
+async function runTickets(run: Run): Promise<number> {
   const { options } = run;
   const client = await connectTaiga(run);
   const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
-  const report = await readClosed(client, dayRange(options.from!, options.to!), project);
-  emit(run, report, () => formatClosedText(report));
+  const report = await readTickets(client, dayRange(options.from!, options.to!), project);
+  emit(run, report, () => formatTicketsText(report));
   return ExitCode.Ok;
 }
 
@@ -436,8 +436,8 @@ function dispatch(run: Run): Promise<number> {
       return runUpload(run);
     case 'skills':
       return runSkills(run);
-    case 'closed':
-      return runClosed(run);
+    case 'tickets':
+      return runTickets(run);
     case 'plan':
     case 'apply':
       return runPlan(run);
