@@ -8,9 +8,11 @@ import { join } from 'node:path';
 import { isFileNotFound } from '../guards.ts';
 import { BACKLOG_FILE, loadBacklog, type Backlog } from './backlog.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
+import { loadProject, PROJECT_FILE, type ProjectManifest } from './project.ts';
 
 /** Validated manifests of one project; a kind is absent when its file does not exist or is invalid. */
 export interface Manifests {
+  project?: ProjectManifest;
   backlog?: Backlog;
 }
 
@@ -35,6 +37,7 @@ export interface ManifestEntry<K extends ManifestKind> {
 type AnyManifestEntry = { [K in ManifestKind]: ManifestEntry<K> }[ManifestKind];
 
 export const MANIFESTS: readonly AnyManifestEntry[] = [
+  { kind: 'project', file: PROJECT_FILE, load: (path, context) => loadProject(path, context.slug) },
   { kind: 'backlog', file: BACKLOG_FILE, load: (path) => loadBacklog(path) },
 ];
 
