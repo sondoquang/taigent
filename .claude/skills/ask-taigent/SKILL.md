@@ -25,7 +25,7 @@ The route most work travels. Every write to Taiga goes **plan → review → app
 Beside the main flow:
 
 - **`taiga-upload-docs`**: specs, ADRs, guides and meeting notes as wiki pages and attachments, declared in `taiga/<slug>/docs.yaml`, after bootstrap (and after the backlog when attachments target item keys).
-- **`taiga-status-report`**: progress by sprint and by epic, or one quick count or lookup. Read-only, any time; needs only the Taiga MCP server, so it works in any project.
+- **`taiga-status-report`**: progress by sprint and by epic, one quick count or lookup, or the tickets you closed in a period. Read-only, any time; the MCP server answers all but the last, which runs `taigent closed`.
 
 ## On-ramps
 
@@ -35,7 +35,7 @@ Starting situations, and where each merges onto the flow.
 - **Brand-new Taiga project** → `taiga-bootstrap-project`, then `taiga-plan-backlog` and `taiga-upload-docs`.
 - **Project already on Taiga, no manifest yet** → `taiga-plan-backlog`. Hand-made items carry no `src:` tag; it lists them and asks before adding the same work. `taiga-bootstrap-project` completes the existing project when you are its admin.
 - **New or changed requirement** → `taiga-plan-backlog` with the request as the spec, then review and `taiga-apply-backlog`.
-- **"How far along are we?" or "how many …?"** → `taiga-status-report`.
+- **"How far along are we?", "how many …?" or "what did I close last week?"** → `taiga-status-report`.
 - **Remove, rename or move items on Taiga** → the CLI never deletes. An item dropped from the manifest becomes an **orphan** that `plan` reports; a moved story keeps its old epic link, reported as `staleLinks`. A human cleans both up on Taiga. Keys never change after apply: a new key is a new item.
 - **Status, assignee, sprint or points** → people set these on Taiga; manifests carry none of them.
 - **A command fails** → branch on its exit code (`docs/cli.md` §Exit codes). Exit 4: the manifest breaks a convention; `taigent validate` lists each problem with its rule. Exit 2 or 5 naming a missing `TAIGA_*` variable or a refused login: `taiga-setup`.
@@ -60,6 +60,7 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 | `taigent apply --project <slug> --yes` | Apply `backlog.yaml` | apply-backlog |
 | `taigent bootstrap --project <slug> --dry-run\|--yes` | Create or complete the project from `project.yaml` | bootstrap-project |
 | `taigent upload --project <slug> --dry-run\|--yes` | Wiki pages and attachments from `docs.yaml` | upload-docs |
+| `taigent closed --from <day> --to <day> [--project <slug>]` | Your stories, tasks and issues closed in those days; read-only | status-report |
 | `taigent skills sync\|check` | Skill maintenance, below | you |
 
 ## Maintaining the skills
