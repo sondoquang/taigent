@@ -1,0 +1,3 @@
+interface:
+  display_name: "Taiga Plan Backlog"
+  short_description: "Turn a spec into the Taiga backlog manifest"
