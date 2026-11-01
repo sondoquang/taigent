@@ -67,8 +67,9 @@ function findTemplate(templates: TaigaProjectTemplate[], name: string): TaigaPro
 }
 
 /**
- * Reads what bootstrap compares project.yaml with. Refuses (before any write) when no project has the manifest's
- * slug but `statePath` records a project a previous run created under another slug: never create twice.
+ * Reads what bootstrap compares project.yaml with. Refuses (before any write) when no visible project has the
+ * manifest's slug but `statePath` records a project a previous run created under another slug, or a project the user
+ * cannot see already has the slug: never create a second project.
  */
 export async function readBootstrapRemote(manifest: ProjectManifest, client: TaigaClient, statePath: string): Promise<BootstrapRemote> {
   const me = await client.getMe();
@@ -81,6 +82,13 @@ export async function readBootstrapRemote(manifest: ProjectManifest, client: Tai
         `state.json already points to project id ${recorded.id} (slug "${recorded.slug}"), but no project has slug "${manifest.slug}"; ` +
           `refusing to create another one. Have a Taiga admin set its slug to "${manifest.slug}", or remove "project" from state.json ` +
           'if that project is unrelated.',
+      );
+    }
+    if (await client.isSlugTakenByInvisibleProject(manifest.slug)) {
+      throw new TaigaError(
+        `slug "${manifest.slug}" is already taken by a project you cannot see (private, and you are not a member); refusing to ` +
+          `create another one, which Taiga would give a suffixed slug. Ask its admin to add you as an admin, or rename the project.`,
+        403,
       );
     }
   }

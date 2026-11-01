@@ -236,6 +236,21 @@ test('bootstrap refuses an existing slug whose project the user does not adminis
   assert.deepEqual(writes(h.fake), []);
 });
 
+test('bootstrap refuses a slug taken by a private project the user cannot see, before creating anything', async (t) => {
+  const h = await setup(t);
+  // Another user's private project: by_slug answers 404 like for a free slug, the resolver answers 403.
+  const other = h.fake.addUser({ username: 'someone-else', email: 'else@example.test' });
+  h.fake.addProject({ slug: SLUG, name: 'Acme - Portal', members: [other.id], admins: [other.id], is_private: true });
+
+  for (const args of [['--yes'], ['--dry-run']]) {
+    const result = await h.taigent(['bootstrap', '--project', SLUG, ...args, '--json']);
+    assert.equal(result.code, 5, result.stderr);
+    assert.match(result.stderr, /slug "acme-portal" is already taken by a project you cannot see/);
+  }
+  assert.equal(h.fake.state.projects.length, 1, 'no second project');
+  assert.deepEqual(writes(h.fake), []);
+});
+
 test('bootstrap rejects a member role that the template does not define before writing anything', async (t) => {
   const h = await setup(t, PROJECT_YAML.replace('role: UX', 'role: Tester'));
 

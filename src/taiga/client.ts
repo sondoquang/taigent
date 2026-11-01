@@ -555,6 +555,22 @@ export class TaigaClient {
     return raw === undefined ? undefined : parseProjectDetail(raw);
   }
 
+  /**
+   * Whether a project the user cannot see has `slug`. `by_slug` answers 404 both for a free slug and for a private
+   * project the user is not a member of; `GET /resolver?project=<slug>` answers 403 for the latter (taiga-back
+   * `ResolverViewSet.list` looks the slug up unfiltered, then checks `view_project`) and 404 for a free slug.
+   */
+  async isSlugTakenByInvisibleProject(slug: string): Promise<boolean> {
+    try {
+      await this.#request('GET', '/resolver', { query: { project: slug } });
+      return false;
+    } catch (error) {
+      if (error instanceof TaigaError && error.status === 403) return true;
+      if (error instanceof TaigaError && error.status === 404) return false;
+      throw error;
+    }
+  }
+
   /** Project detail by id, or undefined when it does not exist or is not visible. */
   async findProject(id: number): Promise<TaigaProjectDetail | undefined> {
     const raw = await this.#find('GET', `/projects/${id}`);

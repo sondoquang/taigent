@@ -260,10 +260,15 @@ Steps, in order (each is `create`, `update` or `skip` in the plan):
 | membership | `POST /memberships {project, role, username}` (role id looked up by name) | username not a member / e-mail not invited |
 | wiki | `POST /wiki {project, slug: "home", content}` | `GET /wiki/by_slug` finds no `home` (an existing page is left alone) |
 
-Refusals (exit 5, nothing written): the slug exists but `i_am_admin` is false (`status: 403`); a member's role is
-not defined by the template/project; the template is unknown. Taiga derives the slug itself (read-only on
-`POST /projects`, possibly prefixed with the owner username): if the created slug differs, bootstrap stops with
-exit 5 after recording the real id/slug in `state.json`, and later runs refuse to create a second project.
+Refusals (exit 5, nothing written): the slug exists but `i_am_admin` is false (`status: 403`); the slug belongs to a
+private project the user cannot see (`status: 403`); a member's role is not defined by the template/project; the
+template is unknown. `GET /projects/by_slug` answers 404 both for a free slug and for a private project the user is not
+a member of, so when it finds nothing bootstrap asks `GET /resolver?project=<slug>`, which taiga-back answers 403 for
+an existing project the user cannot see and 404 for a free slug (`ResolverViewSet.list`: unfiltered lookup, then
+`view_project`). Without that check Taiga would create a second project with a suffixed slug (`slugify_uniquely`:
+`<slug>-1`, …). Taiga derives the slug itself (read-only on `POST /projects`, possibly prefixed with the owner
+username, `DEFAULT_PROJECT_SLUG_PREFIX`): if the created slug still differs, bootstrap stops with exit 5 after
+recording the real id/slug in `state.json`, and later runs refuse to create a second project.
 
 `state.json` gets `project: { id, slug }` as soon as the project exists (backlog `items` are preserved).
 `bootstrap --dry-run --json` prints a `BootstrapPlan`:

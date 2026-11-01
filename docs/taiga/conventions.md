@@ -43,8 +43,9 @@ item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao gi
 
 Lưu ý: Taiga coi `slug` là read-only khi tạo project và tự sinh nó từ tên. Nếu instance bật
 `DEFAULT_PROJECT_SLUG_PREFIX` (mặc định của taiga-back), slug sẽ có thêm tiền tố username của người tạo.
-`taigent bootstrap` kiểm slug thực tế sau khi tạo và báo lỗi nếu nó khác manifest. Đổi tên project về sau
-**không** đổi slug.
+`taigent bootstrap` kiểm slug thực tế sau khi tạo và báo lỗi nếu nó khác manifest. Slug trùng với project private
+mà bạn không thấy (không là thành viên) thì bootstrap từ chối trước khi tạo gì (nếu không Taiga sẽ tạo project thứ
+hai với slug `<slug>-1`). Đổi tên project về sau **không** đổi slug.
 
 ## 3. Template và module
 

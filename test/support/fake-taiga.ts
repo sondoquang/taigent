@@ -1294,6 +1294,15 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       return { status: 200, body: projectJson(project, userId) };
     }
 
+    // taiga-back ResolverViewSet.list: an unfiltered lookup by slug, then the view_project check, so a private
+    // project the user cannot see is a 403 while a free slug is a 404 (references/api.py, permissions.py).
+    if (method === 'GET' && path === '/resolver') {
+      const project = state.projects.find((p) => p.slug === query.get('project'));
+      if (!project) throw notFound();
+      if (!readableProject(project, userId)) throw permissionDenied();
+      return { status: 200, body: { project: project.id } };
+    }
+
     const bootstrapReply = bootstrapRoute(method, path, query, body, userId);
     if (bootstrapReply) return bootstrapReply;
 
