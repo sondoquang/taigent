@@ -283,6 +283,7 @@ Viết skill theo `writing-for-agents`/Agent Skills:
 
   Đặt `required = true` cho server taiga để job dừng hẳn khi MCP không khởi động được, và đặt `tools.<tool>.approval_mode` cho các tool đọc [[50]][s50] [[48]][s48]. `[UNVERIFIED]` Chưa rõ cách `codex exec` xử lý yêu cầu duyệt tool MCP khi không có người trả lời; cần thử thực tế.
 - Nên có một script `tools/taiga/run-agent.(sh|ps1)` bọc hai lệnh trên, để mọi người chạy cùng tham số. User là người dùng Windows nên cần bản PowerShell `[INFERENCE]`.
+  - Đã làm (ticket #12): `tools/taiga/run-skill.(ps1|sh)`. Kết quả tra docs + source về câu hỏi duyệt tool MCP của `codex exec` (vẫn `[UNVERIFIED]` vì chưa chạy Codex) ở `docs/headless.md`.
 
 ### 4.8 Đồng bộ skills giữa `.claude` và `.agents`
 

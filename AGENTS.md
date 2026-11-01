@@ -27,3 +27,7 @@ Set `TAIGA_API_URL` (e.g. `https://taiga.example.com/api/v1`), `TAIGA_USERNAME`,
 Before creating or changing anything on Taiga, read `docs/taiga/conventions.md`: project name/slug, template and modules, prefixed tags, item keys, story/task templates, status names, wiki slugs, attachment names, the **banned MCP tools**, and the plan → review → apply workflow. Writes to Taiga go only through the `taigent` CLI (`docs/cli.md`); MCP is read/report/comment only. Run `taigent validate` after editing any manifest under `taiga/`.
 
 The `taiga-*` skills (`taiga-plan-backlog`, `taiga-apply-backlog`, `taiga-bootstrap-project`, `taiga-upload-docs`, `taiga-status-report`) have one source: `.agents/skills/taiga-*`. After editing one there, run `npx taigent skills sync` to refresh the `.claude/skills/` copy; `taigent skills check` (also run by `npm test`) fails while the copies differ.
+
+## Headless runs
+
+Run a skill without interaction with `tools/taiga/run-skill.ps1` (PowerShell) or `tools/taiga/run-skill.sh` (sh), e.g. `.\tools\taiga\run-skill.ps1 claude taiga-status-report <slug>`; `--dry-run` prints the command only. The standard allowlist (Taiga MCP read tools + `npx taigent` commands) lives in `tools/taiga/allowlist.txt` only: never add an MCP write tool or a banned tool to it. See `docs/headless.md` (also for how `codex exec` handles MCP approvals unattended).
