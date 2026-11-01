@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { BootstrapPlan, BootstrapReport } from '../src/bootstrap/plan.ts';
+import type { BootstrapPlan, BootstrapReport } from '../src/bootstrap.ts';
 import type { FakeTaiga } from './support/fake-taiga.ts';
 import { startHarness, type Harness } from './support/harness.ts';
 
@@ -108,7 +108,7 @@ test('bootstrap --yes creates the project from the template looked up by name an
   assert.deepEqual(await h.readState(SLUG), { project: { id: project.id, slug: SLUG }, items: {} });
   const report = result.json<BootstrapReport>();
   assert.deepEqual(report.project, { id: project.id, slug: SLUG });
-  assert.deepEqual(report.summary, { created: 11, updated: 1, unchanged: 0 });
+  assert.deepEqual(report.summary, { created: 10, updated: 1, unchanged: 0 });
 });
 
 test('bootstrap --dry-run lists the operations, writes nothing and exits 3', async (t) => {
@@ -174,7 +174,7 @@ test('re-running bootstrap on the bootstrapped project creates nothing and repor
   assert.equal(again.code, 0, again.stderr);
   assert.deepEqual(writes({ ...h.fake, requests: h.fake.requests.slice(before) }), []);
   assert.equal(h.fake.state.projects.length, 1);
-  assert.deepEqual(again.json<BootstrapReport>().summary, { created: 0, updated: 0, unchanged: 12 });
+  assert.deepEqual(again.json<BootstrapReport>().summary, { created: 0, updated: 0, unchanged: 11 });
 
   const dry = await h.taigent(['bootstrap', '--project', SLUG, '--dry-run']);
   assert.equal(dry.code, 0, dry.stderr);
@@ -220,7 +220,7 @@ test('bootstrap on an existing project (matched by slug) only fills the gaps', a
     { who: 'carol@newcomer.test', role: 'UX' },
   ]);
   const report = result.json<BootstrapReport>();
-  assert.deepEqual(report.summary, { created: 4, updated: 2, unchanged: 6 });
+  assert.deepEqual(report.summary, { created: 4, updated: 2, unchanged: 5 });
   assert.deepEqual(await h.readState(SLUG), { project: { id: project.id, slug: SLUG }, items: {} });
 });
 

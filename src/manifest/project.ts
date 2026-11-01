@@ -1,9 +1,7 @@
 // Project manifest `taiga/<slug>/project.yaml`: the desired Taiga project that `taigent bootstrap` creates
 // or completes. Schema checks live here; naming/template/module/tag rules come from conventions.ts.
 
-import { readFile } from 'node:fs/promises';
-import { parse } from 'yaml';
-import { errorMessage, isFileNotFound, isRecord } from '../guards.ts';
+import { isRecord } from '../guards.ts';
 import {
   checkModules,
   checkProjectName,
@@ -16,6 +14,7 @@ import {
   type ProjectTemplate,
 } from './conventions.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
+import { readManifestYaml } from './yaml.ts';
 
 export const PROJECT_FILE = 'project.yaml';
 
@@ -73,19 +72,7 @@ const MEMBER_FIELDS: Record<string, true> = { username: true, email: true, role:
 
 /** Reads and validates the project manifest at `path`; `dirSlug` is the name of its directory. */
 export async function loadProject(path: string, dirSlug: string): Promise<ProjectManifest> {
-  let text: string;
-  try {
-    text = await readFile(path, 'utf8');
-  } catch (error) {
-    if (!isFileNotFound(error)) throw error;
-    throw new ManifestError([{ file: path, path: '', rule: 'file-exists', message: 'manifest file not found' }]);
-  }
-  let doc: unknown;
-  try {
-    doc = parse(text) ?? {};
-  } catch (error) {
-    throw new ManifestError([{ file: path, path: '', rule: 'yaml-syntax', message: errorMessage(error) }]);
-  }
+  const doc = await readManifestYaml(path);
 
   const issues: ManifestIssue[] = [];
   const issue = (at: string, rule: string, message: string) => issues.push({ file: path, path: at, rule, message });
