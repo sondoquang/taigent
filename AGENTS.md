@@ -21,3 +21,7 @@ Set `TAIGA_API_URL` (e.g. `https://taiga.example.com/api/v1`), `TAIGA_USERNAME`,
 - Claude Code reads `.mcp.json` (`${TAIGA_*}` placeholders). Check with `claude mcp list`.
 - Codex reads `.codex/config.toml` (`env_vars`, `required = true`) once the project is trusted.
 - Both pin `taiga-mcp-server@1.9.20`; bump the version in both files together.
+
+## Taiga conventions
+
+Before creating or changing anything on Taiga, read `docs/taiga/conventions.md`: project name/slug, template and modules, prefixed tags, item keys, story/task templates, status names, wiki slugs, attachment names, the **banned MCP tools**, and the plan → review → apply workflow. Writes to Taiga go only through the `taigent` CLI (`docs/cli.md`); MCP is read/report/comment only. Run `taigent validate` after editing any manifest under `taiga/`.

@@ -1,14 +1,11 @@
 // Manifest module: loads and validates `taiga/<slug>/backlog.yaml`. No network I/O.
 
-import { readFile } from 'node:fs/promises';
-import { parse } from 'yaml';
-import { errorMessage, isFileNotFound, isRecord } from '../guards.ts';
+import { isRecord } from '../guards.ts';
+import { checkKey, checkTag } from './conventions.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
+import { readManifestYaml } from './yaml.ts';
 
 export const BACKLOG_FILE = 'backlog.yaml';
-
-/** Stable item keys: uppercase letters/digits in dash-separated groups, e.g. `AUTH-LOGIN`. */
-export const KEY_PATTERN = /^[A-Z0-9]+(?:-[A-Z0-9]+)*$/;
 
 interface ItemSpec {
   key: string;
@@ -48,22 +45,22 @@ function isStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string' && entry !== '');
 }
 
+/** Every item key declared in the backlog (epics, stories and tasks). */
+export function backlogKeys(backlog: Backlog): Set<string> {
+  const keys = new Set<string>();
+  for (const epic of backlog.epics) {
+    keys.add(epic.key);
+    for (const story of epic.stories) {
+      keys.add(story.key);
+      for (const task of story.tasks) keys.add(task.key);
+    }
+  }
+  return keys;
+}
+
 /** Reads and validates the backlog manifest at `path`; throws ManifestError listing every issue. */
 export async function loadBacklog(path: string): Promise<Backlog> {
-  let text: string;
-  try {
-    text = await readFile(path, 'utf8');
-  } catch (error) {
-    if (!isFileNotFound(error)) throw error;
-    throw new ManifestError([{ file: path, path: '', rule: 'file-exists', message: 'manifest file not found' }]);
-  }
-
-  let doc: unknown;
-  try {
-    doc = parse(text) ?? {};
-  } catch (error) {
-    throw new ManifestError([{ file: path, path: '', rule: 'yaml-syntax', message: errorMessage(error) }]);
-  }
+  const doc = await readManifestYaml(path);
 
   const issues: ManifestIssue[] = [];
   const issue = (at: string, rule: string, message: string) => issues.push({ file: path, path: at, rule, message });
@@ -84,16 +81,11 @@ export async function loadBacklog(path: string): Promise<Backlog> {
       if (!KNOWN_FIELDS[kind].has(field)) issue(`${at}.${field}`, 'known-field', `unknown ${kind} field \`${field}\``);
     }
     const { key, subject, description = '', tags = [] } = raw;
-    if (typeof key !== 'string' || !KEY_PATTERN.test(key)) {
-      issue(`${at}.key`, 'key-format', `key is required and must match ${KEY_PATTERN} (e.g. AUTH-LOGIN)`);
-    } else if (seenKeys.has(key)) {
-      issue(`${at}.key`, 'key-unique', `duplicate key ${key} (first used at ${seenKeys.get(key)})`);
-    } else {
-      seenKeys.set(key, `${at}.key`);
-    }
+    checkKey(key, `${at}.key`, issue, seenKeys);
     if (typeof subject !== 'string' || subject.trim() === '') issue(`${at}.subject`, 'required', 'subject is required');
     if (typeof description !== 'string') issue(`${at}.description`, 'type', 'must be a string');
-    if (!isStringList(tags)) issue(`${at}.tags`, 'type', 'must be a list of non-empty strings');
+    if (!Array.isArray(tags)) issue(`${at}.tags`, 'type', 'must be a list of tags');
+    else tags.forEach((tag: unknown, i) => checkTag(tag, `${at}.tags[${i}]`, issue));
     return { key, subject, description, tags, raw } as ItemSpec & { raw: Record<string, unknown> };
   }
 

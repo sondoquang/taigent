@@ -5,15 +5,16 @@ import { parseArgs } from 'node:util';
 import { ExitCode } from './exit-codes.ts';
 import { errorMessage } from './guards.ts';
 import { ApplyConflictError, executePlan, type ApplyReport } from './executor.ts';
-import { loadBacklog } from './manifest/backlog.ts';
-import { ManifestError } from './manifest/errors.ts';
-import { projectLayout } from './manifest/layout.ts';
+import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
+import { manifestsRoot, projectLayout } from './manifest/layout.ts';
+import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
 import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
 import { TaigaAuthError, TaigaClient, TaigaError } from './taiga/client.ts';
 
-const USAGE = `Usage: taigent <command> --project <slug> [options]
+const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
 Commands:
+  validate Check manifests against the conventions, offline (all projects without --project)
   plan     Show what apply would change on Taiga (exit 3 when there are changes)
   apply    Apply the manifest to Taiga (requires --yes)
 
@@ -33,7 +34,7 @@ Environment:
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
             3 plan has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['plan', 'apply'] as const;
+const COMMANDS = ['validate', 'plan', 'apply'] as const;
 type Command = (typeof COMMANDS)[number];
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
@@ -43,7 +44,8 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 interface Options {
   command: Command;
-  project: string;
+  /** Required by every command except `validate`. */
+  project?: string;
   json: boolean;
   yes: boolean;
 }
@@ -70,8 +72,11 @@ function parseOptions(argv: string[]): Options | 'help' {
   if (!command) throw new UsageError('missing command');
   if (!COMMANDS.includes(command as Command)) throw new UsageError(`unknown command "${command}"`);
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
-  if (!values.project) throw new UsageError('--project <slug> is required');
-  if (!SLUG_PATTERN.test(values.project)) throw new UsageError(`invalid project slug "${values.project}"`);
+  if (values.project === undefined) {
+    if (command !== 'validate') throw new UsageError('--project <slug> is required');
+  } else if (!SLUG_PATTERN.test(values.project)) {
+    throw new UsageError(`invalid project slug "${values.project}"`);
+  }
   return { command: command as Command, project: values.project, json: values.json, yes: values.yes };
 }
 
@@ -151,11 +156,41 @@ function formatReport(report: ApplyReport): string {
   return `${lines.join('\n')}\n`;
 }
 
+/** Validates one project's manifests, or every project under the manifests root. Offline: no env needed. */
+async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
+  const root = manifestsRoot(env, cwd);
+  const slugs = options.project ? [options.project] : await listProjectSlugs(root);
+  if (slugs.length === 0) {
+    throw new ManifestError([{ file: root, path: '', rule: 'file-exists', message: 'no project manifest directory found' }]);
+  }
+  const projects: LoadedProject[] = [];
+  const issues: ManifestIssue[] = [];
+  for (const slug of slugs) {
+    try {
+      projects.push(await loadManifests(projectLayout(slug, env, cwd).dir, slug));
+    } catch (error) {
+      if (!(error instanceof ManifestError)) throw error;
+      issues.push(...error.issues);
+    }
+  }
+  if (issues.length > 0) throw new ManifestError(issues);
+
+  const report = projects.map(({ slug, files }) => ({ slug, files: files.map((file) => relative(cwd, file)) }));
+  process.stdout.write(
+    options.json
+      ? `${JSON.stringify({ valid: true, projects: report }, null, 2)}\n`
+      : `${report.flatMap(({ files }) => files.map((file) => `${file}: ok`)).join('\n')}\nAll manifests follow the conventions.\n`,
+  );
+  return ExitCode.Ok;
+}
+
 async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  const layout = projectLayout(options.project, env, cwd);
-  const backlog = await loadBacklog(layout.backlog);
+  if (options.command === 'validate') return runValidate(options, env, cwd);
+  const slug = options.project!;
+  const layout = projectLayout(slug, env, cwd);
+  const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
   const client = await connectTaiga(env);
-  const project = await client.getProjectBySlug(options.project);
+  const project = await client.getProjectBySlug(slug);
   const [epics, stories, tasks] = await Promise.all([
     client.listEpics(project.id),
     client.listUserStories(project.id),
