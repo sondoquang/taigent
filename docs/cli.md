@@ -30,6 +30,7 @@ One directory per Taiga project, named by its slug, committed to git:
 ```
 taiga/<slug>/
   backlog.yaml   # desired epics (→ stories → tasks in later versions)
+  docs.yaml      # wiki pages + attachments (optional)
   state.json     # written by apply: key → Taiga id/ref/version (commit it)
 ```
 
@@ -43,7 +44,20 @@ epics:
     tags: [type:feature, area:auth]   # optional
 ```
 
-Unknown fields are rejected.
+Unknown fields are rejected. Names, tags, keys, wiki slugs and attachment names follow
+`docs/taiga/conventions.md`; each rule there has the `rule` id that validation errors report.
+
+`docs.yaml` (paths are relative to the directory of `docs.yaml`):
+
+```yaml
+wiki:
+  - slug: spec-auth                  # kebab-case, unique
+    file: pages/spec-auth.md         # Markdown, must exist
+attachments:
+  - target: AUTH-LOGIN               # a backlog key, or wiki:<slug> (a wiki page above, or wiki:home)
+    file: files/auth-login-flow.pdf  # must exist; its name is the attachment name on Taiga
+    description: Login flow          # optional
+```
 
 ## Identity and state
 
@@ -60,8 +74,13 @@ stale `state.json` never causes duplicates. `state.json` is a cache, rewritten b
 
 ## Commands
 
-Common options: `--project <slug>` (required), `--json` (machine-readable stdout), `--yes`, `-h/--help`.
+Common options: `--project <slug>` (required except for `validate`), `--json` (machine-readable stdout), `--yes`,
+`-h/--help`.
 
+- `taigent validate [--project <slug>] [--json]`: checks every manifest present in `taiga/<slug>/` (all project
+  directories without `--project`) against the schema and the conventions. Offline: needs no `TAIGA_*` variable
+  and never contacts Taiga. Exit 0 when valid, 4 otherwise. `--json` prints
+  `{ "valid": true, "projects": [{ "slug", "files": ["taiga/demo/backlog.yaml", …] }] }`.
 - `taigent plan --project <slug> [--json]`: reads Taiga, prints the operations `apply` would run. Never writes.
 - `taigent apply --project <slug> --yes [--json]`: runs the plan, creating missing items in order and writing
   `state.json` after each created item (a failed run resumes where it stopped). Without `--yes` it prints the
@@ -87,7 +106,9 @@ summary: { created, unchanged } }`.
 
 Errors print `taigent: <message>` on stderr; with `--json`, stdout also gets
 `{ "error": { "kind": "usage" | "validation" | "taiga", "message", "issues"?, "status"? } }`.
-Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1].key` / `key-unique`.
+Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1].key` / `key-unique`; the text
+form is `<file>: <path>: <message> [<rule>]`. `plan`/`apply` validate the whole project directory the same way
+(and require `backlog.yaml`) before contacting Taiga.
 
 ## Exit codes
 
@@ -105,10 +126,16 @@ Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1]
 | Module | File | Role |
 |---|---|---|
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`) |
-| Manifest | `src/manifest/` | `loadBacklog`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
+| Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog`, `loadDocs`, conventions rules (`conventions.ts`), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`), `TaigaError` |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)`, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath)` |
+
+Adding a manifest kind: write `load<Kind>(path, context)` that reads with `readManifestYaml`, reports every
+problem through an `issue(path, rule, message)` sink (reusing the `check*` functions of `conventions.ts`) and
+throws one `ManifestError`; then add its type to `Manifests` and an entry to `MANIFESTS` in `manifests.ts`, in
+dependency order (`context.loaded` holds the manifests loaded before it, `context.invalid` the ones that failed).
+`validate` and every command then pick it up. New rules go in `conventions.ts` and `docs/taiga/conventions.md`.
 
 ## Tests
 
