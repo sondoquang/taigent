@@ -13,8 +13,13 @@ export interface ProjectLayout {
   state: string;
 }
 
+/** The manifests root: TAIGENT_MANIFESTS_DIR, default `./taiga`, resolved against `cwd`. */
+export function manifestsRoot(env: NodeJS.ProcessEnv, cwd: string): string {
+  return resolve(cwd, env.TAIGENT_MANIFESTS_DIR || DEFAULT_MANIFESTS_DIR);
+}
+
 export function projectLayout(slug: string, env: NodeJS.ProcessEnv, cwd: string): ProjectLayout {
-  const root = resolve(cwd, env.TAIGENT_MANIFESTS_DIR || DEFAULT_MANIFESTS_DIR);
+  const root = manifestsRoot(env, cwd);
   const dir = join(root, slug);
   return { dir, backlog: join(dir, BACKLOG_FILE), state: join(dir, STATE_FILE) };
 }
