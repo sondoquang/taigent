@@ -137,17 +137,17 @@ function onlyAttachment(attachments: TaigaAttachment[], name: string, bytes: Buf
 
 /** Reads everything the run created back over REST and checks links, parents, wiki page and attachments. */
 async function verifyRemote(client: TaigaClient, projectId: number) {
-  const epics = await client.listEpics(projectId);
+  const epics = await client.listItems('epic', projectId);
   const epic = only(epics, KEY.epic);
   only(epics, KEY.epic2);
-  const story = only(await client.listUserStories(projectId), KEY.story);
-  const task = only(await client.listTasks(projectId), KEY.task);
+  const story = only(await client.listItems('story', projectId), KEY.story);
+  const task = only(await client.listItems('task', projectId), KEY.task);
   assert.ok((await client.listEpicUserStories(epic.id)).includes(story.id), `story ${KEY.story} is not linked to epic ${KEY.epic}`);
   assert.equal(task.userStory, story.id, `task ${KEY.task} is not under story ${KEY.story}`);
   const page = await client.findWikiPage(projectId, WIKI_SLUG);
   assert.ok(page, `wiki page ${WIKI_SLUG} not found`);
   assert.equal(page.content, WIKI_CONTENT);
-  onlyAttachment(await client.listAttachments('epics', projectId, epic.id), EPIC_FILE, EPIC_BYTES);
+  onlyAttachment(await client.listAttachments('epic', projectId, epic.id), EPIC_FILE, EPIC_BYTES);
   onlyAttachment(await client.listAttachments('wiki', projectId, page.id), WIKI_FILE, WIKI_BYTES);
   return { epics, epic, story, task, page };
 }

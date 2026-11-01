@@ -1,11 +1,8 @@
 // Planner: pure function from (manifest, Taiga state read back) to an ordered plan. No I/O.
 
+import { ITEM_TYPES, type ItemType } from './items.ts';
 import type { AttributeValue, Backlog, StorySpec } from './manifest/backlog.ts';
-import type { ItemType } from './manifest/state.ts';
-import { TaigaError, type CustomAttributeItemType, type TaigaAttributeValues, type TaigaCustomAttribute, type TaigaItem, type TaigaTask } from './taiga/client.ts';
-
-/** Taiga's name of each item type in custom attribute endpoints. */
-export const ATTRIBUTE_ITEM_TYPE: Record<ItemType, CustomAttributeItemType> = { epic: 'epic', story: 'userstory', task: 'task' };
+import { TaigaError, type TaigaAttributeValues, type TaigaCustomAttribute, type TaigaItem, type TaigaTask } from './taiga/client.ts';
 
 /** Identity tag of a manifest item on Taiga. Lowercase because Taiga lowercases every tag it stores. */
 export function srcTag(key: string): string {
@@ -24,8 +21,8 @@ export interface RemoteState {
   tasks: TaigaTask[];
   /** Ids of the user stories linked to each existing epic (`related_userstories`). */
   epicStories: ReadonlyMap<number, readonly number[]>;
-  /** Custom attributes defined on the project, per Taiga item type. */
-  customAttributes: Record<CustomAttributeItemType, readonly TaigaCustomAttribute[]>;
+  /** Custom attributes defined on the project, per item type. */
+  customAttributes: Record<ItemType, readonly TaigaCustomAttribute[]>;
   /** Current custom attribute values, by item id, of the existing items that declare attributes in the manifest. */
   attributeValues: Record<ItemType, ReadonlyMap<number, TaigaAttributeValues>>;
 }
@@ -89,7 +86,7 @@ function storyDescription(story: StorySpec): string {
 export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   const remoteItems: Record<ItemType, TaigaItem[]> = { epic: remote.epics, story: remote.stories, task: remote.tasks };
   const bySrcTag = {} as Record<ItemType, Map<string, TaigaItem>>;
-  for (const type of ['epic', 'story', 'task'] as const) {
+  for (const type of ITEM_TYPES) {
     bySrcTag[type] = new Map();
     // Oldest first, so if duplicates already exist the original item keeps its identity.
     for (const item of [...remoteItems[type]].sort((a, b) => a.id - b.id)) {
@@ -109,12 +106,12 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
     const tag = srcTag(spec.key);
     manifestTags[type].add(tag);
     const tags = [...new Set([...spec.tags.map((t) => t.toLowerCase()), tag])];
-    const defined = remote.customAttributes[ATTRIBUTE_ITEM_TYPE[type]];
+    const defined = remote.customAttributes[type];
     const attributes = Object.entries(spec.customAttributes).flatMap(([name, value]) => {
       const attribute = defined.find((a) => a.name === name);
       if (attribute) return [{ name, id: attribute.id, value }];
       const names = defined.map((a) => `"${a.name}"`).join(', ') || 'none';
-      unknownAttributes.push(`  ${spec.key} (${type}): "${name}"; ${ATTRIBUTE_ITEM_TYPE[type]} attributes on Taiga: ${names}`);
+      unknownAttributes.push(`  ${spec.key} (${type}): "${name}"; ${type} attributes on Taiga: ${names}`);
       return [];
     });
     const existing = bySrcTag[type].get(tag);
@@ -176,7 +173,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   }
 
   const orphans: Orphan[] = [];
-  for (const type of ['epic', 'story', 'task'] as const) {
+  for (const type of ITEM_TYPES) {
     for (const item of remoteItems[type]) {
       const srcTags = item.tags.filter((t) => t.startsWith('src:'));
       if (srcTags.length === 0 || srcTags.some((t) => manifestTags[type].has(t))) continue;

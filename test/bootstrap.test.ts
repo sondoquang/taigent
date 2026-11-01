@@ -20,7 +20,7 @@ custom_attributes:
   epic:
     - name: Spec link
       type: url
-  userstory:
+  story:
     - name: Acceptance owner
   task:
     - name: Estimate (h)
@@ -120,7 +120,7 @@ test('bootstrap --dry-run lists the operations, writes nothing and exits 3', asy
   assert.match(text.stdout, /template scrum/);
   assert.match(text.stdout, /enable modules epics, kanban/);
   assert.match(text.stdout, /create tag type:feature +#2E7D32/);
-  assert.match(text.stdout, /create userstory custom attribute "Acceptance owner"/);
+  assert.match(text.stdout, /create story custom attribute "Acceptance owner"/);
   assert.match(text.stdout, /invite carol@newcomer\.test as UX/);
   assert.match(text.stdout, /create wiki page home/);
 

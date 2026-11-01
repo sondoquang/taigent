@@ -20,7 +20,7 @@ tags:
   - name: type:feature
     color: "#000000"
 custom_attributes:
-  story:
+  userstory:
     - name: Owner
   task:
     - name: Size
@@ -50,7 +50,7 @@ owner: someone
       ['taiga/vigo-devops/project.yaml', 'modules[2]', 'module-known'],
       ['taiga/vigo-devops/project.yaml', 'tags[0].name', 'tag-prefix'],
       ['taiga/vigo-devops/project.yaml', 'tags[1].color', 'tag-color'],
-      ['taiga/vigo-devops/project.yaml', 'custom_attributes.story', 'known-field'],
+      ['taiga/vigo-devops/project.yaml', 'custom_attributes.userstory', 'known-field'],
       ['taiga/vigo-devops/project.yaml', 'custom_attributes.task[0].type', 'attribute-type'],
       ['taiga/vigo-devops/project.yaml', 'members[0]', 'member-identity'],
       ['taiga/vigo-devops/project.yaml', 'members[1].email', 'member-email'],

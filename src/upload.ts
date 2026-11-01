@@ -11,11 +11,9 @@ import { ApplyConflictError } from './executor.ts';
 import type { Backlog } from './manifest/backlog.ts';
 import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
 import { WIKI_TARGET_PREFIX, type AttachmentSpec, type Docs } from './manifest/docs.ts';
-import type { ItemType } from './manifest/state.ts';
+import type { ItemType } from './items.ts';
 import { srcTag, type PlanProject } from './planner.ts';
-import { TaigaConflictError, TaigaError, type AttachmentObjectType, type TaigaClient, type TaigaItem } from './taiga/client.ts';
-
-export type AttachmentTargetType = ItemType | 'wiki';
+import { TaigaConflictError, TaigaError, type AttachmentTargetType, type TaigaClient, type TaigaItem } from './taiga/client.ts';
 
 /** Attachment already on Taiga with the name of a changed local file; it is left in place. */
 export interface PreviousAttachment {
@@ -73,8 +71,6 @@ export class UploadTooLargeError extends TaigaError {
   }
 }
 
-const ENDPOINTS: Record<AttachmentTargetType, AttachmentObjectType> = { epic: 'epics', story: 'userstories', task: 'tasks', wiki: 'wiki' };
-
 /** Size and sha1 of a file, read as a stream (never held in memory as a whole). */
 async function fileDigest(path: string): Promise<{ size: number; sha1: string }> {
   const hash = createHash('sha1');
@@ -109,8 +105,7 @@ async function resolveTargets(
 ): Promise<Map<AttachmentSpec, { type: AttachmentTargetType; target: string; objectId: number | null }>> {
   const types = backlogTypes(backlog);
   const lists: Partial<Record<ItemType, Promise<TaigaItem[]>>> = {};
-  const listItems = (type: ItemType) =>
-    (lists[type] ??= type === 'epic' ? client.listEpics(project.id) : type === 'story' ? client.listUserStories(project.id) : client.listTasks(project.id));
+  const listItems = (type: ItemType) => (lists[type] ??= client.listItems(type, project.id));
 
   const resolved = new Map<AttachmentSpec, { type: AttachmentTargetType; target: string; objectId: number | null }>();
   for (const spec of attachments) {
@@ -169,7 +164,7 @@ export async function planUpload(docs: Docs, backlog: Backlog | undefined, proje
     const name = basename(spec.file);
     const { size, sha1 } = await fileDigest(spec.file);
     const fields: AttachmentFields = { target, targetType: type, objectId, name, file: relative(cwd, spec.file), size, sha1, description: spec.description };
-    const existing = objectId === null ? [] : (await client.listAttachments(ENDPOINTS[type], project.id, objectId)).filter((a) => a.name === name);
+    const existing = objectId === null ? [] : (await client.listAttachments(type, project.id, objectId)).filter((a) => a.name === name);
     const same = existing.find((a) => a.size === size && a.sha1 === sha1);
     if (same) operations.push({ action: 'skip', type: 'attachment', id: same.id, ...fields });
     else operations.push({ action: 'create', type: 'attachment', previous: existing.map(({ id, size, sha1 }) => ({ id, size, sha1 })), ...fields });
@@ -214,7 +209,7 @@ export async function executeUpload(plan: UploadPlan, client: TaigaClient, cwd: 
       } else {
         const objectId = op.objectId ?? wikiIds.get(op.target.slice(WIKI_TARGET_PREFIX.length))!;
         const attachment = { project: plan.project.id, object_id: objectId, file, name: op.name, description: op.description };
-        id = (await client.uploadAttachment(ENDPOINTS[op.targetType], attachment)).id;
+        id = (await client.uploadAttachment(op.targetType, attachment)).id;
       }
     } catch (error) {
       if (!(error instanceof TaigaError)) throw error;

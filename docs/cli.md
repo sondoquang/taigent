@@ -220,7 +220,7 @@ modules: [epics, wiki, kanban]      # required, enabled modules: epics backlog k
 tags:                               # optional
   - name: type:feature              # type:feature|bug|chore or area:<kebab>
     color: "#2E7D32"                # optional, defaults to (and must equal) the tag's standard color
-custom_attributes:                  # optional, per item type: epic | userstory | task
+custom_attributes:                  # optional, per item type: epic | story | task (as in backlog.yaml and plans)
   task:
     - name: Estimate (h)            # required, unique per item type
       description: Hours of work    # optional
@@ -241,7 +241,7 @@ Steps, in order (each is `create`, `update` or `skip` in the plan):
 | project | `POST /projects {name, description, creation_template, is_private}` | no project has the slug (`GET /projects/by_slug`) |
 | modules | `PATCH /projects/{id} {is_<module>_activated: true}` | a listed module is off (templates ship with Epics off) |
 | tag | `POST /projects/{id}/create_tag {tag, color}`; `edit_tag {from_tag, color}` | tag missing; tag exists (e.g. used by items) with another color |
-| custom-attribute | `POST /{epic,userstory,task}-custom-attributes {project, name, description, type}` | no attribute with that name |
+| custom-attribute | `POST /{epic,userstory,task}-custom-attributes {project, name, description, type}` (Taiga's names for epic, story, task) | no attribute with that name |
 | membership | `POST /memberships {project, role, username}` (role id looked up by name) | username not a member / e-mail not invited |
 | wiki | `POST /wiki {project, slug: "home", content}` | `GET /wiki/by_slug` finds no `home` (an existing page is left alone) |
 
@@ -375,8 +375,9 @@ Codex's skill docs do not document `allowed-tools`; there, approvals come from `
 |---|---|---|
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`) |
 | Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog`, `loadDocs`, conventions rules (`conventions.ts`), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`, `getAttributeValues`/`updateAttributeValues`), `TaigaError`, `TaigaConflictError` |
-| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)`, `ATTRIBUTE_ITEM_TYPE` |
+| Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`): the one item vocabulary outside the client |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`), the only place that maps item types to Taiga's endpoint names (`TAIGA_ITEM`), `TaigaError`, `TaigaConflictError` |
+| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `ApplyConflictError` (carries `key`) |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `planUpload(docs, backlog, project, client, cwd)` (reads Taiga, hashes files), `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |

@@ -2,6 +2,7 @@
 // or completes. Schema checks live here; naming/template/module/tag rules come from conventions.ts.
 
 import { isRecord } from '../guards.ts';
+import { ITEM_TYPES, type ItemType } from '../items.ts';
 import {
   checkModules,
   checkProjectName,
@@ -17,9 +18,6 @@ import { ManifestError, type ManifestIssue } from './errors.ts';
 import { readManifestYaml } from './yaml.ts';
 
 export const PROJECT_FILE = 'project.yaml';
-
-export const CUSTOM_ATTRIBUTE_ITEM_TYPES = ['epic', 'userstory', 'task'] as const;
-export type CustomAttributeItemType = (typeof CUSTOM_ATTRIBUTE_ITEM_TYPES)[number];
 
 /** Taiga custom attribute types taigent can create (`dropdown` needs options and is not supported). */
 export const CUSTOM_ATTRIBUTE_TYPES = ['text', 'multiline', 'richtext', 'date', 'url', 'checkbox', 'number'] as const;
@@ -53,7 +51,7 @@ export interface ProjectManifest {
   /** Modules to enable; unlisted modules are left as they are. */
   modules: ProjectModule[];
   tags: TagSpec[];
-  customAttributes: Record<CustomAttributeItemType, CustomAttributeSpec[]>;
+  customAttributes: Record<ItemType, CustomAttributeSpec[]>;
   members: MemberSpec[];
   /** Markdown of the wiki page `home`, when declared. */
   wikiHome: string | undefined;
@@ -113,13 +111,13 @@ export async function loadProject(path: string, dirSlug: string): Promise<Projec
     });
   }
 
-  const customAttributes: ProjectManifest['customAttributes'] = { epic: [], userstory: [], task: [] };
-  if (!isRecord(attributes)) issue('custom_attributes', 'type', `must be a mapping of ${CUSTOM_ATTRIBUTE_ITEM_TYPES.join(', ')} to lists`);
+  const customAttributes: ProjectManifest['customAttributes'] = { epic: [], story: [], task: [] };
+  if (!isRecord(attributes)) issue('custom_attributes', 'type', `must be a mapping of ${ITEM_TYPES.join(', ')} to lists`);
   else {
     for (const [itemType, list] of Object.entries(attributes)) {
       const at = `custom_attributes.${itemType}`;
-      if (!CUSTOM_ATTRIBUTE_ITEM_TYPES.includes(itemType as CustomAttributeItemType)) {
-        issue(at, 'known-field', `unknown item type; use one of ${CUSTOM_ATTRIBUTE_ITEM_TYPES.join(', ')}`);
+      if (!ITEM_TYPES.includes(itemType as ItemType)) {
+        issue(at, 'known-field', `unknown item type; use one of ${ITEM_TYPES.join(', ')}`);
         continue;
       }
       if (!Array.isArray(list)) {
@@ -139,7 +137,7 @@ export async function loadProject(path: string, dirSlug: string): Promise<Projec
         if (!CUSTOM_ATTRIBUTE_TYPES.includes(type as CustomAttributeType)) {
           issue(`${itemAt}.type`, 'attribute-type', `type must be one of ${CUSTOM_ATTRIBUTE_TYPES.join(', ')}`);
         }
-        customAttributes[itemType as CustomAttributeItemType].push({ name: attrName, description: attrDescription, type } as CustomAttributeSpec);
+        customAttributes[itemType as ItemType].push({ name: attrName, description: attrDescription, type } as CustomAttributeSpec);
       });
     }
   }

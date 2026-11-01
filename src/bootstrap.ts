@@ -3,8 +3,9 @@
 // (create the project, enable modules, create/color tags, create custom attributes, invite members, create
 // the wiki home). It never disables, renames or deletes anything. `executeBootstrap` runs that plan.
 
+import { ITEM_TYPES, type ItemType } from './items.ts';
 import { WIKI_HOME_SLUG, type ProjectModule } from './manifest/conventions.ts';
-import type { CustomAttributeItemType, CustomAttributeSpec, ProjectManifest } from './manifest/project.ts';
+import type { CustomAttributeSpec, ProjectManifest } from './manifest/project.ts';
 import { readState, writeState } from './manifest/state.ts';
 import {
   TaigaError,
@@ -36,7 +37,7 @@ export type BootstrapOperation =
   | { action: 'skip'; type: 'modules'; modules: ProjectModule[] }
   | { action: 'create' | 'skip'; type: 'tag'; name: string; color: string }
   | { action: 'update'; type: 'tag'; name: string; color: string; current: string | null }
-  | { action: 'create' | 'skip'; type: 'custom-attribute'; itemType: CustomAttributeItemType; name: string; fields: CustomAttributeSpec }
+  | { action: 'create' | 'skip'; type: 'custom-attribute'; itemType: ItemType; name: string; fields: CustomAttributeSpec }
   | { action: 'create' | 'skip'; type: 'membership'; member: string; role: string }
   | { action: 'create'; type: 'wiki'; slug: string; content: string }
   | { action: 'skip'; type: 'wiki'; slug: string };
@@ -106,7 +107,7 @@ export function planBootstrap(manifest: ProjectManifest, remote: BootstrapRemote
     else operations.push({ action: 'skip', type: 'tag', name, color });
   }
 
-  for (const itemType of ['epic', 'userstory', 'task'] as const) {
+  for (const itemType of ITEM_TYPES) {
     const existing = new Set(project?.customAttributes[itemType].map((a) => a.name));
     for (const fields of manifest.customAttributes[itemType]) {
       operations.push({ action: existing.has(fields.name) ? 'skip' : 'create', type: 'custom-attribute', itemType, name: fields.name, fields });

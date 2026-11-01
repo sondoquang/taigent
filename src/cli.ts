@@ -10,8 +10,9 @@ import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
 import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
-import { readSavedProject, type ItemType } from './manifest/state.ts';
-import { ATTRIBUTE_ITEM_TYPE, buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
+import type { ItemType } from './items.ts';
+import { readSavedProject } from './manifest/state.ts';
+import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, TaigaClient, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
 import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError, type UploadPlan, type UploadReport } from './upload.ts';
@@ -370,9 +371,9 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
   const client = await connectTaiga(env);
   const project = await client.getProjectBySlug(slug);
   const [epics, stories, tasks] = await Promise.all([
-    client.listEpics(project.id),
-    client.listUserStories(project.id),
-    client.listTasks(project.id),
+    client.listItems('epic', project.id),
+    client.listItems('story', project.id),
+    client.listItems('task', project.id),
   ]);
   // Existing links only matter for manifest epics that have stories.
   const epicTagsWithStories = new Set(backlog.epics.filter((epic) => epic.stories.length > 0).map((epic) => srcTag(epic.key)));
@@ -390,7 +391,7 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
   }
   for (const [type, items] of [['epic', epics], ['story', stories], ['task', tasks]] as const) {
     for (const item of items) {
-      if (item.tags.some((tag) => declaringTags.has(tag))) attributeValues[type].set(item.id, await client.getAttributeValues(ATTRIBUTE_ITEM_TYPE[type], item.id));
+      if (item.tags.some((tag) => declaringTags.has(tag))) attributeValues[type].set(item.id, await client.getAttributeValues(type, item.id));
     }
   }
   const plan = buildPlan(backlog, {

@@ -146,7 +146,7 @@ test('an attribute name the project does not define fails before any write, nami
     const result = await h.taigent([command, '--project', 'demo', '--yes', '--json']);
     assert.equal(result.code, 5, result.stderr);
     assert.match(result.stderr, /AUTH \(epic\): "Clientt"; epic attributes on Taiga: "Client"/);
-    assert.match(result.stderr, /AUTH-LOGIN \(story\): "Estimate \(h\)"; userstory attributes on Taiga: "Due note", "Billable"/);
+    assert.match(result.stderr, /AUTH-LOGIN \(story\): "Estimate \(h\)"; story attributes on Taiga: "Due note", "Billable"/);
     assert.equal(result.json<{ error: { kind: string } }>().error.kind, 'taiga');
   }
   assert.equal(h.fake.state.epics.filter((e) => e.project === project.id).length, 0);

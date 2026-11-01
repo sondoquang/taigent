@@ -4,10 +4,9 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { isFileNotFound } from '../guards.ts';
+import type { ItemType } from '../items.ts';
 
 export const STATE_FILE = 'state.json';
-
-export type ItemType = 'epic' | 'story' | 'task';
 
 export interface StateEntry {
   type: ItemType;

@@ -1,9 +1,10 @@
 // Executor: runs a plan through the Taiga client in dependency order and records every item in the
 // state file, writing it after each successful write to Taiga so a failed run can be resumed.
 
+import type { ItemType } from './items.ts';
 import type { AttributeValue } from './manifest/backlog.ts';
-import { readState, writeState, type ItemType, type StateFile } from './manifest/state.ts';
-import { ATTRIBUTE_ITEM_TYPE, type Operation, type Plan, type PlanProject, type RemoteState } from './planner.ts';
+import { readState, writeState, type StateFile } from './manifest/state.ts';
+import type { Operation, Plan, PlanProject, RemoteState } from './planner.ts';
 import { TaigaConflictError, TaigaError, type ItemPatch, type TaigaClient, type TaigaItem } from './taiga/client.ts';
 
 export type OperationResult = 'created' | 'updated' | 'linked' | 'unchanged';
@@ -44,9 +45,7 @@ function recordedId(state: StateFile, key: string): number {
 
 function create(op: Extract<Operation, { action: 'create' }>, plan: Plan, state: StateFile, client: TaigaClient): Promise<TaigaItem> {
   const item = { project: plan.project.id, ...op.fields };
-  if (op.type === 'epic') return client.createEpic(item);
-  if (op.type === 'story') return client.createUserStory(item);
-  return client.createTask({ ...item, user_story: recordedId(state, op.parent!) });
+  return client.createItem(op.type, op.type === 'task' ? { ...item, user_story: recordedId(state, op.parent!) } : item);
 }
 
 /** PATCHes the changed item fields; an update of custom attribute values alone leaves the item untouched. */
@@ -54,9 +53,7 @@ async function update(op: Extract<Operation, { action: 'update' }>, client: Taig
   const { custom_attributes: _attributes, ...fields } = op.changes;
   if (Object.keys(fields).length === 0) return op;
   const patch: ItemPatch = Object.fromEntries(Object.entries(fields).map(([field, change]) => [field, change.to]));
-  if (op.type === 'epic') return client.updateEpic(op.id, patch, op.version);
-  if (op.type === 'story') return client.updateUserStory(op.id, patch, op.version);
-  return client.updateTask(op.id, patch, op.version);
+  return client.updateItem(op.type, op.id, patch, op.version);
 }
 
 /**
@@ -71,15 +68,14 @@ async function writeAttributes(
   attributes: RemoteState['customAttributes'],
   client: TaigaClient,
 ): Promise<void> {
-  const itemType = ATTRIBUTE_ITEM_TYPE[type];
-  const current = await client.getAttributeValues(itemType, itemId);
+  const current = await client.getAttributeValues(type, itemId);
   const merged = { ...current.values };
   for (const [name, value] of Object.entries(values)) {
-    const attribute = attributes[itemType].find((a) => a.name === name);
+    const attribute = attributes[type].find((a) => a.name === name);
     if (!attribute) throw new Error(`executor: custom attribute "${name}" was not planned for ${type}s`);
     merged[String(attribute.id)] = value;
   }
-  await client.updateAttributeValues(itemType, itemId, merged, version ?? current.version);
+  await client.updateAttributeValues(type, itemId, merged, version ?? current.version);
 }
 
 /** `attributes`: the project's custom attributes, to resolve the attribute names of the plan to ids. */
