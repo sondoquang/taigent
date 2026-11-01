@@ -68,6 +68,19 @@ test('usage and configuration errors exit 2 and name the missing variable', asyn
   assert.match(help.stdout, /Exit codes/);
 });
 
+test('closed is gone: an unknown command (exit 2) that never contacts Taiga', async (t) => {
+  const h = await startHarness(t);
+
+  const result = await h.taigent(['closed', '--from', '2026-10-26', '--to', '2026-11-01']);
+
+  assert.equal(result.code, 2, result.stderr);
+  assert.match(result.stderr, /unknown command "closed"/);
+  assert.deepEqual(h.fake.requests, []);
+
+  const help = await h.taigent(['--help']);
+  assert.doesNotMatch(help.stdout, /\bclosed +List|closed and tickets|closed, tickets/);
+});
+
 test('Taiga and network failures exit 5', async (t) => {
   const h = await startHarness(t);
   await h.writeManifest('demo', 'backlog.yaml', 'epics: [{ key: AUTH, subject: Authentication }]\n');

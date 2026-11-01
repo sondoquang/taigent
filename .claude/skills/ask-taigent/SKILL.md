@@ -62,7 +62,6 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 | `taigent apply --project <slug> --yes` | Apply `backlog.yaml` | apply-backlog |
 | `taigent bootstrap --project <slug> --dry-run\|--yes` | Create or complete the project from `project.yaml` | bootstrap-project |
 | `taigent upload --project <slug> --dry-run\|--yes` | Wiki pages and attachments from `docs.yaml` | upload-docs |
-| `taigent closed --from <day> --to <day> [--project <slug>]` | Your stories, tasks and issues closed in those days; read-only | you |
 | `taigent tickets --from <day> --to <day> [--project <slug>]` | Your tickets closed or due in those days and every open one, with due status and effort; read-only | my-tickets |
 | `taigent skills sync\|check` | Skill maintenance, below | you |
 

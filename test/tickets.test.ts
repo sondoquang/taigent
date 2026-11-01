@@ -45,7 +45,7 @@ interface TicketsJson {
 
 type StoryFields = Partial<Pick<FakeUserStory, 'is_closed' | 'finish_date' | 'due_date' | 'status_name' | 'total_points'>> & { assigned?: number[] };
 
-/** Stories of the fake user (and of someone else) in two projects, plus a task and an issue that are not tickets. */
+/** Stories of the fake user (and of someone else) in two projects, plus a task that is not a ticket. */
 function seed(fake: FakeTaiga) {
   const me = fake.user.id;
   const other = fake.addUser({ username: 'other' }).id;
@@ -71,8 +71,7 @@ function seed(fake: FakeTaiga) {
     closedWithoutClosingDayDueOutside: story(alpha.id, 'closed long ago', { is_closed: true, due_date: '2026-09-01' }),
     someoneElses: story(alpha.id, 'not mine', { assigned: [other], due_date: '2026-10-28' }),
   };
-  Object.assign(fake.addTask({ project: beta.id, subject: 'task' }), { assigned_to: me, is_closed: true, finished_date: '2026-10-28T03:00:00Z' });
-  Object.assign(fake.addIssue({ project: alpha.id, subject: 'issue' }), { assigned_to: me, is_closed: true, finished_date: '2026-10-30T08:00:00Z' });
+  Object.assign(fake.addTask({ project: beta.id, subject: 'task' }), { assigned_to: me, is_closed: true });
   return { me, stranger, alpha, beta, tickets, excluded };
 }
 

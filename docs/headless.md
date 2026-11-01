@@ -143,7 +143,7 @@ How Codex decides a shell command under `codex exec`:
    (`codex-rs/core/src/exec_policy.rs`, `policy_files`). A matching `decision = "allow"` rule runs the command
    **outside the sandbox** without prompting (`Decision::Allow` → `ExecApprovalRequirement::Skip { bypass_sandbox:
    true }`, then `SandboxOverride::BypassSandboxFirstAttempt` in `codex-rs/core/src/tools/sandboxing.rs`), so it has
-   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|closed|tickets …`; its
+   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets …`; its
    `match`/`not_match` examples are checked by Codex when it loads the file.
 3. A command that **no rule matches** is decided by `render_decision_for_unmatched_command_for_platform`
    (`exec_policy.rs`): under `never` it is *allowed* inside the sandbox unless flagged dangerous. Rules cannot

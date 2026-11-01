@@ -168,23 +168,6 @@ export interface FakeTask {
   assigned_to: number | null;
   milestone: number | null;
   is_closed: boolean;
-  /** When the task was closed (ISO 8601), null while open. */
-  finished_date: string | null;
-}
-
-/** An issue (docs.taiga.io/api.html §28). Not a backlog item: only `GET /issues` exists in the fake. */
-export interface FakeIssue {
-  id: number;
-  ref: number;
-  version: number;
-  project: number;
-  subject: string;
-  description: string;
-  tags: string[];
-  status: number | null;
-  assigned_to: number | null;
-  is_closed: boolean;
-  finished_date: string | null;
 }
 
 /** Epic ↔ user story link ("epic related user story detail" in the Taiga API docs). */
@@ -239,7 +222,6 @@ export interface FakeState {
   epics: FakeEpic[];
   userStories: FakeUserStory[];
   tasks: FakeTask[];
-  issues: FakeIssue[];
   epicRelatedUserStories: FakeEpicRelatedUserStory[];
   templates: FakeTemplate[];
   roles: FakeRole[];
@@ -326,7 +308,6 @@ export interface FakeTaiga {
   intercept(rule: InterceptRule): void;
   addUserStory(input: FakeItemInput): FakeUserStory;
   addTask(input: FakeItemInput & { user_story?: number }): FakeTask;
-  addIssue(input: FakeItemInput): FakeIssue;
   addEpicRelatedUserStory(epic: number, userStory: number): FakeEpicRelatedUserStory;
   /** Edits an item like a Taiga user would: bumps `version` and records the fields for OCC checks. */
   editItem<T extends FakeItem>(item: T, changes: Partial<Omit<T, 'id' | 'ref' | 'version' | 'project'>>): void;
@@ -498,7 +479,6 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     epics: [],
     userStories: [],
     tasks: [],
-    issues: [],
     epicRelatedUserStories: [],
     templates: [
       {
@@ -684,28 +664,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   function addTask(input: FakeItemInput & { user_story?: number }): FakeTask {
-    return addItem<FakeTask>('task', input, { user_story: input.user_story ?? null, milestone: null, is_closed: false, finished_date: null });
-  }
-
-  /** Issues share the project's ref sequence with epics, stories and tasks, like Taiga's. */
-  function addIssue(input: FakeItemInput): FakeIssue {
-    const project = state.projects.find((p) => p.id === input.project);
-    if (!project) throw new Error(`fake taiga: no project ${input.project}`);
-    const issue: FakeIssue = {
-      id: ++nextId,
-      ref: ++project.lastRef,
-      version: 1,
-      project: project.id,
-      subject: input.subject,
-      description: input.description ?? '',
-      tags: (input.tags ?? []).map((t) => t.toLowerCase()),
-      status: null,
-      assigned_to: null,
-      is_closed: false,
-      finished_date: null,
-    };
-    state.issues.push(issue);
-    return issue;
+    return addItem<FakeTask>('task', input, { user_story: input.user_story ?? null, milestone: null, is_closed: false });
   }
 
   /** Tags of the project (`tags_colors`): explicit colors plus tags used by items (null color), like taiga-back. */
@@ -1199,9 +1158,9 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   /**
    * An item as taiga-back serializes it: tags as [name, color] pairs, plus the embedded project and status
    * (`project_extra_info`, `status_extra_info`). Status names follow the default templates: a closed story is `Done`,
-   * a closed task or issue `Closed`, anything open `New`; a story's `status_name` overrides them.
+   * a closed task `Closed`, anything open `New`; a story's `status_name` overrides them.
    */
-  function itemJson(item: FakeItem | FakeIssue): Json {
+  function itemJson(item: FakeItem): Json {
     const project = state.projects.find((p) => p.id === item.project)!;
     const closed = 'is_closed' in item && item.is_closed;
     const { status_name: statusName, ...fields } = item as typeof item & { status_name?: string | null };
@@ -1214,17 +1173,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     };
   }
 
-  /**
-   * The assignee and closed filters, by the names each endpoint accepts (checked against a Taiga 6 instance): stories
-   * `assigned_users` and `is_closed`, tasks and issues `assigned_to` and `status__is_closed`. Like taiga-back, an
-   * endpoint ignores the names it does not know.
-   */
-  function matchesWork(item: FakeUserStory | FakeTask | FakeIssue, query: URLSearchParams): boolean {
-    const story = 'assigned_users' in item;
-    const assignee = query.get(story ? 'assigned_users' : 'assigned_to');
-    const closed = query.get(story ? 'is_closed' : 'status__is_closed');
-    const assigned = story ? item.assigned_users : item.assigned_to === null ? [] : [item.assigned_to];
-    return (assignee === null || assigned.includes(Number(assignee))) && (closed === null || String(item.is_closed) === closed.toLowerCase());
+  /** The assignee filter on stories (`assigned_users`, checked against a Taiga 6 instance). */
+  function isAssigned(story: FakeUserStory, query: URLSearchParams): boolean {
+    const assignee = query.get('assigned_users');
+    return assignee === null || story.assigned_users.includes(Number(assignee));
   }
 
   /**
@@ -1247,7 +1199,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       if (method === 'GET') {
         const projectId = queryNumber(query, 'project');
         const stories = state.userStories.filter(
-          (s) => visibleProject(s.project, userId) && (projectId === undefined || s.project === projectId) && hasTags(s, query) && matchesWork(s, query),
+          (s) => visibleProject(s.project, userId) && (projectId === undefined || s.project === projectId) && hasTags(s, query) && isAssigned(s, query),
         );
         return paginate(req, query, stories.map(itemJson));
       }
@@ -1275,8 +1227,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
             visibleProject(task.project, userId) &&
             (projectId === undefined || task.project === projectId) &&
             (storyId === undefined || task.user_story === storyId) &&
-            hasTags(task, query) &&
-            matchesWork(task, query),
+            hasTags(task, query),
         );
         return paginate(req, query, tasks.map(itemJson));
       }
@@ -1294,14 +1245,6 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
         }
         return { status: 201, body: itemJson(task) };
       }
-    }
-
-    if (path === '/issues' && method === 'GET') {
-      const projectId = queryNumber(query, 'project');
-      const issues = state.issues.filter(
-        (issue) => visibleProject(issue.project, userId) && (projectId === undefined || issue.project === projectId) && matchesWork(issue, query),
-      );
-      return paginate(req, query, issues.map(itemJson));
     }
 
     const itemPath = /^\/(epics|userstories|tasks)\/(\d+)$/.exec(path);
@@ -1598,7 +1541,6 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     intercept: (rule) => void intercepts.push({ ...rule }),
     addUserStory,
     addTask,
-    addIssue,
     addEpicRelatedUserStory,
     editItem,
     editWikiPage,
