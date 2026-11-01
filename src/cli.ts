@@ -13,6 +13,7 @@ import { WIKI_HOME_SLUG } from './manifest/project.ts';
 import { readSavedProject } from './manifest/state.ts';
 import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
 import { TaigaAuthError, TaigaClient, TaigaError } from './taiga/client.ts';
+import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError, type UploadPlan, type UploadReport } from './upload.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
@@ -21,11 +22,12 @@ Commands:
   bootstrap Create or complete the Taiga project declared in project.yaml (requires --yes)
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
+  upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
 
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/
   --json            Machine-readable output on stdout
-  --yes             Confirm writes (bootstrap, apply)
+  --yes             Confirm writes (bootstrap, apply, upload)
   --dry-run         List the operations without writing anything (exit 3 when there are changes)
   -h, --help        Show this help
 
@@ -39,7 +41,7 @@ Environment:
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
             3 plan has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply'] as const;
+const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload'] as const;
 type Command = (typeof COMMANDS)[number];
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
@@ -251,9 +253,52 @@ async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: strin
   return ExitCode.Ok;
 }
 
+function formatUploadPlan(plan: UploadPlan): string {
+  const lines = [`Upload plan for project ${plan.project.slug} (id ${plan.project.id}):`];
+  for (const op of plan.operations) {
+    const marker = op.action === 'create' ? '  + ' : op.action === 'update' ? '  ~ ' : '    skip ';
+    lines.push(`${marker}${describeUploadOperation(op)}`);
+  }
+  if (plan.operations.length === 0) lines.push('  (docs.yaml declares nothing)');
+  lines.push(
+    plan.changes
+      ? `${plan.summary.create} to create, ${plan.summary.update} to update, ${plan.summary.skip} unchanged.`
+      : 'No changes. Taiga matches docs.yaml.',
+  );
+  return `${lines.join('\n')}\n`;
+}
+
+function formatUploadReport(report: UploadReport): string {
+  const lines = [`Uploaded to project ${report.project.slug} (id ${report.project.id}):`];
+  for (const op of report.operations) if (op.result !== 'unchanged') lines.push(`  ${op.result} ${describeUploadOperation(op)}  -> id ${op.id}`);
+  lines.push(`${report.summary.created} created, ${report.summary.updated} updated, ${report.summary.unchanged} unchanged.`);
+  return `${lines.join('\n')}\n`;
+}
+
+/** `upload`: upsert docs.yaml's wiki pages by slug and add its attachments that Taiga lacks. */
+async function runUpload(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
+  const slug = options.project!;
+  const { manifests } = await loadManifests(projectLayout(slug, env, cwd).dir, slug, { require: ['docs'] });
+  const client = await connectTaiga(env);
+  const project = await client.getProjectBySlug(slug);
+  const plan = await planUpload(manifests.docs!, manifests.backlog, { id: project.id, slug: project.slug }, client, cwd);
+
+  if (options.dryRun || !options.yes) {
+    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatUploadPlan(plan));
+    if (!plan.changes) return ExitCode.Ok;
+    if (options.dryRun) return ExitCode.Changes;
+    throw new UsageError('refusing to upload without --yes; review the operations above, then re-run with --yes');
+  }
+
+  const report = await executeUpload(plan, client, cwd);
+  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatUploadReport(report));
+  return ExitCode.Ok;
+}
+
 async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
   if (options.command === 'validate') return runValidate(options, env, cwd);
   if (options.command === 'bootstrap') return runBootstrap(options, env, cwd);
+  if (options.command === 'upload') return runUpload(options, env, cwd);
   const slug = options.project!;
   const layout = projectLayout(slug, env, cwd);
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
@@ -312,6 +357,9 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     }
     if (error instanceof ApplyConflictError) {
       return fail(ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key });
+    }
+    if (error instanceof UploadTooLargeError) {
+      return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
     }
     if (error instanceof TaigaAuthError) {
       const check = error.credential === 'token' ? 'TAIGA_TOKEN' : 'TAIGA_USERNAME and TAIGA_PASSWORD';
