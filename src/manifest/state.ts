@@ -7,7 +7,7 @@ import { isFileNotFound } from '../guards.ts';
 
 export const STATE_FILE = 'state.json';
 
-export type ItemType = 'epic';
+export type ItemType = 'epic' | 'story' | 'task';
 
 export interface StateEntry {
   type: ItemType;
