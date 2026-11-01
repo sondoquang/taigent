@@ -173,9 +173,15 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
   };
 }
 
+/** `taigent` commands a skill may pre-approve; the writing ones make a skill explicit-only. */
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload'];
+const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
+const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
+const TAIGA_SKILLS = ['taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-plan-backlog', 'taiga-status-report', 'taiga-upload-docs'];
+
 test('taiga-* skills follow Agent Skills and pre-approve only taigent commands and Taiga MCP read tools', async () => {
-  const names = (await readdir(join(REPO_ROOT, '.agents/skills'))).filter((name) => name.startsWith('taiga-'));
-  assert.ok(names.includes('taiga-plan-backlog') && names.includes('taiga-apply-backlog'), names.join(', '));
+  const names = (await readdir(join(REPO_ROOT, '.agents/skills'))).filter((name) => name.startsWith('taiga-')).sort();
+  assert.deepEqual(names, TAIGA_SKILLS);
 
   for (const name of names) {
     const { frontmatter, allowedTools } = await readSkill(name);
@@ -183,28 +189,49 @@ test('taiga-* skills follow Agent Skills and pre-approve only taigent commands a
     assert.match(frontmatter.name, /^[a-z0-9]+(-[a-z0-9]+)*$/);
     assert.ok(frontmatter.description.length > 0 && frontmatter.description.length <= 1024, `${name}: description length`);
     for (const tool of allowedTools) {
-      assert.ok(/^(Bash|PowerShell)\(npx taigent [a-z]+ \*\)$/.test(tool) || MCP_READ_TOOLS.has(tool), `${name}: allowed-tools has ${tool}`);
+      assert.ok(SHELL_RULE.test(tool) || MCP_READ_TOOLS.has(tool), `${name}: allowed-tools has ${tool}`);
     }
   }
 });
 
-test('taiga-apply-backlog runs only when invoked explicitly, on Claude Code and on Codex', async () => {
-  const { frontmatter, allowedTools, openai } = await readSkill('taiga-apply-backlog');
+test('taiga-* skills that write to Taiga run only when invoked explicitly, on Claude Code and on Codex', async () => {
+  const writers: string[] = [];
+  for (const name of TAIGA_SKILLS) {
+    const { frontmatter, allowedTools, openai } = await readSkill(name);
+    if (!allowedTools.some((tool) => WRITING_COMMANDS.includes(SHELL_RULE.exec(tool)?.[2] ?? ''))) continue;
+    writers.push(name);
+    assert.equal(frontmatter['disable-model-invocation'], true, `${name}: disable-model-invocation`);
+    assert.equal(openai.policy?.allow_implicit_invocation, false, `${name}: agents/openai.yaml policy`);
+  }
 
-  assert.equal(frontmatter['disable-model-invocation'], true);
-  assert.equal(openai.policy?.allow_implicit_invocation, false);
-  assert.deepEqual(allowedTools.filter((tool) => tool.includes('(')), [
-    'Bash(npx taigent validate *)',
-    'Bash(npx taigent plan *)',
-    'Bash(npx taigent apply *)',
-    'PowerShell(npx taigent validate *)',
-    'PowerShell(npx taigent plan *)',
-    'PowerShell(npx taigent apply *)',
-  ]);
+  assert.deepEqual(writers, ['taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-upload-docs']);
 });
 
-test('taiga-plan-backlog only writes files: it pre-approves validate, never apply', async () => {
-  const { allowedTools } = await readSkill('taiga-plan-backlog');
+/** Each skill's shell rules: the commands it pre-approves, as Bash and as PowerShell rules. */
+const shellRules = (...commands: string[]) => ['Bash', 'PowerShell'].flatMap((shell) => commands.map((command) => `${shell}(npx taigent ${command} *)`));
 
-  assert.deepEqual(allowedTools.filter((tool) => tool.includes('(')), ['Bash(npx taigent validate *)', 'PowerShell(npx taigent validate *)']);
+test('each taiga-* skill pre-approves only the taigent commands of its step', async () => {
+  const expected: Record<string, string[]> = {
+    'taiga-plan-backlog': shellRules('validate'),
+    'taiga-apply-backlog': shellRules('validate', 'plan', 'apply'),
+    'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
+    'taiga-upload-docs': shellRules('validate', 'upload'),
+    'taiga-status-report': [],
+  };
+
+  for (const [name, rules] of Object.entries(expected)) {
+    const { allowedTools } = await readSkill(name);
+    assert.deepEqual(allowedTools.filter((tool) => tool.includes('(')), rules, name);
+  }
+});
+
+test('taiga-status-report reads Taiga through MCP only and may be invoked implicitly', async () => {
+  const { frontmatter, allowedTools, openai } = await readSkill('taiga-status-report');
+
+  assert.notEqual(frontmatter['disable-model-invocation'], true);
+  assert.notEqual(openai.policy?.allow_implicit_invocation, false);
+  for (const tool of ['listProjects', 'listEpics', 'listUserStories', 'getUserStory', 'listMilestones', 'getMilestone', 'getMilestoneStats', 'advancedSearch']) {
+    assert.ok(allowedTools.includes(`mcp__taiga__${tool}`), `allowed-tools has mcp__taiga__${tool}`);
+  }
+  assert.ok(allowedTools.every((tool) => MCP_READ_TOOLS.has(tool)), allowedTools.join(' '));
 });
