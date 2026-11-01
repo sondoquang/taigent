@@ -129,11 +129,18 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
 - **Create**: missing items, in dependency order: each epic, then each of its stories, the story's epic link,
   and the story's tasks (created with `user_story` = the parent story).
 - **Link**: a story is linked to its epic with `POST /epics/{id}/related_userstories`, after
-  `GET /epics/{id}/related_userstories` shows the link is missing. Existing links are never removed.
-- **Update**: apply manages only `subject`, `description` and `tags`. When they differ from the manifest it PATCHes
-  them with the item's current `version` (OCC). Tags are only added: tags people put on Taiga stay, and removing
-  a tag from the manifest does not remove it from Taiga. Status, assignee, sprint, points and ordering are never
-  sent.
+  `GET /epics/{id}/related_userstories` (read for every epic with a `src:` tag) shows the link is missing. Existing
+  links are never removed.
+- **Update**: apply manages only `subject`, `description` and `tags`, and a task's parent story. When they differ
+  from the manifest it PATCHes them with the item's current `version` (OCC). Tags are only added: tags people put on
+  Taiga stay, and removing a tag from the manifest does not remove it from Taiga. Status, assignee, sprint, points and
+  ordering are never sent.
+- **Moves**: a task placed under another story in the manifest is an `update` with `changes.parent`; apply PATCHes
+  `{user_story, version}` (taiga-back then puts the task in that story's sprint, `TaskViewSet.pre_save`). A story
+  placed under another epic gets a `link` to the new epic; a story can belong to several epics on Taiga
+  (`RelatedUserStory` is unique per epic and story only), so the link to the old epic stays and `plan` lists it under
+  `staleLinks` (not a change, never removed: unlink it on Taiga by hand if obsolete). Only links to epics with a `src:`
+  tag are reported; links people made to their own epics are left alone.
 - **Custom attribute values**: an item's `custom_attributes` are matched to the project's attributes of that item
   type by exact name (`GET /projects/by_slug` lists them; bootstrap creates them from `project.yaml`). `plan` reads
   `GET /{epics,userstories,tasks}/custom-attributes-values/{id}` of existing items that declare values and lists the
@@ -185,11 +192,14 @@ and exits 2 when there are changes.
       "changes": { "subject": { "from": "Log out", "to": "User can log out" },
                    "tags": { "from": ["src:auth-logout", "urgent"], "to": ["src:auth-logout", "urgent", "type:feature"] } } }
   ],
-  "orphans": [ { "type": "task", "key": "AUTH-OLD", "id": 20, "ref": 9, "subject": "Old task" } ]
+  "orphans": [ { "type": "task", "key": "AUTH-OLD", "id": 20, "ref": 9, "subject": "Old task" } ],
+  "staleLinks": [ { "key": "AUTH-LOGOUT", "id": 15, "ref": 6, "epic": "ACCOUNT", "epicId": 13, "epicRef": 4 } ]
 }
 ```
 
-`create.parent` is the epic key (story) or story key (task). `update.changes` holds only the fields that differ.
+`create.parent` is the epic key (story) or story key (task). `update.changes` holds only the fields that differ; a
+moved task has `changes.parent: { from: "<story key>" | null, to: "<story key>" }` (`null`: in no taigent story).
+`staleLinks` lists stories still linked to a taigent epic other than their manifest epic (`epic`: that epic's key).
 Custom attribute values add `custom_attributes: { "<name>": value }` to `create`, and
 `changes.custom_attributes: { from: { "<name>": value | null }, to: { "<name>": value }, version }` to `update`
 (`null`: not set on Taiga; `version`: the values object's). An update of values alone does not PATCH the item.

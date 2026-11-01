@@ -207,12 +207,23 @@ function formatReportText<O extends { result: Result }>(
   return `${lines.join('\n')}\n`;
 }
 
-function formatOrphans(plan: Plan): string[] {
-  if (plan.orphans.length === 0) return [];
-  return [
-    'Orphans (tagged src: on Taiga but not in the manifest; never deleted):',
-    ...plan.orphans.map((orphan) => `  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`),
-  ];
+/** The parts of a backlog plan that are reported but never acted on: orphans and stale epic links. */
+function formatLeftovers(plan: Plan): string[] {
+  const lines: string[] = [];
+  if (plan.orphans.length > 0) {
+    lines.push('Orphans (tagged src: on Taiga but not in the manifest; never deleted):');
+    lines.push(...plan.orphans.map((orphan) => `  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`));
+  }
+  if (plan.staleLinks.length > 0) {
+    lines.push('Stale links (story linked on Taiga to an epic it no longer belongs to in the manifest):');
+    lines.push(
+      ...plan.staleLinks.map(
+        (link) =>
+          `  ! stale link story ${link.key}  (#${link.ref}, id ${link.id}) -> epic ${link.epic}  (#${link.epicRef}, id ${link.epicId}): never removed; unlink it on Taiga if obsolete`,
+      ),
+    );
+  }
+  return lines;
 }
 
 /** Prints `value` as JSON with --json, else `text()`. */
@@ -358,7 +369,7 @@ async function runPlan(run: Run): Promise<number> {
     formatPlanText(`Plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describePlanOperation, {
       empty: 'manifest has no items',
       matches: 'the manifest',
-      extra: formatOrphans(plan),
+      extra: formatLeftovers(plan),
     }),
   );
   if (gate !== undefined) return gate;

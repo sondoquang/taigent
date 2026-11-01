@@ -14,11 +14,10 @@ export async function readBacklogRemote(backlog: Backlog, client: TaigaClient, s
     client.listItems('task', project.id),
   ]);
 
-  // Existing links only matter for manifest epics that have stories.
-  const epicTagsWithStories = new Set(backlog.epics.filter((epic) => epic.stories.length > 0).map((epic) => srcTag(epic.key)));
+  // Links of every taigent-managed epic: missing ones are planned, those to an epic the story left are reported.
   const epicStories = new Map<number, number[]>();
   for (const epic of epics) {
-    if (epic.tags.some((tag) => epicTagsWithStories.has(tag))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
+    if (epic.tags.some((tag) => tag.startsWith('src:'))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
   }
 
   // Current custom attribute values, only for existing items that declare some in the manifest.

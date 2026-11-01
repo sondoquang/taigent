@@ -106,8 +106,8 @@ export interface NewItem {
   user_story?: number;
 }
 
-/** Manifest-managed fields an update may change; everything else on the item is left alone. */
-export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'>>;
+/** Manifest-managed fields an update may change (`user_story`: a task's parent); everything else is left alone. */
+export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'>> & { user_story?: number };
 
 interface RequestOptions {
   query?: Record<string, string | number>;

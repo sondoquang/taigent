@@ -93,6 +93,9 @@ Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên
 - Gợi ý đặt key: epic là tên mảng (`AUTH`), story là `<EPIC>-<việc>` (`AUTH-LOGIN`), task là
   `<STORY>-<bước>` (`AUTH-LOGIN-API`).
 - Item bỏ khỏi manifest không bị xoá trên Taiga. `plan` báo nó là mồ côi để người quyết định.
+- Chuyển task sang story khác (hoặc story sang epic khác) trong manifest: `apply` gắn task vào story mới
+  (`user_story`), và gắn story vào epic mới. Liên kết cũ với epic cũ **không bị gỡ**; `plan` báo nó trong
+  `staleLinks` để người quyết định gỡ tay trên Taiga.
 
 ## 6. Mẫu mô tả story và task
 

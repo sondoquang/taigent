@@ -42,11 +42,15 @@ function create(op: Extract<Operation, { action: 'create' }>, plan: Plan, state:
   return client.createItem(op.type, op.type === 'task' ? { ...item, user_story: recordedId(state, op.parent!) } : item);
 }
 
-/** PATCHes the changed item fields; an update of custom attribute values alone leaves the item untouched. */
-async function update(op: Extract<Operation, { action: 'update' }>, client: TaigaClient): Promise<Pick<TaigaItem, 'id' | 'ref' | 'version'>> {
-  const { custom_attributes: _attributes, ...fields } = op.changes;
-  if (Object.keys(fields).length === 0) return op;
+/**
+ * PATCHes the changed item fields (a moved task: `user_story` = its manifest parent, recorded earlier in the run);
+ * an update of custom attribute values alone leaves the item untouched.
+ */
+async function update(op: Extract<Operation, { action: 'update' }>, state: StateFile, client: TaigaClient): Promise<Pick<TaigaItem, 'id' | 'ref' | 'version'>> {
+  const { custom_attributes: _attributes, parent, ...fields } = op.changes;
   const patch: ItemPatch = Object.fromEntries(Object.entries(fields).map(([field, change]) => [field, change.to]));
+  if (parent) patch.user_story = recordedId(state, parent.to);
+  if (Object.keys(patch).length === 0) return op;
   return client.updateItem(op.type, op.id, patch, op.version);
 }
 
@@ -89,7 +93,7 @@ export async function executePlan(plan: Plan, client: TaigaClient, statePath: st
           await client.linkEpicUserStory(recordedId(state, op.epic), story.id);
           applied = { action: op.action, type: op.type, key: op.key, id: story.id, ref: story.ref, epic: op.epic, result: RESULT[op.action] };
         } else {
-          const item = op.action === 'create' ? await create(op, plan, state, client) : await update(op, client);
+          const item = op.action === 'create' ? await create(op, plan, state, client) : await update(op, state, client);
           state.items[op.key] = { type: op.type, id: item.id, ref: item.ref, version: item.version };
           const values = op.action === 'create' ? op.custom_attributes : op.changes.custom_attributes?.to;
           const valuesVersion = op.action === 'update' ? op.changes.custom_attributes?.version : undefined;

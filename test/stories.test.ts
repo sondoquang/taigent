@@ -307,3 +307,72 @@ test('the backlog tree is validated: unknown story fields, bad criteria and keys
   );
   assert.equal(h.fake.requests.length, 0, 'Taiga is not contacted');
 });
+
+test('a task moved to another story in the manifest is re-parented: plan shows an update, apply PATCHes user_story with version', async (t) => {
+  const h = await startHarness(t);
+  h.fake.addProject({ slug: 'demo' });
+  await h.writeManifest('demo', 'backlog.yaml', TREE);
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
+  const [login, logout] = h.fake.state.userStories;
+  const ui = h.fake.state.tasks.find((task) => task.subject === 'Login form')!;
+  // AUTH-LOGIN-UI moves from AUTH-LOGIN to AUTH-LOGOUT.
+  const moved = TREE.replace(`          - key: AUTH-LOGIN-UI\n            subject: Login form\n`, '').concat(
+    `        tasks:\n          - key: AUTH-LOGIN-UI\n            subject: Login form\n`,
+  );
+  await h.writeManifest('demo', 'backlog.yaml', moved);
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, 3, plan.stderr);
+  const update = plan.json<Plan>().operations.find((op) => op.action === 'update');
+  assert.deepEqual(update, {
+    action: 'update',
+    type: 'task',
+    key: 'AUTH-LOGIN-UI',
+    id: ui.id,
+    ref: ui.ref,
+    version: ui.version,
+    changes: { parent: { from: 'AUTH-LOGIN', to: 'AUTH-LOGOUT' } },
+  });
+  const text = await h.taigent(['plan', '--project', 'demo']);
+  assert.match(text.stdout, /update task AUTH-LOGIN-UI .*parent \(story AUTH-LOGIN -> story AUTH-LOGOUT\)/);
+
+  const applied = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
+  assert.equal(applied.code, 0, applied.stderr);
+  assert.equal(applied.json<ApplyReport>().summary.updated, 1);
+  assert.equal(ui.user_story, logout!.id);
+  assert.notEqual(ui.user_story, login!.id);
+  assert.equal((await h.taigent(['plan', '--project', 'demo'])).code, 0, 'Taiga matches the manifest again');
+});
+
+test('a story moved to another epic is linked to it; the old link is reported as stale, never removed', async (t) => {
+  const h = await startHarness(t);
+  h.fake.addProject({ slug: 'demo' });
+  const before = 'epics:\n  - key: AUTH\n    subject: Authentication\n    stories:\n      - { key: AUTH-LOGIN, subject: User can log in }\n  - key: ACCOUNT\n    subject: Account\n';
+  await h.writeManifest('demo', 'backlog.yaml', before);
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
+  const [auth, account] = h.fake.state.epics;
+  const story = h.fake.state.userStories[0]!;
+  const after = 'epics:\n  - key: AUTH\n    subject: Authentication\n  - key: ACCOUNT\n    subject: Account\n    stories:\n      - { key: AUTH-LOGIN, subject: User can log in }\n';
+  await h.writeManifest('demo', 'backlog.yaml', after);
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, 3, plan.stderr);
+  const { operations, staleLinks } = plan.json<Plan>();
+  assert.deepEqual(operations.filter((op) => op.action === 'link'), [{ action: 'link', type: 'story', key: 'AUTH-LOGIN', epic: 'ACCOUNT' }]);
+  const stale = { key: 'AUTH-LOGIN', id: story.id, ref: story.ref, epic: 'AUTH', epicId: auth!.id, epicRef: auth!.ref };
+  assert.deepEqual(staleLinks, [stale]);
+
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
+  assert.deepEqual(
+    h.fake.state.epicRelatedUserStories.map((link) => [link.epic, link.user_story]),
+    [
+      [auth!.id, story.id],
+      [account!.id, story.id],
+    ],
+    'linked to the new epic, the old link stays',
+  );
+  const rerun = await h.taigent(['plan', '--project', 'demo']);
+  assert.equal(rerun.code, 0, 'a stale link is not a change');
+  assert.match(rerun.stdout, /stale link story AUTH-LOGIN .* -> epic AUTH .*never removed/);
+  assert.deepEqual((await h.taigent(['plan', '--project', 'demo', '--json'])).json<Plan>().staleLinks, [stale]);
+});

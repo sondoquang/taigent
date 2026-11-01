@@ -20,7 +20,7 @@ export interface RemoteState {
   epics: TaigaItem[];
   stories: TaigaItem[];
   tasks: TaigaTask[];
-  /** Ids of the user stories linked to each existing epic (`related_userstories`). */
+  /** Ids of the user stories linked to each existing epic that carries a `src:` tag (`related_userstories`). */
   epicStories: ReadonlyMap<number, readonly number[]>;
   /** Custom attributes defined on the project, per item type. */
   customAttributes: Record<ItemType, readonly TaigaCustomAttribute[]>;
@@ -44,6 +44,11 @@ export interface FieldChanges {
    * values object's version. Attributes the manifest does not declare are left alone.
    */
   custom_attributes?: { from: Record<string, unknown>; to: Record<string, AttributeValue>; version: number };
+  /**
+   * Tasks only: the task moved to another story in the manifest. `from` is the key of the story it is in on Taiga
+   * (null when it is in no story taigent manages), `to` the manifest's parent story; apply PATCHes `user_story`.
+   */
+  parent?: { from: string | null; to: string };
 }
 
 export type Operation =
@@ -65,10 +70,26 @@ export interface Orphan {
   subject: string;
 }
 
+/**
+ * A story linked on Taiga to a taigent-managed epic other than its manifest epic (it moved to another epic in the
+ * manifest). Reported, never removed: a person decides whether to unlink it.
+ */
+export interface StaleLink {
+  /** The story. */
+  key: string;
+  id: number;
+  ref: number;
+  /** The epic it is still linked to. */
+  epic: string;
+  epicId: number;
+  epicRef: number;
+}
+
 export interface Plan extends PlanSummary<Action> {
   project: PlanProject;
   operations: Operation[];
   orphans: Orphan[];
+  staleLinks: StaleLink[];
 }
 
 /** ` Name: from -> to; …` for the attribute values an operation sets. */
@@ -86,9 +107,12 @@ export function describePlanOperation(op: Operation): string {
       return `create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}${attributes}`;
     }
     case 'update': {
-      const changed = op.changes.custom_attributes;
+      const { custom_attributes: changed, parent } = op.changes;
       const attributes = changed ? `  [custom attributes ${formatAttributes(changed.from, changed.to)}]` : '';
-      return `update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}${attributes}`;
+      const fields = Object.keys(op.changes).map((field) =>
+        field === 'parent' && parent ? `parent (${parent.from ? `story ${parent.from}` : 'no story'} -> story ${parent.to})` : field,
+      );
+      return `update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${fields.join(', ')}${attributes}`;
     }
     case 'link':
       return `link   story ${op.key} -> epic ${op.epic}`;
@@ -106,6 +130,11 @@ function storyDescription(story: StorySpec): string {
   }
   if (story.spec !== '') parts.push(`Spec: ${story.spec}`);
   return parts.join('\n\n');
+}
+
+/** The manifest key of an item, from its first `src:` tag (Taiga lowercases tags; keys are uppercase). */
+function keyOf(item: TaigaItem): string | undefined {
+  return item.tags.find((t) => t.startsWith('src:'))?.slice('src:'.length).toUpperCase();
 }
 
 export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
@@ -126,8 +155,17 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
 
   type Spec = { key: string; subject: string; tags: string[]; customAttributes: Record<string, AttributeValue> };
 
-  /** Plans create/update/skip for one manifest item and returns its Taiga counterpart, if any. */
-  function reconcile(type: ItemType, spec: Spec, description: string, parent?: string): TaigaItem | undefined {
+  /**
+   * Plans create/update/skip for one manifest item and returns its Taiga counterpart, if any. `moved` tells whether
+   * an existing item has to move to another parent (tasks).
+   */
+  function reconcile(
+    type: ItemType,
+    spec: Spec,
+    description: string,
+    parent?: string,
+    moved?: (existing: TaigaItem) => FieldChanges['parent'],
+  ): TaigaItem | undefined {
     const tag = srcTag(spec.key);
     manifestTags[type].add(tag);
     const tags = [...new Set([...spec.tags.map((t) => t.toLowerCase()), tag])];
@@ -170,6 +208,8 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
       }
       if (Object.keys(to).length > 0) changes.custom_attributes = { from, to, version: current.version };
     }
+    const parentChange = moved?.(existing);
+    if (parentChange) changes.parent = parentChange;
     const { id, ref, version } = existing;
     operations.push(
       Object.keys(changes).length > 0
@@ -180,13 +220,28 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   }
 
   // Dependency order: each epic, then each of its stories followed by its epic link and its tasks.
+  const storiesById = new Map(remote.stories.map((story) => [story.id, story]));
+  const staleLinks: StaleLink[] = [];
   for (const epic of backlog.epics) {
     const remoteEpic = reconcile('epic', epic, epic.description);
     for (const story of epic.stories) {
       const remoteStory = reconcile('story', story, storyDescription(story), epic.key);
       const linked = remoteEpic && remoteStory && remote.epicStories.get(remoteEpic.id)?.includes(remoteStory.id);
       if (!linked) operations.push({ action: 'link', type: 'story', key: story.key, epic: epic.key });
-      for (const task of story.tasks) reconcile('task', task, task.description, story.key);
+      // Links of this story to other taigent-managed epics (it moved epics in the manifest) are reported, never removed.
+      for (const other of remote.epics) {
+        const otherKey = keyOf(other);
+        if (!remoteStory || otherKey === undefined || other.id === remoteEpic?.id) continue;
+        if (!remote.epicStories.get(other.id)?.includes(remoteStory.id)) continue;
+        staleLinks.push({ key: story.key, id: remoteStory.id, ref: remoteStory.ref, epic: otherKey, epicId: other.id, epicRef: other.ref });
+      }
+      const inOtherStory = (task: TaigaItem): FieldChanges['parent'] => {
+        const current = (task as TaigaTask).userStory;
+        if (remoteStory && current === remoteStory.id) return undefined;
+        const from = current === null ? undefined : storiesById.get(current);
+        return { from: (from && keyOf(from)) ?? null, to: story.key };
+      };
+      for (const task of story.tasks) reconcile('task', task, task.description, story.key, inOtherStory);
     }
   }
 
@@ -202,9 +257,9 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
     for (const item of remoteItems[type]) {
       const srcTags = item.tags.filter((t) => t.startsWith('src:'));
       if (srcTags.length === 0 || srcTags.some((t) => manifestTags[type].has(t))) continue;
-      orphans.push({ type, key: srcTags[0]!.slice('src:'.length).toUpperCase(), id: item.id, ref: item.ref, subject: item.subject });
+      orphans.push({ type, key: keyOf(item)!, id: item.id, ref: item.ref, subject: item.subject });
     }
   }
 
-  return { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans };
+  return { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans, staleLinks };
 }
