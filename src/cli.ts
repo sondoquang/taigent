@@ -78,6 +78,32 @@ function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
   return names.map((name) => env[name]!);
 }
 
+/**
+ * Connects to Taiga from the environment: TAIGA_TOKEN when set (username/password, if also set, are
+ * the fallback when Taiga rejects it), else a TAIGA_USERNAME/TAIGA_PASSWORD login.
+ */
+async function connectTaiga(env: NodeJS.ProcessEnv): Promise<TaigaClient> {
+  const [apiUrl] = requireEnv(env, ['TAIGA_API_URL']);
+  const token = env.TAIGA_TOKEN || undefined;
+  const missing = ['TAIGA_USERNAME', 'TAIGA_PASSWORD'].filter((name) => !env[name]);
+  if (!token && missing.length > 0) {
+    throw new UsageError(`missing environment variable(s): ${missing.join(', ')} (or set TAIGA_TOKEN instead)`);
+  }
+  const credentials = missing.length === 0 ? { username: env.TAIGA_USERNAME!, password: env.TAIGA_PASSWORD! } : undefined;
+  return TaigaClient.connect({ apiUrl: apiUrl!, token, credentials, retryUnitMs: retryUnitMs(env) });
+}
+
+/** TAIGENT_RETRY_UNIT_MS: milliseconds per second of 429 backoff (default 1000). */
+function retryUnitMs(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.TAIGENT_RETRY_UNIT_MS;
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new UsageError(`TAIGENT_RETRY_UNIT_MS must be a non-negative integer (milliseconds), got "${raw}"`);
+  }
+  return value;
+}
+
 function formatPlan(plan: Plan): string {
   const lines = [`Plan for project ${plan.project.slug} (id ${plan.project.id}):`];
   for (const op of plan.operations) {
@@ -108,8 +134,7 @@ function formatReport(report: ApplyReport): string {
 async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
   const layout = projectLayout(options.project, env, cwd);
   const backlog = await loadBacklog(layout.backlog);
-  const [apiUrl, username, password] = requireEnv(env, ['TAIGA_API_URL', 'TAIGA_USERNAME', 'TAIGA_PASSWORD']);
-  const client = await TaigaClient.login({ apiUrl: apiUrl!, username: username!, password: password! });
+  const client = await connectTaiga(env);
   const project = await client.getProjectBySlug(options.project);
   const epics = await client.listEpics(project.id);
   const plan = buildPlan(backlog, { project: { id: project.id, slug: project.slug }, epics });
