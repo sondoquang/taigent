@@ -6,7 +6,7 @@ export const ExitCode = {
   Internal: 1,
   /** Bad usage or configuration: unknown command/flag, missing env var, `apply` without `--yes`. */
   Usage: 2,
-  /** `plan` found changes that `apply` would make. */
+  /** `plan` found changes that `apply` would make; `skills check` found Claude copies that `skills sync` would rewrite. */
   Changes: 3,
   /** A manifest is invalid. Nothing was sent to Taiga. */
   Validation: 4,
