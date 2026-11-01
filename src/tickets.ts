@@ -52,10 +52,27 @@ export interface TicketsReport {
   generatedAt: string;
   /** Closed tickets first by `closedAt` (those without one last), then open ones: Overdue, On track, No due date, each by due date. */
   tickets: Ticket[];
+  /** Every day of the range: the tickets closed that local day and the sum of their effort (hours). */
+  days: { date: string; closed: number; effort: number }[];
+  summary: TicketsSummary;
   notes: {
+    /** Runs of 3 or more tickets, each closed at most 60 seconds after the previous one, by closing time. */
+    bulkCloses: { count: number; first: string; last: string; tickets: { ref: number; project: string }[] }[];
     /** Tickets with neither Spent Time nor points. */
     missingEffort: { ref: number; project: string }[];
   };
+}
+
+/** Totals of `tickets`. */
+export interface TicketsSummary {
+  tickets: number;
+  /** `withoutClosingDay`: closed tickets with a due date but no closing day, which have no due status. */
+  closed: { total: number; byDueStatus: Record<'On time' | 'Late' | 'No due date', number>; withoutClosingDay: number };
+  open: { total: number; byDueStatus: Record<'Overdue' | 'On track' | 'No due date', number> };
+  /** Hours in total, and the hours and tickets of each effort source. */
+  effort: { hours: number; spent: { hours: number; tickets: number }; points: { hours: number; tickets: number } };
+  /** Most tickets first, then by slug. */
+  projects: { slug: string; name: string; tickets: number }[];
 }
 
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -126,6 +143,76 @@ function compareTickets(a: Ticket, b: Ticket): number {
   return OPEN_ORDER[a.dueStatus!]! - OPEN_ORDER[b.dueStatus!]! || (a.dueDate ?? '').localeCompare(b.dueDate ?? '');
 }
 
+/** Sum of efforts in hours, rounded to hundredths so float noise never shows. */
+function sumHours(tickets: Ticket[]): number {
+  return Math.round(tickets.reduce((sum, ticket) => sum + (ticket.effort ?? 0), 0) * 100) / 100;
+}
+
+/** Every day from `range.from` to `range.to`, with the tickets closed on it. */
+function daysOf(tickets: Ticket[], range: DayRange): TicketsReport['days'] {
+  const closedByDay = Map.groupBy(
+    tickets.filter((ticket) => ticket.closedAt !== null),
+    (ticket) => localDay(new Date(ticket.closedAt!)),
+  );
+  const days: TicketsReport['days'] = [];
+  for (let day = range.start; day < range.end; day = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1)) {
+    const closed = closedByDay.get(localDay(day)) ?? [];
+    days.push({ date: localDay(day), closed: closed.length, effort: sumHours(closed) });
+  }
+  return days;
+}
+
+function summarize(tickets: Ticket[]): TicketsSummary {
+  const closed = tickets.filter((ticket) => ticket.isClosed);
+  const open = tickets.filter((ticket) => !ticket.isClosed);
+  const count = (group: Ticket[], status: DueStatus) => group.filter((ticket) => ticket.dueStatus === status).length;
+  const spent = tickets.filter((ticket) => ticket.effortSource === 'spent');
+  const points = tickets.filter((ticket) => ticket.effortSource === 'points');
+  const byProject = Map.groupBy(tickets, (ticket) => ticket.project.slug);
+  return {
+    tickets: tickets.length,
+    closed: {
+      total: closed.length,
+      byDueStatus: { 'On time': count(closed, 'On time'), Late: count(closed, 'Late'), 'No due date': count(closed, 'No due date') },
+      withoutClosingDay: closed.filter((ticket) => ticket.dueStatus === null).length,
+    },
+    open: {
+      total: open.length,
+      byDueStatus: { Overdue: count(open, 'Overdue'), 'On track': count(open, 'On track'), 'No due date': count(open, 'No due date') },
+    },
+    effort: {
+      hours: sumHours(tickets),
+      spent: { hours: sumHours(spent), tickets: spent.length },
+      points: { hours: sumHours(points), tickets: points.length },
+    },
+    projects: [...byProject]
+      .map(([slug, group]) => ({ slug, name: group[0]!.project.name, tickets: group.length }))
+      .sort((a, b) => b.tickets - a.tickets || a.slug.localeCompare(b.slug)),
+  };
+}
+
+const BULK_GAP_MS = 60_000;
+const BULK_MIN = 3;
+
+/** Runs of tickets, by closing time, each closed at most `BULK_GAP_MS` after the previous one; only runs of `BULK_MIN` or more. */
+function bulkCloses(tickets: Ticket[]): TicketsReport['notes']['bulkCloses'] {
+  const closed = tickets.filter((ticket) => ticket.closedAt !== null).sort((a, b) => Date.parse(a.closedAt!) - Date.parse(b.closedAt!));
+  const runs: Ticket[][] = [];
+  for (const ticket of closed) {
+    const run = runs.at(-1);
+    if (run && Date.parse(ticket.closedAt!) - Date.parse(run.at(-1)!.closedAt!) <= BULK_GAP_MS) run.push(ticket);
+    else runs.push([ticket]);
+  }
+  return runs
+    .filter((run) => run.length >= BULK_MIN)
+    .map((run) => ({
+      count: run.length,
+      first: run[0]!.closedAt!,
+      last: run.at(-1)!.closedAt!,
+      tickets: run.map((ticket) => ({ ref: ticket.ref, project: ticket.project.slug })),
+    }));
+}
+
 /** Reads every story assigned to the user and keeps the Period's tickets, with assignee usernames, due status and effort. */
 export async function readTickets(client: TaigaClient, range: DayRange, project?: { id: number; slug: string }): Promise<TicketsReport> {
   const now = new Date();
@@ -166,7 +253,10 @@ export async function readTickets(client: TaigaClient, range: DayRange, project?
     today,
     generatedAt: now.toISOString(),
     tickets,
+    days: daysOf(tickets, range),
+    summary: summarize(tickets),
     notes: {
+      bulkCloses: bulkCloses(tickets),
       missingEffort: tickets.filter((ticket) => ticket.effort === null).map((ticket) => ({ ref: ticket.ref, project: ticket.project.slug })),
     },
   };
@@ -178,14 +268,19 @@ function formatEffort(ticket: Ticket): string {
   return ticket.effortSource === 'points' ? `${ticket.effort}h (estimated from points)` : `${ticket.effort}h`;
 }
 
-/** Text form: the totals by due status, then one block per project (most tickets first) with one line per ticket. */
+/** Text form: the totals by due status and the total effort, then one block per project (most tickets first) with one line per ticket. */
 export function formatTicketsText(report: TicketsReport): string {
-  const { tickets } = report;
+  const { tickets, summary } = report;
   const scope = report.project === null ? '' : ` in ${report.project}`;
-  const counts = DUE_STATUSES.map((status) => `${status} ${tickets.filter((ticket) => ticket.dueStatus === status).length}`);
-  const unknown = tickets.filter((ticket) => ticket.dueStatus === null).length;
-  if (unknown > 0) counts.push(`closed without a closing day ${unknown}`);
-  const lines = [`Tickets ${report.range.from} to ${report.range.to}${scope}, assigned to ${report.user.username}: ${tickets.length} (${counts.join(', ')})`];
+  const closedCounts = Object.entries(summary.closed.byDueStatus).map(([status, n]) => `${status} ${n}`);
+  if (summary.closed.withoutClosingDay > 0) closedCounts.push(`without a closing day ${summary.closed.withoutClosingDay}`);
+  const openCounts = Object.entries(summary.open.byDueStatus).map(([status, n]) => `${status} ${n}`);
+  const { effort } = summary;
+  const lines = [
+    `Tickets ${report.range.from} to ${report.range.to}${scope}, assigned to ${report.user.username}: ${summary.tickets}` +
+      ` (closed ${summary.closed.total}: ${closedCounts.join(', ')}; open ${summary.open.total}: ${openCounts.join(', ')}),` +
+      ` effort ${effort.hours}h (Spent Time ${effort.spent.tickets} tickets, points ${effort.points.tickets} tickets)`,
+  ];
   const byProject = Map.groupBy(tickets, (ticket) => ticket.project.slug);
   for (const [slug, group] of [...byProject].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))) {
     lines.push('', `${slug} (${group[0]!.project.name}): ${group.length}`);

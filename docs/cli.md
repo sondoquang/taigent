@@ -408,9 +408,10 @@ since its id differs from project to project. A ticket whose Spent Time holds a 
 `notes.missingEffort` (`ref`, project slug). A project without the attribute uses points only.
 
 Missing or invalid days, or `--from` after `--to`, are a usage error (exit 2) before Taiga is contacted. The text form
-gives one line of totals by due status, then each project with one line per ticket (ref, due status, status, due date,
-local closing time, effort, subject); an effort from points reads `5h (estimated from points)`, a missing one
-`no effort`. `tickets --json` prints a `TicketsReport`:
+gives one line of totals (closed tickets by due status, open tickets by due status, total effort with the number of
+tickets per source), then each project with one line per ticket (ref, due status, status, due date, local closing
+time, effort, subject); an effort from points reads `5h (estimated from points)`, a missing one `no effort`.
+`tickets --json` prints a `TicketsReport`:
 
 ```json
 {
@@ -425,13 +426,43 @@ local closing time, effort, subject); an effort from points reads `5h (estimated
       "dueDate": "2026-10-30", "closedAt": "2026-11-01T04:26:49.642Z", "dueStatus": "Late",
       "effort": 8, "effortSource": "spent" }
   ],
-  "notes": { "missingEffort": [{ "ref": 12, "project": "internal-taigent" }] }
+  "days": [
+    { "date": "2026-10-26", "closed": 0, "effort": 0 },
+    { "date": "2026-11-01", "closed": 18, "effort": 96 }
+  ],
+  "summary": {
+    "tickets": 21,
+    "closed": { "total": 19, "byDueStatus": { "On time": 1, "Late": 17, "No due date": 1 }, "withoutClosingDay": 0 },
+    "open": { "total": 2, "byDueStatus": { "Overdue": 2, "On track": 0, "No due date": 0 } },
+    "effort": { "hours": 104, "spent": { "hours": 60, "tickets": 11 }, "points": { "hours": 44, "tickets": 8 } },
+    "projects": [{ "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub", "tickets": 8 }]
+  },
+  "notes": {
+    "bulkCloses": [{ "count": 18, "first": "2026-11-01T04:26:30.101Z", "last": "2026-11-01T04:27:41.880Z",
+      "tickets": [{ "ref": 84, "project": "vigo-medical-hub" }, { "ref": 31, "project": "vigo-auth" }] }],
+    "missingEffort": [{ "ref": 12, "project": "internal-taigent" }]
+  }
 }
 ```
 
 `today` is the local day open tickets are compared with. `assignees` lists every assignee's username, or the user id
 when it matches no project member. `tickets` come closed first, by `closedAt` (those without one last), then open:
 `Overdue`, `On track`, `No due date`, each by due date.
+
+`days` holds every day from `--from` to `--to`, days without a closed ticket included (0): the tickets whose local
+closing day it is, and the sum of their effort in hours (a missing effort counts 0). A ticket closed before the period
+(a ticket because it is due in it) appears in no day.
+
+`summary` totals `tickets`: their number; closed ones by due status (`On time`, `Late`, `No due date`) plus
+`withoutClosingDay`, the closed ones with no closing day and so no due status; open ones by due status (`Overdue`,
+`On track`, `No due date`); the total effort in hours, and the hours and number of tickets of each source (`spent`,
+`points`); and the number of tickets per project, most first, then by slug. Hours are rounded to hundredths.
+
+`notes.bulkCloses` lists, by closing time, every run of 3 or more tickets each closed at most 60 seconds after the
+previous one (`count`, the `first` and `last` closing instants, and `tickets` as `ref` and project slug, like
+`missingEffort`): a closing day in such a run may be later
+than when the work was actually done. A gap over 60 seconds starts a new run; a run of 2 is not listed.
+`notes.missingEffort` lists the tickets with no effort.
 
 ## Skills
 

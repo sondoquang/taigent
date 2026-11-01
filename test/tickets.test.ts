@@ -29,7 +29,18 @@ interface TicketsJson {
   today: string;
   generatedAt: string;
   tickets: TicketJson[];
-  notes: { missingEffort: { ref: number; project: string }[] };
+  days: { date: string; closed: number; effort: number }[];
+  summary: {
+    tickets: number;
+    closed: { total: number; byDueStatus: Record<string, number>; withoutClosingDay: number };
+    open: { total: number; byDueStatus: Record<string, number> };
+    effort: { hours: number; spent: { hours: number; tickets: number }; points: { hours: number; tickets: number } };
+    projects: { slug: string; name: string; tickets: number }[];
+  };
+  notes: {
+    bulkCloses: { count: number; first: string; last: string; tickets: { ref: number; project: string }[] }[];
+    missingEffort: { ref: number; project: string }[];
+  };
 }
 
 type StoryFields = Partial<Pick<FakeUserStory, 'is_closed' | 'finish_date' | 'due_date' | 'status_name' | 'total_points'>> & { assigned?: number[] };
@@ -237,6 +248,84 @@ test('tickets gives each ticket its effort: Spent Time found by name per project
   assert.match(line('spent'), /  3\.5h  /);
   assert.match(line('spent empty'), /  5h \(estimated from points\)  /);
   assert.match(line('missing'), /  no effort  /);
+});
+
+test('tickets totals the period: every day with its closed tickets, the summary, and the text totals line', async (t) => {
+  const h = await startHarness(t);
+  const me = h.fake.user.id;
+  const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha', members: [me] });
+  const beta = h.fake.addProject({ slug: 'beta', name: 'Beta', members: [me] });
+  const spentTime = h.fake.addCustomAttribute({ itemType: 'userstory', project: alpha.id, name: 'Spent Time', type: 'number' });
+  const story = (project: number, subject: string, fields: StoryFields, spent?: number) => {
+    const created = Object.assign(h.fake.addUserStory({ project, subject }), { assigned_users: [me], is_closed: fields.finish_date != null, ...fields });
+    if (spent !== undefined) h.fake.editAttributeValues('userstory', created.id, { [spentTime.id]: spent });
+    return created;
+  };
+  story(alpha.id, 'on time', { finish_date: '2026-10-27T02:00:00Z', due_date: '2026-10-28', total_points: 9 }, 2);
+  story(alpha.id, 'late', { finish_date: '2026-10-27T03:00:00Z', due_date: '2026-10-26', total_points: 3 });
+  story(alpha.id, 'no due date, no effort', { finish_date: '2026-10-26T18:00:00Z' });
+  story(beta.id, 'late, local next day', { finish_date: '2026-10-31T17:30:00Z', due_date: '2026-10-30', total_points: 1.5 });
+  story(beta.id, 'closed before the period', { finish_date: '2026-10-15T03:00:00Z', due_date: '2026-10-29', total_points: 5 });
+  story(beta.id, 'closed without closing day', { is_closed: true, due_date: '2026-10-29', total_points: 1 });
+  story(alpha.id, 'overdue', { due_date: '2000-01-01' }, 4);
+  story(beta.id, 'on track', { due_date: '2999-12-31', total_points: 2 });
+  story(alpha.id, 'open', {});
+
+  const result = await h.taigent(['tickets', ...RANGE, '--json'], { env: { TZ } });
+
+  assert.equal(result.code, 0, result.stderr);
+  const report = result.json<TicketsJson>();
+  assert.deepEqual(report.days, [
+    { date: '2026-10-26', closed: 0, effort: 0 },
+    { date: '2026-10-27', closed: 3, effort: 5 },
+    { date: '2026-10-28', closed: 0, effort: 0 },
+    { date: '2026-10-29', closed: 0, effort: 0 },
+    { date: '2026-10-30', closed: 0, effort: 0 },
+    { date: '2026-10-31', closed: 0, effort: 0 },
+    { date: '2026-11-01', closed: 1, effort: 1.5 },
+  ]);
+  assert.deepEqual(report.summary, {
+    tickets: 9,
+    closed: { total: 6, byDueStatus: { 'On time': 2, Late: 2, 'No due date': 1 }, withoutClosingDay: 1 },
+    open: { total: 3, byDueStatus: { Overdue: 1, 'On track': 1, 'No due date': 1 } },
+    effort: { hours: 18.5, spent: { hours: 6, tickets: 2 }, points: { hours: 12.5, tickets: 5 } },
+    projects: [
+      { slug: 'alpha', name: 'Alpha', tickets: 5 },
+      { slug: 'beta', name: 'Beta', tickets: 4 },
+    ],
+  });
+
+  const text = await h.taigent(['tickets', ...RANGE], { env: { TZ } });
+  assert.equal(text.code, 0, text.stderr);
+  assert.equal(
+    text.stdout.split('\n')[0],
+    'Tickets 2026-10-26 to 2026-11-01, assigned to taigent-bot: 9 (closed 6: On time 2, Late 2, No due date 1, without a closing day 1; open 3: Overdue 1, On track 1, No due date 1), effort 18.5h (Spent Time 2 tickets, points 5 tickets)',
+  );
+});
+
+test('tickets notes bulk closes: 3 or more tickets each closed within 60 seconds of the previous one', async (t) => {
+  const h = await startHarness(t);
+  const me = h.fake.user.id;
+  const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha', members: [me] });
+  const closedAt = (seconds: number) => new Date(Date.parse('2026-11-01T02:00:00Z') + seconds * 1000).toISOString();
+  const story = (subject: string, fields: StoryFields) =>
+    Object.assign(h.fake.addUserStory({ project: alpha.id, subject }), { assigned_users: [me], is_closed: fields.finish_date != null, ...fields });
+  // Added out of order: the groups follow the closing time.
+  const second = [170, 161, 200].map((s) => story(`second ${s}`, { finish_date: closedAt(s) }));
+  const first = [0, 30, 90, 100].map((s) => story(`first ${s}`, { finish_date: closedAt(s) }));
+  story('pair 1', { finish_date: closedAt(1000) });
+  story('pair 2', { finish_date: closedAt(1010) });
+  story('alone', { finish_date: '2026-10-28T02:00:00Z' });
+  story('closed without closing day', { is_closed: true, due_date: '2026-10-29' });
+  story('open', {});
+
+  const result = await h.taigent(['tickets', ...RANGE, '--json'], { env: { TZ } });
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(result.json<TicketsJson>().notes.bulkCloses, [
+    { count: 4, first: closedAt(0), last: closedAt(100), tickets: first.map(({ ref }) => ({ ref, project: 'alpha' })) },
+    { count: 3, first: closedAt(161), last: closedAt(200), tickets: [second[1]!, second[0]!, second[2]!].map(({ ref }) => ({ ref, project: 'alpha' })) },
+  ]);
 });
 
 test('tickets without a valid day range is a usage error that never contacts Taiga (exit 2)', async (t) => {
