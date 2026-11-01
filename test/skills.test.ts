@@ -201,7 +201,7 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
 }
 
 /** `taigent` commands a skill may pre-approve; the writing ones make a skill explicit-only. */
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'closed'];
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'closed', 'tickets'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
 

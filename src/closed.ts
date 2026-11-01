@@ -2,16 +2,7 @@
 // days. Read-only. Days are calendar days in the local time zone (TZ); the client knows Taiga's field names.
 
 import { type TaigaClient, type TaigaClosedItem, WORK_ITEM_TYPES, type WorkItemType } from './taiga/client.ts';
-
-/** An inclusive range of days: `from` and `to` as written (YYYY-MM-DD), `start`/`end` the instants bounding it. */
-export interface DayRange {
-  from: string;
-  to: string;
-  /** Local midnight starting `from`. */
-  start: Date;
-  /** Local midnight ending `to` (exclusive). */
-  end: Date;
-}
+import { type DayRange, localMinute } from './tickets.ts';
 
 /** The `--json` output of `taigent closed`. */
 export interface ClosedReport {
@@ -22,24 +13,6 @@ export interface ClosedReport {
   summary: Record<WorkItemType, number> & { total: number };
   /** Ordered by `closedAt`. */
   items: (TaigaClosedItem & { closedAt: string })[];
-}
-
-const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/** Local midnight of a YYYY-MM-DD day, or undefined when `value` is no such calendar day. */
-export function parseDay(value: string): Date | undefined {
-  const match = DAY.exec(value);
-  if (!match) return undefined;
-  const [year, month, day] = match.slice(1).map(Number) as [number, number, number];
-  const date = new Date(year, month - 1, day);
-  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : undefined;
-}
-
-/** The range from `from` to `to` inclusive; both must be calendar days (`parseDay`), `from` not after `to`. */
-export function dayRange(from: string, to: string): DayRange {
-  const start = parseDay(from)!;
-  const last = parseDay(to)!;
-  return { from, to, start, end: new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1) };
 }
 
 /** Reads the closed items of every type assigned to the user and keeps those closed within `range`. */
@@ -62,13 +35,6 @@ export async function readClosed(client: TaigaClient, range: DayRange, project?:
     summary: { story: count('story'), task: count('task'), issue: count('issue'), total: items.length },
     items,
   };
-}
-
-/** `YYYY-MM-DD HH:mm` in the local time zone. */
-function localMinute(iso: string): string {
-  const date = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /** Text form: the totals, then one block per project (most items first) with one line per item. */

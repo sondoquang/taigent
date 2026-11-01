@@ -147,6 +147,10 @@ export interface FakeUserStory {
   is_closed: boolean;
   /** When the story was closed (ISO 8601), null while open. */
   finish_date: string | null;
+  /** Due day (YYYY-MM-DD, no time), null when the story has none. */
+  due_date: string | null;
+  /** Name of the story's status in list responses; null for the template default (`Done` closed, `New` open). */
+  status_name: string | null;
 }
 
 export interface FakeTask {
@@ -665,7 +669,15 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   function addUserStory(input: FakeItemInput): FakeUserStory {
-    return addItem<FakeUserStory>('userstory', input, { assigned_users: [], milestone: null, points: {}, is_closed: false, finish_date: null });
+    return addItem<FakeUserStory>('userstory', input, {
+      assigned_users: [],
+      milestone: null,
+      points: {},
+      is_closed: false,
+      finish_date: null,
+      due_date: null,
+      status_name: null,
+    });
   }
 
   function addTask(input: FakeItemInput & { user_story?: number }): FakeTask {
@@ -1184,16 +1196,18 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   /**
    * An item as taiga-back serializes it: tags as [name, color] pairs, plus the embedded project and status
    * (`project_extra_info`, `status_extra_info`). Status names follow the default templates: a closed story is `Done`,
-   * a closed task or issue `Closed`, anything open `New`.
+   * a closed task or issue `Closed`, anything open `New`; a story's `status_name` overrides them.
    */
   function itemJson(item: FakeItem | FakeIssue): Json {
     const project = state.projects.find((p) => p.id === item.project)!;
     const closed = 'is_closed' in item && item.is_closed;
+    const { status_name: statusName, ...fields } = item as typeof item & { status_name?: string | null };
+    const defaultName = closed ? ('finish_date' in item ? 'Done' : 'Closed') : 'New';
     return {
-      ...item,
+      ...fields,
       tags: item.tags.map((t) => [t, null]),
       project_extra_info: { id: project.id, slug: project.slug, name: project.name },
-      status_extra_info: { name: closed ? ('finish_date' in item ? 'Done' : 'Closed') : 'New', is_closed: closed },
+      status_extra_info: { name: statusName ?? defaultName, is_closed: closed },
     };
   }
 

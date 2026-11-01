@@ -130,7 +130,7 @@ const MAX_ERROR_BODY = 500;
 const MAX_THROTTLE_RETRIES = 5;
 const MAX_BACKOFF_UNITS = 60;
 
-function field<T>(raw: Record<string, unknown>, name: string, type: 'number' | 'string', what: string): T {
+function field<T>(raw: Record<string, unknown>, name: string, type: 'number' | 'string' | 'boolean', what: string): T {
   const value = raw[name];
   if (typeof value !== type) throw new TaigaError(`unexpected Taiga response: ${what}.${name} is not a ${type}`);
   return value as T;
@@ -331,6 +331,46 @@ function parseClosedItem(type: WorkItemType, raw: unknown): TaigaClosedItem {
       name: field(project, 'name', 'string', `${what} project`),
     },
     closedAt: typeof r[closedAt] === 'string' ? r[closedAt] : null,
+  };
+}
+
+// ---- Tickets (`taigent tickets`) --------------------------------------------------------------------
+
+/** A user story assigned to someone, open or closed, with what Taiga embeds in list responses (`*_extra_info`). */
+export interface TaigaAssignedStory {
+  id: number;
+  ref: number;
+  subject: string;
+  status: string;
+  isClosed: boolean;
+  project: { id: number; slug: string; name: string };
+  /** User ids of every assignee (`assigned_users`). */
+  assignedUsers: number[];
+  /** Due day (YYYY-MM-DD, a plain date without time), or null. */
+  dueDate: string | null;
+  /** When Taiga closed it (`finish_date`, ISO 8601), or null: open, or closed without a recorded date. */
+  closedAt: string | null;
+}
+
+function parseAssignedStory(raw: unknown): TaigaAssignedStory {
+  const what = 'user story';
+  const r = record(raw, what);
+  const project = record(r.project_extra_info, `${what}.project_extra_info`);
+  const status = record(r.status_extra_info, `${what}.status_extra_info`);
+  return {
+    id: field(r, 'id', 'number', what),
+    ref: field(r, 'ref', 'number', what),
+    subject: field(r, 'subject', 'string', what),
+    status: field(status, 'name', 'string', `${what} status`),
+    isClosed: field(r, 'is_closed', 'boolean', what),
+    project: {
+      id: field(project, 'id', 'number', `${what} project`),
+      slug: field(project, 'slug', 'string', `${what} project`),
+      name: field(project, 'name', 'string', `${what} project`),
+    },
+    assignedUsers: list(r.assigned_users ?? [], `${what}.assigned_users`).filter((id): id is number => typeof id === 'number'),
+    dueDate: typeof r.due_date === 'string' ? r.due_date : null,
+    closedAt: typeof r.finish_date === 'string' ? r.finish_date : null,
   };
 }
 
@@ -588,6 +628,13 @@ export class TaigaClient {
     const query: Record<string, string | number> = { [assignee]: userId, [closed]: 'true' };
     if (projectId !== undefined) query.project = projectId;
     return parseList(await this.#request('GET', `/${collection}`, { query }), what, (item) => parseClosedItem(type, item));
+  }
+
+  /** Every user story assigned to `userId`, open and closed, in every project the user sees or in `projectId` only. */
+  async listAssignedStories(userId: number, projectId?: number): Promise<TaigaAssignedStory[]> {
+    const query: Record<string, string | number> = { assigned_users: userId };
+    if (projectId !== undefined) query.project = projectId;
+    return parseList(await this.#request('GET', '/userstories', { query }), 'user story', parseAssignedStory);
   }
 
   async listProjectTemplates(): Promise<TaigaProjectTemplate[]> {
