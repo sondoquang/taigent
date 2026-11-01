@@ -145,3 +145,40 @@ attachments:
     projects: [{ slug: 'demo', files: [join('taiga', 'demo', 'backlog.yaml'), join('taiga', 'demo', 'docs.yaml')] }],
   });
 });
+
+test('validate without --project checks every project directory and reports key errors per file', async (t) => {
+  const h = await startHarness(t);
+  await h.writeManifest('alpha', 'backlog.yaml', VALID_BACKLOG);
+  await h.writeManifest(
+    'beta',
+    'backlog.yaml',
+    `epics:
+  - key: AUTH
+    subject: Authentication
+  - key: AUTH
+    subject: Again
+  - key: auth_login
+    subject: Lowercase key
+`,
+  );
+
+  const result = await h.taigent(['validate'], { env: OFFLINE });
+
+  assert.equal(result.code, 4, result.stdout);
+  assert.match(result.stderr, /taiga[\\/]beta[\\/]backlog\.yaml: epics\[1\]\.key: duplicate key AUTH .*\[key-unique\]/);
+  assert.match(result.stderr, /taiga[\\/]beta[\\/]backlog\.yaml: epics\[2\]\.key: .*\[key-format\]/);
+  assert.doesNotMatch(result.stderr, /alpha/);
+});
+
+test('validate with no manifests at all is a validation error', async (t) => {
+  const h = await startHarness(t);
+
+  const all = await h.taigent(['validate'], { env: OFFLINE });
+  assert.equal(all.code, 4);
+  assert.match(all.stderr, /no project manifest directory found \[file-exists\]/);
+
+  await h.writeManifest('empty', 'notes.txt', '');
+  const one = await h.taigent(['validate', '--project', 'empty'], { env: OFFLINE });
+  assert.equal(one.code, 4);
+  assert.match(one.stderr, /no manifest found \(expected backlog\.yaml, docs\.yaml\) \[file-exists\]/);
+});
