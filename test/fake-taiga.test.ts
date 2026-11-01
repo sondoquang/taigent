@@ -121,3 +121,42 @@ test('fake Taiga enforces OCC versions on PATCH and unique epic ↔ story links'
   });
   assert.equal(fake.state.epicRelatedUserStories.length, 1);
 });
+
+test('fake Taiga keeps custom attribute values per item: string id keys, full replacement, own OCC version', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const other = fake.addProject({ slug: 'other' });
+  const token = await login(fake);
+  const estimate = fake.addCustomAttribute({ itemType: 'task', project: project.id, name: 'Estimate' });
+  const owner = fake.addCustomAttribute({ itemType: 'task', project: project.id, name: 'Owner' });
+  const storyAttribute = fake.addCustomAttribute({ itemType: 'userstory', project: project.id, name: 'Due' });
+  const foreign = fake.addCustomAttribute({ itemType: 'task', project: other.id, name: 'Estimate' });
+  const task = fake.addTask({ project: project.id, subject: 'T' });
+  const path = `/tasks/custom-attributes-values/${task.id}`;
+
+  const read = await fetch(`${fake.url}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  assert.deepEqual(await read.json(), { attributes_values: {}, version: 1, task: task.id }, 'created with the task');
+
+  const id = (attribute: { id: number }) => String(attribute.id);
+  assert.deepEqual(await send(fake, token, 'PATCH', path, { attributes_values: { [id(estimate)]: 3 } }), {
+    status: 400,
+    body: { version: 'The version parameter is not valid' },
+  });
+  for (const wrong of [storyAttribute, foreign]) {
+    assert.deepEqual(await send(fake, token, 'PATCH', path, { attributes_values: { [id(wrong)]: 3 }, version: 1 }), {
+      status: 400,
+      body: { attributes_values: ['It contain invalid custom fields.'] },
+    });
+  }
+  assert.equal((await send(fake, token, 'PATCH', path, { values: {}, version: 1 })).status, 400, 'unknown fields are rejected');
+
+  const ok = await send(fake, token, 'PATCH', path, { attributes_values: { [id(estimate)]: 3, [id(owner)]: 'bob' }, version: 1 });
+  assert.deepEqual(ok, { status: 200, body: { attributes_values: { [id(estimate)]: 3, [id(owner)]: 'bob' }, version: 2, task: task.id } });
+  const replaced = await send(fake, token, 'PATCH', path, { attributes_values: { [id(owner)]: 'eve' }, version: 2 });
+  assert.deepEqual(replaced.body, { attributes_values: { [id(owner)]: 'eve' }, version: 3, task: task.id }, 'PATCH replaces all values');
+  assert.deepEqual(await send(fake, token, 'PATCH', path, { attributes_values: {}, version: 2 }), {
+    status: 400,
+    body: { version: "The version doesn't match with the current one" },
+  });
+});

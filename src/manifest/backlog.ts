@@ -7,11 +7,16 @@ import { readManifestYaml } from './yaml.ts';
 
 export const BACKLOG_FILE = 'backlog.yaml';
 
+/** A custom attribute value as written in the manifest (Taiga stores it as JSON). */
+export type AttributeValue = string | number | boolean;
+
 interface ItemSpec {
   key: string;
   subject: string;
   description: string;
   tags: string[];
+  /** Attribute name → value; empty when the item declares none. */
+  customAttributes: Record<string, AttributeValue>;
 }
 
 export type TaskSpec = ItemSpec;
@@ -34,7 +39,7 @@ export interface Backlog {
 
 type Kind = 'epic' | 'story' | 'task';
 
-const ITEM_FIELDS = ['key', 'subject', 'description', 'tags'];
+const ITEM_FIELDS = ['key', 'subject', 'description', 'tags', 'custom_attributes'];
 const KNOWN_FIELDS: Record<Kind, ReadonlySet<string>> = {
   epic: new Set([...ITEM_FIELDS, 'stories']),
   story: new Set([...ITEM_FIELDS, 'acceptance_criteria', 'spec', 'tasks']),
@@ -80,13 +85,22 @@ export async function loadBacklog(path: string): Promise<Backlog> {
     for (const field of Object.keys(raw)) {
       if (!KNOWN_FIELDS[kind].has(field)) issue(`${at}.${field}`, 'known-field', `unknown ${kind} field \`${field}\``);
     }
-    const { key, subject, description = '', tags = [] } = raw;
+    const { key, subject, description = '', tags = [], custom_attributes: customAttributes = {} } = raw;
     checkKey(key, `${at}.key`, issue, seenKeys);
     if (typeof subject !== 'string' || subject.trim() === '') issue(`${at}.subject`, 'required', 'subject is required');
     if (typeof description !== 'string') issue(`${at}.description`, 'type', 'must be a string');
     if (!Array.isArray(tags)) issue(`${at}.tags`, 'type', 'must be a list of tags');
     else tags.forEach((tag: unknown, i) => checkTag(tag, `${at}.tags[${i}]`, issue));
-    return { key, subject, description, tags, raw } as ItemSpec & { raw: Record<string, unknown> };
+    if (!isRecord(customAttributes)) issue(`${at}.custom_attributes`, 'type', 'must be a mapping of attribute name to value');
+    else {
+      for (const [name, value] of Object.entries(customAttributes)) {
+        if (name.trim() === '') issue(`${at}.custom_attributes`, 'required', 'attribute names must not be empty');
+        if (!['string', 'number', 'boolean'].includes(typeof value)) {
+          issue(`${at}.custom_attributes.${name}`, 'type', 'must be a string, number or boolean');
+        }
+      }
+    }
+    return { key, subject, description, tags, customAttributes, raw } as ItemSpec & { raw: Record<string, unknown> };
   }
 
   /** Children list of an item (`stories`, `tasks`): absent means empty. */
@@ -119,19 +133,20 @@ export async function loadBacklog(path: string): Promise<Backlog> {
       const tasks: TaskSpec[] = [];
       children(story.raw.tasks, `${storyAt}.tasks`).forEach((rawTask, t) => {
         const task = checkItem(rawTask, `${storyAt}.tasks[${t}]`, 'task');
-        if (task) tasks.push({ key: task.key, subject: task.subject, description: task.description, tags: task.tags });
+        if (task) tasks.push({ key: task.key, subject: task.subject, description: task.description, tags: task.tags, customAttributes: task.customAttributes });
       });
       stories.push({
         key: story.key,
         subject: story.subject,
         description: story.description,
         tags: story.tags,
+        customAttributes: story.customAttributes,
         acceptanceCriteria: acceptanceCriteria as string[],
         spec: spec as string,
         tasks,
       });
     });
-    epics.push({ key: epic.key, subject: epic.subject, description: epic.description, tags: epic.tags, stories });
+    epics.push({ key: epic.key, subject: epic.subject, description: epic.description, tags: epic.tags, customAttributes: epic.customAttributes, stories });
   });
 
   if (issues.length > 0) throw new ManifestError(issues);
