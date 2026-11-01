@@ -96,7 +96,8 @@ test('a Taiga error while creating stops apply, names the key, and keeps what wa
 
   const failed = await h.taigent(['apply', '--project', 'demo', '--yes']);
   assert.equal(failed.code, 5);
-  assert.match(failed.stderr, /create epic BILLING failed: POST \/epics failed: HTTP 500/);
+  // Names the key, the operation and Taiga's own error.
+  assert.match(failed.stderr, /create epic BILLING failed: POST \/epics failed: HTTP 500 \{"_error_message":"boom"\}/);
   assert.deepEqual(h.fake.state.epics.map((e) => e.subject), ['Auth']);
   assert.deepEqual(Object.keys((await h.readState('demo'))?.items ?? {}), ['AUTH']);
 

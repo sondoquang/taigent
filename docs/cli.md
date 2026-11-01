@@ -18,10 +18,25 @@ npx taigent plan --project my-project             # same, via the package bin
 | Variable | Meaning |
 |---|---|
 | `TAIGA_API_URL` | API base URL including `/api/v1`, e.g. `https://taiga.example.com/api/v1` |
-| `TAIGA_USERNAME`, `TAIGA_PASSWORD` | Login (`POST /auth`, type `normal`) |
+| `TAIGA_USERNAME`, `TAIGA_PASSWORD` | Login (`POST /auth`, type `normal`). Required unless `TAIGA_TOKEN` is set |
+| `TAIGA_TOKEN` | Access token used instead of username/password (sent as `Authorization: Bearer`) |
 | `TAIGENT_MANIFESTS_DIR` | Manifests root, default `./taiga` (relative to the working directory) |
+| `TAIGENT_RETRY_UNIT_MS` | Milliseconds per second of 429 backoff, default `1000` (tests set it low) |
 
-Credentials are never printed.
+Authentication and retries (all in `TaigaClient`, so every command gets them):
+
+- **401:** the client renews the access token once and retries the request: `POST /auth/refresh` with the
+  refresh token from the login, else (refresh rejected, or `TAIGA_TOKEN` without a refresh token) a new
+  login with `TAIGA_USERNAME`/`TAIGA_PASSWORD` when set. If that is impossible or the retry gets 401 again,
+  the run fails (exit 5) naming the URL and the variable to check (`TAIGA_TOKEN` or
+  `TAIGA_USERNAME and TAIGA_PASSWORD`).
+- **429:** up to 5 retries per request, waiting `Retry-After` (seconds or HTTP date) when Taiga sends it,
+  else 1, 2, 4, 8, 16 units; one wait is capped at 60 units (unit = `TAIGENT_RETRY_UNIT_MS`).
+- Missing variables are a configuration error (exit 2) naming them, e.g.
+  `missing environment variable(s): TAIGA_PASSWORD (or set TAIGA_TOKEN instead)`.
+
+Credentials and tokens are never printed: Taiga error bodies are included in messages, but any password,
+token or refresh token the client holds is replaced by `[redacted]` first (tested on every output path).
 
 ## Manifest layout
 
