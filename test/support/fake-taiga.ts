@@ -15,6 +15,9 @@
 // - PATCH implements OCC like taiga-back: `version` is required, and a stale version is refused with
 //   400 {"version": "..."} only when a field in the payload was modified since that version.
 // - Epic ↔ story links are unique per (epic, user_story); a duplicate POST is a 400.
+// - Every epic, user story and task gets a custom attribute values object (version 1, no values) when it is
+//   created, like taiga-back's post_save signal. Its `attributes_values` keys are attribute ids as strings, a
+//   PATCH replaces the whole object, and it has its own OCC `version`.
 
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
@@ -65,6 +68,16 @@ export interface FakeCustomAttribute {
   description: string;
   type: string;
   order: number;
+}
+
+/** Custom attribute values of one item, `/{epics,userstories,tasks}/custom-attributes-values/{item}` (api.html#user-story-custom-attributes-values-get). */
+export interface FakeCustomAttributeValues {
+  itemType: FakeCustomAttributeType;
+  /** Id of the epic, user story or task. */
+  item: number;
+  version: number;
+  /** Attribute id (string) → value. */
+  attributes_values: Record<string, unknown>;
 }
 
 export interface FakeMembership {
@@ -200,6 +213,7 @@ export interface FakeState {
   templates: FakeTemplate[];
   roles: FakeRole[];
   customAttributes: FakeCustomAttribute[];
+  customAttributeValues: FakeCustomAttributeValues[];
   memberships: FakeMembership[];
   wikiPages: FakeWikiPage[];
   attachments: FakeAttachment[];
@@ -270,6 +284,8 @@ export interface FakeTaiga {
   addEpic(input: { project: number; subject: string; description?: string; tags?: string[] }): FakeEpic;
   addUser(input: { username: string; email?: string }): FakeUser;
   addCustomAttribute(input: { itemType: FakeCustomAttributeType; project: number; name: string; description?: string; type?: string }): FakeCustomAttribute;
+  /** Sets an item's custom attribute values like a Taiga user would (replaces them, bumps `version`). */
+  editAttributeValues(itemType: FakeCustomAttributeType, item: number, values: Record<string, unknown>): void;
   /** Adds a membership; an existing user (by id) also becomes a project member. */
   addMembership(input: { project: number; role: string; user?: number; email?: string }): FakeMembership;
   addWikiPage(input: { project: number; slug: string; content: string }): FakeWikiPage;
@@ -448,6 +464,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     ],
     roles: [],
     customAttributes: [],
+    customAttributeValues: [],
     memberships: [],
     wikiPages: [],
     attachments: [],
@@ -584,6 +601,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       assigned_to: null,
     };
     state.epics.push(epic);
+    createAttributeValues('epic', epic.id);
     return epic;
   }
 
@@ -917,6 +935,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       points: {},
     };
     state.userStories.push(story);
+    createAttributeValues('userstory', story.id);
     return story;
   }
 
@@ -937,7 +956,73 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       milestone: null,
     };
     state.tasks.push(task);
+    createAttributeValues('task', task.id);
     return task;
+  }
+
+  /** Values saves per values object: entry i = whether going from version i+1 to i+2 changed `attributes_values`. */
+  const valuesHistory = new WeakMap<FakeCustomAttributeValues, boolean[]>();
+
+  /** taiga-back creates the (empty) values object of every new epic, user story and task in a post_save signal. */
+  function createAttributeValues(itemType: FakeCustomAttributeType, item: number): void {
+    state.customAttributeValues.push({ itemType, item, version: 1, attributes_values: {} });
+  }
+
+  function saveAttributeValues(values: FakeCustomAttributeValues, next: Record<string, unknown>): void {
+    valuesHistory.set(values, [...(valuesHistory.get(values) ?? []), JSON.stringify(values.attributes_values) !== JSON.stringify(next)]);
+    values.attributes_values = next;
+    values.version += 1;
+  }
+
+  function editAttributeValues(itemType: FakeCustomAttributeType, item: number, next: Record<string, unknown>): void {
+    const values = state.customAttributeValues.find((v) => v.itemType === itemType && v.item === item);
+    if (!values) throw new Error(`fake taiga: no ${itemType} ${item}`);
+    saveAttributeValues(values, next);
+  }
+
+  /** GET/PATCH `/{epics,userstories,tasks}/custom-attributes-values/{id}`; the item key is `epic`, `user_story` or `task`. */
+  function routeAttributeValues(method: string, path: string, body: unknown, userId: number): Reply | undefined {
+    const match = /^\/(epics|userstories|tasks)\/custom-attributes-values\/(\d+)$/.exec(path);
+    if (!match) return undefined;
+    const [itemType, items, itemField] =
+      match[1] === 'epics'
+        ? (['epic', state.epics, 'epic'] as const)
+        : match[1] === 'userstories'
+          ? (['userstory', state.userStories, 'user_story'] as const)
+          : (['task', state.tasks, 'task'] as const);
+    const item = (items as FakeItem[]).find((i) => i.id === Number(match[2]) && visibleProject(i.project, userId));
+    const values = item && state.customAttributeValues.find((v) => v.itemType === itemType && v.item === item.id);
+    if (!item || !values) throw notFound();
+    const json = () => ({ attributes_values: values.attributes_values, version: values.version, [itemField]: item.id });
+    if (method === 'GET') return { status: 200, body: json() };
+    if (method !== 'PATCH') return undefined;
+
+    const data = requireObject(body);
+    const errors: Record<string, string[]> = {};
+    unknownFields(data, { attributes_values: true, version: true, [itemField]: true }, errors);
+    const next = data.attributes_values;
+    if (next !== undefined) {
+      if (typeof next !== 'object' || next === null || Array.isArray(next)) {
+        errors.attributes_values = ['Invalid content. It must be {"key": "value",...}'];
+      } else {
+        // Keys must be ids of this item type's custom attributes in the item's project.
+        const ids = state.customAttributes.filter((a) => a.project === item.project && a.itemType === itemType).map((a) => String(a.id));
+        if (Object.keys(next).some((key) => !ids.includes(key))) errors.attributes_values = ['It contain invalid custom fields.'];
+      }
+    }
+    if (Object.keys(errors).length > 0) throw fieldErrors(errors);
+
+    // OCC like the items: `version` required; a stale one fails only if the values changed since then.
+    const version = data.version ?? null;
+    if (version !== null && !Number.isInteger(version)) throw new HttpError(400, { version: 'The version must be an integer' });
+    if (version === null || (version as number) < 0 || (version as number) > values.version) {
+      throw new HttpError(400, { version: 'The version parameter is not valid' });
+    }
+    const history = valuesHistory.get(values) ?? [];
+    const changedSince = history.slice(Math.max(0, history.length - (values.version - (version as number)))).some(Boolean);
+    if (changedSince && next !== undefined) throw new HttpError(400, { version: "The version doesn't match with the current one" });
+    saveAttributeValues(values, (next as Record<string, unknown> | undefined) ?? values.attributes_values);
+    return { status: 200, body: json() };
   }
 
   function addEpicRelatedUserStory(epic: number, userStory: number): FakeEpicRelatedUserStory {
@@ -1233,6 +1318,8 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
 
     const attachmentReply = routeAttachments(req, method, path, query, body, userId);
     if (attachmentReply) return attachmentReply;
+    const valuesReply = routeAttributeValues(method, path, body, userId);
+    if (valuesReply) return valuesReply;
     const reply = routeStoriesAndTasks(req, method, path, query, body, userId);
     if (reply) return reply;
     throw notFound();
@@ -1406,6 +1493,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     settings,
     addUser,
     addCustomAttribute,
+    editAttributeValues,
     addMembership,
     addWikiPage,
     addAttachment,
