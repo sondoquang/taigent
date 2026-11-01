@@ -65,6 +65,8 @@ epics:
           - Wrong password shows an error
         spec: docs/specs/auth.md                     # optional link/path to the spec
         tags: [type:feature]
+        custom_attributes:                           # optional, on epics, stories and tasks
+          Due note: before launch                    # attribute name (as on Taiga) → string, number or boolean
         tasks:                                       # optional; created under this story
           - key: AUTH-LOGIN-API
             subject: Login endpoint
@@ -126,6 +128,17 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
   them with the item's current `version` (OCC). Tags are only added: tags people put on Taiga stay, and removing
   a tag from the manifest does not remove it from Taiga. Status, assignee, sprint, points and ordering are never
   sent.
+- **Custom attribute values**: an item's `custom_attributes` are matched to the project's attributes of that item
+  type by exact name (`GET /projects/by_slug` lists them; bootstrap creates them from `project.yaml`). `plan` reads
+  `GET /{epics,userstories,tasks}/custom-attributes-values/{id}` of existing items that declare values and lists the
+  declared values that differ. `apply` writes them with `PATCH …/custom-attributes-values/{id}
+  {attributes_values, version}` (keys are attribute ids as strings; values objects have their own `version`, read
+  by plan for existing items, so a value changed on Taiga meanwhile is a `conflict`). Taiga replaces the whole
+  object, so apply sends the current values plus the manifest's: values of undeclared attributes stay, and removing
+  a value from the manifest does not clear it on Taiga. New items get their values right after creation.
+  An attribute name the project does not define fails `plan`/`apply` before any write, with exit 5 (Taiga was
+  contacted to learn the names, so it is not a manifest error, exit 4), listing every unknown name with its key
+  and the names that exist.
 - **Orphans**: items carrying a `src:` tag whose key is no longer in the manifest are listed by `plan` and never
   deleted. They are not changes (they do not make `plan` exit 3).
 
@@ -169,6 +182,9 @@ Common options: `--project <slug>` (required except for `validate`), `--json` (m
 ```
 
 `create.parent` is the epic key (story) or story key (task). `update.changes` holds only the fields that differ.
+Custom attribute values add `custom_attributes: { "<name>": value }` to `create`, and
+`changes.custom_attributes: { from: { "<name>": value | null }, to: { "<name>": value }, version }` to `update`
+(`null`: not set on Taiga; `version`: the values object's). An update of values alone does not PATCH the item.
 
 `apply --yes --json` prints an `ApplyReport`: `{ project, operations: [{ action, type, key, id, ref, epic?, result }],
 summary: { created, updated, linked, unchanged } }`; `result` is `created`, `updated`, `linked` or `unchanged`, and
@@ -255,6 +271,58 @@ Other operation shapes: `{ action, type: "custom-attribute", itemType, name, fie
 `{ project: { id, slug }, operations: [<operation> + { result: "created" | "updated" | "unchanged" }],
 summary: { created, updated, unchanged } }`.
 
+## Upload
+
+`taigent upload --project <slug> (--yes | --dry-run) [--json]` brings Taiga's wiki pages and attachments to what
+`taiga/<slug>/docs.yaml` declares (schema above; `backlog.yaml` is needed when attachments target item keys). Like
+`bootstrap`, without `--yes`/`--dry-run` it prints the operations and exits 2 when there are changes; `--dry-run`
+exits 3 when there are changes, 0 otherwise. It never deletes, renames or edits an existing attachment, and writes
+no `state.json`.
+
+- **Wiki pages** are upserted by slug: `GET /wiki/by_slug?slug=&project=`; missing → `POST /wiki
+  {project, slug, content}`; content different from the Markdown file → `PATCH /wiki/{id} {content, version}`
+  (OCC: if someone edited the page meanwhile, the run stops with a `conflict` error, `key: "wiki:<slug>"`, nothing
+  overwritten); same content → skipped. Re-runs never create a second page.
+- **Attachment targets**: an item key is resolved to the epic/story/task tagged `src:<key>` (state.json is not
+  needed); if `apply` has not created it yet, upload fails before writing anything (exit 5). `wiki:<slug>` is a page of
+  docs.yaml (created first in the same run) or an existing page such as `home`.
+- **Attachments** are compared with `GET /{epics,userstories,tasks,wiki}/attachments?object_id=&project=`: one with
+  the same name (the file's base name) and the same `size` and `sha1` is skipped. Otherwise the file is uploaded with
+  `POST /{epics,userstories,tasks,wiki}/attachments` as `multipart/form-data` (`object_id`, `project`, `description`,
+  `attached_file`). When attachments with that name but other content exist (the local file changed), the new version
+  is added and the output says the previous attachment stays on Taiga (`previous` in JSON); remove it by hand if it
+  is obsolete. Changing only `description` in docs.yaml does not update an uploaded attachment.
+- **Large files**: attachments are hashed and uploaded as streams from disk (the upload body is a file-backed `Blob`),
+  so a file is never read into memory as a whole and nothing passes through an agent's context; wiki Markdown is read
+  as a string because Taiga takes it in a JSON body. When the server refuses an upload as too large (HTTP 413, e.g.
+  nginx `client_max_body_size`, 100 MB in taiga-docker), the run stops with exit 5 and a message naming the file and
+  its size; `--json` adds `"file"` to the error. Uploads before it are kept and skipped by the next run.
+
+The run stops at the first error, naming the operation. `upload --dry-run --json` prints an `UploadPlan`
+(`file` paths are relative to the working directory):
+
+```json
+{
+  "project": { "id": 7, "slug": "demo" },
+  "changes": true,
+  "summary": { "create": 2, "update": 0, "skip": 1 },
+  "operations": [
+    { "action": "create", "type": "wiki", "slug": "spec-auth", "file": "taiga/demo/pages/spec-auth.md" },
+    { "action": "create", "type": "attachment", "target": "wiki:spec-auth", "targetType": "wiki", "objectId": null,
+      "name": "glossary.pdf", "file": "taiga/demo/files/glossary.pdf", "size": 1024, "sha1": "…", "description": "",
+      "previous": [] },
+    { "action": "skip", "type": "attachment", "target": "AUTH-LOGIN", "targetType": "story", "objectId": 15, "id": 31,
+      "name": "auth-login-flow.pdf", "file": "taiga/demo/files/auth-login-flow.pdf", "size": 2048, "sha1": "…",
+      "description": "Login flow" }
+  ]
+}
+```
+
+Wiki `update`/`skip` operations add `id` (and `version` for `update`); `objectId` is null for a page created in the
+same run; `previous: [{ id, size, sha1 }]` lists the same-name attachments that stay on Taiga. `upload --yes --json`
+prints an `UploadReport`: `{ project, operations: [<operation> + { id, result: "created" | "updated" | "unchanged" }],
+summary: { created, updated, unchanged } }`, where `id` is the wiki page or the (new) attachment.
+
 ## Skills
 
 The agent skills that drive this CLI are `taiga-*` [Agent Skills](https://agentskills.io/specification), one
@@ -292,7 +360,7 @@ before `apply --yes` is the skill's explicit confirmation step. Codex's skill do
 | 2 | Usage or configuration error: unknown command/flag, missing env var, `apply`/`bootstrap` with changes but no `--yes`, `skills` outside a repository root |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
-| 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
+| 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
 
 ## Code map
 
@@ -300,10 +368,11 @@ before `apply --yes` is the skill's explicit confirmation step. Codex's skill do
 |---|---|---|
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`) |
 | Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog`, `loadDocs`, conventions rules (`conventions.ts`), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`), `TaigaError`, `TaigaConflictError` |
-| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)` |
-| Executor | `src/executor.ts` | `executePlan(plan, client, statePath)`, `ApplyConflictError` (carries `key`) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`, `getAttributeValues`/`updateAttributeValues`), `TaigaError`, `TaigaConflictError` |
+| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)`, `ATTRIBUTE_ITEM_TYPE` |
+| Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `ApplyConflictError` (carries `key`) |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
+| Upload | `src/upload.ts` | `planUpload(docs, backlog, project, client, cwd)` (reads Taiga, hashes files), `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: `.agents/skills/taiga-*` → `.claude/skills/taiga-*` |
 
 Adding a manifest kind: write `load<Kind>(path, context)` that reads with `readManifestYaml`, reports every
@@ -326,3 +395,13 @@ payloads like Taiga (and additionally rejects unknown fields). Extend the fake r
 Bootstrap fixtures: `fake.addUser`, `fake.addProject({ admins, is_private, modules, tagsColors })`,
 `fake.addCustomAttribute`, `fake.addMembership`, `fake.addWikiPage`; `fake.state.templates` holds `scrum` (id 1)
 and `kanban` (id 2) with Epics off; `fake.settings.projectSlugPrefix = true` mimics DEFAULT_PROJECT_SLUG_PREFIX.
+Upload fixtures: `fake.addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki", object_id, name,
+content })` and `fake.editWikiPage(page, { content })` (bumps `version` for OCC); assert on `fake.state.attachments`
+(with the stored `content` bytes). The fake parses `multipart/form-data` with Node's own parser (`Response#formData`),
+computes `size`/`sha1` from the bytes like taiga-back, rejects unknown form fields, and records the body of a multipart
+request as a `MultipartForm { fields, files }`. `fake.settings.maxBodyBytes = n` makes it answer any larger request body
+with nginx's HTML 413 page, like Taiga's reverse proxy (`client_max_body_size`).
+Custom attribute values: every epic/story/task gets an empty values object (version 1) on creation, served at
+`/{epics,userstories,tasks}/custom-attributes-values/{id}` (keys must be ids of the project's attributes of that type,
+PATCH replaces the object and needs its own `version`); `fake.editAttributeValues(itemType, itemId, values)` sets them
+like a user would; assert on `fake.state.customAttributeValues` (`{ itemType, item, version, attributes_values }`).

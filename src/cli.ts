@@ -10,10 +10,11 @@ import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
 import { WIKI_HOME_SLUG } from './manifest/project.ts';
-import { readSavedProject } from './manifest/state.ts';
-import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
+import { readSavedProject, type ItemType } from './manifest/state.ts';
+import { ATTRIBUTE_ITEM_TYPE, buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
-import { TaigaAuthError, TaigaClient, TaigaError } from './taiga/client.ts';
+import { TaigaAuthError, TaigaClient, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
+import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError, type UploadPlan, type UploadReport } from './upload.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
@@ -22,13 +23,14 @@ Commands:
   bootstrap Create or complete the Taiga project declared in project.yaml (requires --yes)
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
+  upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
   skills sync   Copy the taiga-* skills from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
 
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/
   --json            Machine-readable output on stdout
-  --yes             Confirm writes (bootstrap, apply)
+  --yes             Confirm writes (bootstrap, apply, upload)
   --dry-run         List the operations without writing anything (exit 3 when there are changes)
   -h, --help        Show this help
 
@@ -42,7 +44,7 @@ Environment:
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
             3 plan/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'skills'] as const;
+const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'skills'] as const;
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
@@ -113,12 +115,24 @@ function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
   return names.map((name) => env[name]!);
 }
 
+/** ` Name: from -> to; …` for the attribute values an operation sets. */
+function formatAttributes(from: Record<string, unknown>, to: Record<string, unknown>): string {
+  return Object.entries(to)
+    .map(([name, value]) => `${name}: ${name in from ? `${JSON.stringify(from[name])} -> ` : ''}${JSON.stringify(value)}`)
+    .join('; ');
+}
+
 function formatOperation(op: Operation): string {
   switch (op.action) {
-    case 'create':
-      return `  + create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}`;
-    case 'update':
-      return `  ~ update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}`;
+    case 'create': {
+      const attributes = op.custom_attributes ? `  [custom attributes ${formatAttributes({}, op.custom_attributes)}]` : '';
+      return `  + create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}${attributes}`;
+    }
+    case 'update': {
+      const changed = op.changes.custom_attributes;
+      const attributes = changed ? `  [custom attributes ${formatAttributes(changed.from, changed.to)}]` : '';
+      return `  ~ update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}${attributes}`;
+    }
     case 'link':
       return `  + link   story ${op.key} -> epic ${op.epic}`;
     case 'skip':
@@ -271,6 +285,48 @@ async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: strin
   return ExitCode.Ok;
 }
 
+function formatUploadPlan(plan: UploadPlan): string {
+  const lines = [`Upload plan for project ${plan.project.slug} (id ${plan.project.id}):`];
+  for (const op of plan.operations) {
+    const marker = op.action === 'create' ? '  + ' : op.action === 'update' ? '  ~ ' : '    skip ';
+    lines.push(`${marker}${describeUploadOperation(op)}`);
+  }
+  if (plan.operations.length === 0) lines.push('  (docs.yaml declares nothing)');
+  lines.push(
+    plan.changes
+      ? `${plan.summary.create} to create, ${plan.summary.update} to update, ${plan.summary.skip} unchanged.`
+      : 'No changes. Taiga matches docs.yaml.',
+  );
+  return `${lines.join('\n')}\n`;
+}
+
+function formatUploadReport(report: UploadReport): string {
+  const lines = [`Uploaded to project ${report.project.slug} (id ${report.project.id}):`];
+  for (const op of report.operations) if (op.result !== 'unchanged') lines.push(`  ${op.result} ${describeUploadOperation(op)}  -> id ${op.id}`);
+  lines.push(`${report.summary.created} created, ${report.summary.updated} updated, ${report.summary.unchanged} unchanged.`);
+  return `${lines.join('\n')}\n`;
+}
+
+/** `upload`: upsert docs.yaml's wiki pages by slug and add its attachments that Taiga lacks. */
+async function runUpload(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
+  const slug = options.project!;
+  const { manifests } = await loadManifests(projectLayout(slug, env, cwd).dir, slug, { require: ['docs'] });
+  const client = await connectTaiga(env);
+  const project = await client.getProjectBySlug(slug);
+  const plan = await planUpload(manifests.docs!, manifests.backlog, { id: project.id, slug: project.slug }, client, cwd);
+
+  if (options.dryRun || !options.yes) {
+    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatUploadPlan(plan));
+    if (!plan.changes) return ExitCode.Ok;
+    if (options.dryRun) return ExitCode.Changes;
+    throw new UsageError('refusing to upload without --yes; review the operations above, then re-run with --yes');
+  }
+
+  const report = await executeUpload(plan, client, cwd);
+  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatUploadReport(report));
+  return ExitCode.Ok;
+}
+
 /** `skills sync|check`: keep the Claude copies of the taiga-* skills identical to their source. Offline. */
 async function runSkills(options: Options, cwd: string): Promise<number> {
   try {
@@ -306,6 +362,7 @@ async function runSkills(options: Options, cwd: string): Promise<number> {
 async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
   if (options.command === 'validate') return runValidate(options, env, cwd);
   if (options.command === 'bootstrap') return runBootstrap(options, env, cwd);
+  if (options.command === 'upload') return runUpload(options, env, cwd);
   if (options.command === 'skills') return runSkills(options, cwd);
   const slug = options.project!;
   const layout = projectLayout(slug, env, cwd);
@@ -323,7 +380,28 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
   for (const epic of epics) {
     if (epic.tags.some((tag) => epicTagsWithStories.has(tag))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
   }
-  const plan = buildPlan(backlog, { project: { id: project.id, slug: project.slug }, epics, stories, tasks, epicStories });
+  // Current custom attribute values, only for existing items that declare some in the manifest.
+  const attributeValues: Record<ItemType, Map<number, TaigaAttributeValues>> = { epic: new Map(), story: new Map(), task: new Map() };
+  const declaringTags = new Set<string>();
+  for (const epic of backlog.epics) {
+    for (const item of [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]) {
+      if (Object.keys(item.customAttributes).length > 0) declaringTags.add(srcTag(item.key));
+    }
+  }
+  for (const [type, items] of [['epic', epics], ['story', stories], ['task', tasks]] as const) {
+    for (const item of items) {
+      if (item.tags.some((tag) => declaringTags.has(tag))) attributeValues[type].set(item.id, await client.getAttributeValues(ATTRIBUTE_ITEM_TYPE[type], item.id));
+    }
+  }
+  const plan = buildPlan(backlog, {
+    project: { id: project.id, slug: project.slug },
+    epics,
+    stories,
+    tasks,
+    epicStories,
+    customAttributes: project.customAttributes,
+    attributeValues,
+  });
 
   if (options.command === 'plan' || options.dryRun || !options.yes) {
     process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatPlan(plan));
@@ -332,7 +410,7 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
     throw new UsageError('refusing to apply without --yes; review the plan above, then re-run with --yes');
   }
 
-  const report = await executePlan(plan, client, layout.state);
+  const report = await executePlan(plan, client, layout.state, project.customAttributes);
   process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatReport(report));
   return ExitCode.Ok;
 }
@@ -365,6 +443,9 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     }
     if (error instanceof ApplyConflictError) {
       return fail(ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key });
+    }
+    if (error instanceof UploadTooLargeError) {
+      return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
     }
     if (error instanceof TaigaAuthError) {
       const check = error.credential === 'token' ? 'TAIGA_TOKEN' : 'TAIGA_USERNAME and TAIGA_PASSWORD';

@@ -121,3 +121,88 @@ test('fake Taiga enforces OCC versions on PATCH and unique epic ↔ story links'
   });
   assert.equal(fake.state.epicRelatedUserStories.length, 1);
 });
+
+test('fake Taiga keeps custom attribute values per item: string id keys, full replacement, own OCC version', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const other = fake.addProject({ slug: 'other' });
+  const token = await login(fake);
+  const estimate = fake.addCustomAttribute({ itemType: 'task', project: project.id, name: 'Estimate' });
+  const owner = fake.addCustomAttribute({ itemType: 'task', project: project.id, name: 'Owner' });
+  const storyAttribute = fake.addCustomAttribute({ itemType: 'userstory', project: project.id, name: 'Due' });
+  const foreign = fake.addCustomAttribute({ itemType: 'task', project: other.id, name: 'Estimate' });
+  const task = fake.addTask({ project: project.id, subject: 'T' });
+  const path = `/tasks/custom-attributes-values/${task.id}`;
+
+  const read = await fetch(`${fake.url}${path}`, { headers: { authorization: `Bearer ${token}` } });
+  assert.deepEqual(await read.json(), { attributes_values: {}, version: 1, task: task.id }, 'created with the task');
+
+  const id = (attribute: { id: number }) => String(attribute.id);
+  assert.deepEqual(await send(fake, token, 'PATCH', path, { attributes_values: { [id(estimate)]: 3 } }), {
+    status: 400,
+    body: { version: 'The version parameter is not valid' },
+  });
+  for (const wrong of [storyAttribute, foreign]) {
+    assert.deepEqual(await send(fake, token, 'PATCH', path, { attributes_values: { [id(wrong)]: 3 }, version: 1 }), {
+      status: 400,
+      body: { attributes_values: ['It contain invalid custom fields.'] },
+    });
+  }
+  assert.equal((await send(fake, token, 'PATCH', path, { values: {}, version: 1 })).status, 400, 'unknown fields are rejected');
+
+  const ok = await send(fake, token, 'PATCH', path, { attributes_values: { [id(estimate)]: 3, [id(owner)]: 'bob' }, version: 1 });
+  assert.deepEqual(ok, { status: 200, body: { attributes_values: { [id(estimate)]: 3, [id(owner)]: 'bob' }, version: 2, task: task.id } });
+  const replaced = await send(fake, token, 'PATCH', path, { attributes_values: { [id(owner)]: 'eve' }, version: 2 });
+  assert.deepEqual(replaced.body, { attributes_values: { [id(owner)]: 'eve' }, version: 3, task: task.id }, 'PATCH replaces all values');
+  assert.deepEqual(await send(fake, token, 'PATCH', path, { attributes_values: {}, version: 2 }), {
+    status: 400,
+    body: { version: "The version doesn't match with the current one" },
+  });
+});
+
+async function postAttachment(fake: FakeTaiga, token: string, path: string, form: FormData | string): Promise<{ status: number; body: unknown }> {
+  const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+  if (typeof form === 'string') headers['content-type'] = 'application/json';
+  const response = await fetch(`${fake.url}${path}`, { method: 'POST', headers, body: form });
+  return { status: response.status, body: await response.json() };
+}
+
+test('fake Taiga parses multipart attachment uploads, computes size/sha1 from the bytes and rejects bad fields like Taiga', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const other = fake.addProject({ slug: 'other' });
+  const story = fake.addUserStory({ project: project.id, subject: 'Story' });
+  const token = await login(fake);
+  const form = (fields: Record<string, string>, file = true) => {
+    const data = new FormData();
+    for (const [name, value] of Object.entries(fields)) data.set(name, value);
+    if (file) data.set('attached_file', new Blob([Buffer.from('hello\n')]), 'notes.txt');
+    return data;
+  };
+
+  assert.deepEqual(await postAttachment(fake, token, '/userstories/attachments', JSON.stringify({ object_id: story.id, project: project.id })), {
+    status: 400,
+    body: { attached_file: ['No file was submitted.'] },
+  });
+  assert.deepEqual(await postAttachment(fake, token, '/userstories/attachments', form({ object_id: String(story.id), project_id: String(project.id) })), {
+    status: 400,
+    body: { project_id: ['Unknown field (the fake Taiga rejects unknown fields).'], project: ['This field is required.'] },
+  });
+  const wrongProject = await postAttachment(fake, token, '/userstories/attachments', form({ object_id: String(story.id), project: String(other.id) }));
+  assert.equal(wrongProject.status, 400);
+  const wrongType = await postAttachment(fake, token, '/tasks/attachments', form({ object_id: String(story.id), project: String(project.id) }));
+  assert.equal(wrongType.status, 400, 'object_id must be an object of the endpoint type');
+  assert.equal(fake.state.attachments.length, 0);
+
+  const ok = await postAttachment(fake, token, '/userstories/attachments', form({ object_id: String(story.id), project: String(project.id), description: 'Notes' }));
+  assert.equal(ok.status, 201);
+  assert.ok(isRecord(ok.body));
+  // `printf 'hello\n' | sha1sum`
+  assert.deepEqual(
+    { name: ok.body.name, size: ok.body.size, sha1: ok.body.sha1, object_id: ok.body.object_id, description: ok.body.description },
+    { name: 'notes.txt', size: 6, sha1: 'f572d396fae9206628714fb2ce00f72e94f2258f', object_id: story.id, description: 'Notes' },
+  );
+  assert.equal(ok.body.content, undefined, 'stored bytes are not part of the attachment object');
+});

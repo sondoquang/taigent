@@ -1,8 +1,11 @@
 // Planner: pure function from (manifest, Taiga state read back) to an ordered plan. No I/O.
 
-import type { Backlog, StorySpec } from './manifest/backlog.ts';
+import type { AttributeValue, Backlog, StorySpec } from './manifest/backlog.ts';
 import type { ItemType } from './manifest/state.ts';
-import type { TaigaItem, TaigaTask } from './taiga/client.ts';
+import { TaigaError, type CustomAttributeItemType, type TaigaAttributeValues, type TaigaCustomAttribute, type TaigaItem, type TaigaTask } from './taiga/client.ts';
+
+/** Taiga's name of each item type in custom attribute endpoints. */
+export const ATTRIBUTE_ITEM_TYPE: Record<ItemType, CustomAttributeItemType> = { epic: 'epic', story: 'userstory', task: 'task' };
 
 /** Identity tag of a manifest item on Taiga. Lowercase because Taiga lowercases every tag it stores. */
 export function srcTag(key: string): string {
@@ -21,6 +24,10 @@ export interface RemoteState {
   tasks: TaigaTask[];
   /** Ids of the user stories linked to each existing epic (`related_userstories`). */
   epicStories: ReadonlyMap<number, readonly number[]>;
+  /** Custom attributes defined on the project, per Taiga item type. */
+  customAttributes: Record<CustomAttributeItemType, readonly TaigaCustomAttribute[]>;
+  /** Current custom attribute values, by item id, of the existing items that declare attributes in the manifest. */
+  attributeValues: Record<ItemType, ReadonlyMap<number, TaigaAttributeValues>>;
 }
 
 export interface ItemFields {
@@ -34,11 +41,16 @@ export interface FieldChanges {
   description?: { from: string; to: string };
   /** `to` keeps every tag already on Taiga (user-added ones too) and appends the manifest's missing tags. */
   tags?: { from: string[]; to: string[] };
+  /**
+   * Declared attribute values that differ on Taiga, by attribute name (`from` is null when unset); `version` is the
+   * values object's version. Attributes the manifest does not declare are left alone.
+   */
+  custom_attributes?: { from: Record<string, unknown>; to: Record<string, AttributeValue>; version: number };
 }
 
 export type Operation =
   /** `parent`: key of the epic (story) or story (task) the new item belongs to. */
-  | { action: 'create'; type: ItemType; key: string; parent?: string; fields: ItemFields }
+  | { action: 'create'; type: ItemType; key: string; parent?: string; fields: ItemFields; custom_attributes?: Record<string, AttributeValue> }
   | { action: 'update'; type: ItemType; key: string; id: number; ref: number; version: number; changes: FieldChanges }
   | { action: 'link'; type: 'story'; key: string; epic: string }
   | { action: 'skip'; type: ItemType; key: string; id: number; ref: number; version: number };
@@ -88,15 +100,33 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   }
   const manifestTags: Record<ItemType, Set<string>> = { epic: new Set(), story: new Set(), task: new Set() };
   const operations: Operation[] = [];
+  const unknownAttributes: string[] = [];
+
+  type Spec = { key: string; subject: string; tags: string[]; customAttributes: Record<string, AttributeValue> };
 
   /** Plans create/update/skip for one manifest item and returns its Taiga counterpart, if any. */
-  function reconcile(type: ItemType, spec: { key: string; subject: string; tags: string[] }, description: string, parent?: string): TaigaItem | undefined {
+  function reconcile(type: ItemType, spec: Spec, description: string, parent?: string): TaigaItem | undefined {
     const tag = srcTag(spec.key);
     manifestTags[type].add(tag);
     const tags = [...new Set([...spec.tags.map((t) => t.toLowerCase()), tag])];
+    const defined = remote.customAttributes[ATTRIBUTE_ITEM_TYPE[type]];
+    const attributes = Object.entries(spec.customAttributes).flatMap(([name, value]) => {
+      const attribute = defined.find((a) => a.name === name);
+      if (attribute) return [{ name, id: attribute.id, value }];
+      const names = defined.map((a) => `"${a.name}"`).join(', ') || 'none';
+      unknownAttributes.push(`  ${spec.key} (${type}): "${name}"; ${ATTRIBUTE_ITEM_TYPE[type]} attributes on Taiga: ${names}`);
+      return [];
+    });
     const existing = bySrcTag[type].get(tag);
     if (!existing) {
-      operations.push({ action: 'create', type, key: spec.key, ...(parent && { parent }), fields: { subject: spec.subject, description, tags } });
+      operations.push({
+        action: 'create',
+        type,
+        key: spec.key,
+        ...(parent && { parent }),
+        fields: { subject: spec.subject, description, tags },
+        ...(attributes.length > 0 && { custom_attributes: spec.customAttributes }),
+      });
       return undefined;
     }
     const changes: FieldChanges = {};
@@ -104,6 +134,20 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
     if (existing.description !== description) changes.description = { from: existing.description, to: description };
     const missingTags = tags.filter((t) => !existing.tags.includes(t));
     if (missingTags.length > 0) changes.tags = { from: existing.tags, to: [...existing.tags, ...missingTags] };
+    if (attributes.length > 0) {
+      const current = remote.attributeValues[type].get(existing.id);
+      if (!current) throw new Error(`planner: custom attribute values of ${type} ${spec.key} were not read`);
+      const from: Record<string, unknown> = {};
+      const to: Record<string, AttributeValue> = {};
+      for (const { name, id, value } of attributes) {
+        const now = current.values[String(id)];
+        if (JSON.stringify(now) !== JSON.stringify(value)) {
+          from[name] = now ?? null;
+          to[name] = value;
+        }
+      }
+      if (Object.keys(to).length > 0) changes.custom_attributes = { from, to, version: current.version };
+    }
     const { id, ref, version } = existing;
     operations.push(
       Object.keys(changes).length > 0
@@ -122,6 +166,13 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
       if (!linked) operations.push({ action: 'link', type: 'story', key: story.key, epic: epic.key });
       for (const task of story.tasks) reconcile('task', task, task.description, story.key);
     }
+  }
+
+  if (unknownAttributes.length > 0) {
+    throw new TaigaError(
+      `backlog.yaml uses custom attributes that project ${remote.project.slug} does not define (attributes are matched by exact ` +
+        `name; declare them under custom_attributes in project.yaml and run taigent bootstrap):\n${unknownAttributes.join('\n')}`,
+    );
   }
 
   const orphans: Orphan[] = [];

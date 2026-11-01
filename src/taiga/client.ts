@@ -2,6 +2,7 @@
 // Knows Taiga endpoints only, never manifests. Every request disables pagination, renews the access
 // token once on 401 (`/auth/refresh`, else a new login) and backs off on 429.
 
+import { openAsBlob } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
 
@@ -53,6 +54,16 @@ export interface TaigaProject {
   id: number;
   slug: string;
   name: string;
+  /** Custom attributes defined on the project, per item type. */
+  customAttributes: Record<CustomAttributeItemType, TaigaCustomAttribute[]>;
+}
+
+/** Custom attribute values of one item (`/{epics,userstories,tasks}/custom-attributes-values/{id}`). */
+export interface TaigaAttributeValues {
+  /** Attribute id (as a string, like Taiga's JSON keys) → value. */
+  values: Record<string, unknown>;
+  /** OCC version of the values object (separate from the item's own version). */
+  version: number;
 }
 
 /** Common shape of epics, user stories and tasks. */
@@ -89,6 +100,8 @@ export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tag
 interface RequestOptions {
   query?: Record<string, string | number>;
   body?: unknown;
+  /** Multipart body (attachments); used instead of `body`. */
+  form?: FormData;
   /** On 401, renew the token and retry once (default true; off for the auth endpoints themselves). */
   reauthenticate?: boolean;
 }
@@ -218,6 +231,36 @@ export interface NewMembership {
   username: string;
 }
 
+export interface TaigaWikiPage {
+  id: number;
+  slug: string;
+  /** Markdown. */
+  content: string;
+  version: number;
+}
+
+/** URL segment of the objects attachments hang off (`/{type}/attachments`). */
+export type AttachmentObjectType = 'epics' | 'userstories' | 'tasks' | 'wiki';
+
+export interface TaigaAttachment {
+  id: number;
+  /** Id of the epic, user story, task or wiki page. */
+  objectId: number;
+  name: string;
+  size: number;
+  sha1: string;
+}
+
+export interface NewAttachment {
+  project: number;
+  object_id: number;
+  /** Local path of the file to upload. */
+  file: string;
+  /** File name sent with the upload; Taiga names the attachment after it. */
+  name: string;
+  description: string;
+}
+
 function record(raw: unknown, what: string): Record<string, unknown> {
   if (!isRecord(raw)) throw new TaigaError(`unexpected Taiga response: ${what} is not an object`);
   return raw;
@@ -235,6 +278,23 @@ function parseModules(raw: Record<string, unknown>): Record<ModuleFlag, boolean>
 function parseCustomAttribute(raw: unknown): TaigaCustomAttribute {
   const r = record(raw, 'custom attribute');
   return { id: field(r, 'id', 'number', 'custom attribute'), name: field(r, 'name', 'string', 'custom attribute') };
+}
+
+/** `*_custom_attributes` of a project detail object. */
+function parseCustomAttributes(r: Record<string, unknown>): Record<CustomAttributeItemType, TaigaCustomAttribute[]> {
+  return {
+    epic: list(r.epic_custom_attributes ?? [], 'epic custom attributes').map(parseCustomAttribute),
+    userstory: list(r.userstory_custom_attributes ?? [], 'user story custom attributes').map(parseCustomAttribute),
+    task: list(r.task_custom_attributes ?? [], 'task custom attributes').map(parseCustomAttribute),
+  };
+}
+
+/** URL segment of an item type's custom attribute values. */
+const ATTRIBUTE_VALUES_PATH: Record<CustomAttributeItemType, string> = { epic: 'epics', userstory: 'userstories', task: 'tasks' };
+
+function parseAttributeValues(raw: unknown): TaigaAttributeValues {
+  const r = record(raw, 'custom attributes values');
+  return { values: record(r.attributes_values ?? {}, 'attributes_values'), version: field(r, 'version', 'number', 'custom attributes values') };
 }
 
 function parseProjectDetail(raw: unknown): TaigaProjectDetail {
@@ -260,11 +320,7 @@ function parseProjectDetail(raw: unknown): TaigaProjectDetail {
       const x = record(member, 'member');
       return { id: field(x, 'id', 'number', 'member'), username: field(x, 'username', 'string', 'member') };
     }),
-    customAttributes: {
-      epic: list(r.epic_custom_attributes ?? [], 'epic custom attributes').map(parseCustomAttribute),
-      userstory: list(r.userstory_custom_attributes ?? [], 'user story custom attributes').map(parseCustomAttribute),
-      task: list(r.task_custom_attributes ?? [], 'task custom attributes').map(parseCustomAttribute),
-    },
+    customAttributes: parseCustomAttributes(r),
   };
 }
 
@@ -276,6 +332,27 @@ function parseMembership(raw: unknown): TaigaMembership {
     user: typeof r.user === 'number' ? r.user : null,
     email: typeof r.email === 'string' ? r.email : null,
     userEmail: typeof r.user_email === 'string' ? r.user_email : null,
+  };
+}
+
+function parseWikiPage(raw: unknown): TaigaWikiPage {
+  const page = record(raw, 'wiki page');
+  return {
+    id: field(page, 'id', 'number', 'wiki page'),
+    slug: field(page, 'slug', 'string', 'wiki page'),
+    content: field(page, 'content', 'string', 'wiki page'),
+    version: field(page, 'version', 'number', 'wiki page'),
+  };
+}
+
+function parseAttachment(raw: unknown): TaigaAttachment {
+  const attachment = record(raw, 'attachment');
+  return {
+    id: field(attachment, 'id', 'number', 'attachment'),
+    objectId: field(attachment, 'object_id', 'number', 'attachment'),
+    name: field(attachment, 'name', 'string', 'attachment'),
+    size: field(attachment, 'size', 'number', 'attachment'),
+    sha1: field(attachment, 'sha1', 'string', 'attachment'),
   };
 }
 
@@ -368,6 +445,7 @@ export class TaigaClient {
       id: field(raw, 'id', 'number', 'project'),
       slug: field(raw, 'slug', 'string', 'project'),
       name: field(raw, 'name', 'string', 'project'),
+      customAttributes: parseCustomAttributes(raw),
     };
   }
 
@@ -423,8 +501,19 @@ export class TaigaClient {
     return parseTask(await this.#patch(`/tasks/${id}`, patch, version));
   }
 
-  /** PATCH with the item's `version` (OCC); a stale version becomes a TaigaConflictError. */
-  async #patch(path: string, patch: ItemPatch, version: number): Promise<unknown> {
+  /** Custom attribute values of an item (Taiga creates the values object together with the item). */
+  async getAttributeValues(itemType: CustomAttributeItemType, itemId: number): Promise<TaigaAttributeValues> {
+    return parseAttributeValues(await this.#request('GET', `/${ATTRIBUTE_VALUES_PATH[itemType]}/custom-attributes-values/${itemId}`));
+  }
+
+  /** Replaces all values of an item (attribute id → value), with the values object's `version` (OCC). */
+  async updateAttributeValues(itemType: CustomAttributeItemType, itemId: number, values: Record<string, unknown>, version: number): Promise<TaigaAttributeValues> {
+    const path = `/${ATTRIBUTE_VALUES_PATH[itemType]}/custom-attributes-values/${itemId}`;
+    return parseAttributeValues(await this.#patch(path, { attributes_values: values }, version));
+  }
+
+  /** PATCH with the object's `version` (OCC); a stale version becomes a TaigaConflictError. */
+  async #patch(path: string, patch: Record<string, unknown>, version: number): Promise<unknown> {
     try {
       return await this.#request('PATCH', path, { body: { ...patch, version } });
     } catch (error) {
@@ -507,14 +596,40 @@ export class TaigaClient {
     return parseMembership(await this.#request('POST', '/memberships', { body: membership }));
   }
 
-  /** Wiki page id by slug, or undefined when the page does not exist. */
-  async findWikiPage(projectId: number, slug: string): Promise<{ id: number } | undefined> {
+  /** Wiki page by slug, or undefined when the page does not exist. */
+  async findWikiPage(projectId: number, slug: string): Promise<TaigaWikiPage | undefined> {
     const raw = await this.#find('GET', '/wiki/by_slug', { query: { slug, project: projectId } });
-    return raw === undefined ? undefined : { id: field(record(raw, 'wiki page'), 'id', 'number', 'wiki page') };
+    return raw === undefined ? undefined : parseWikiPage(raw);
   }
 
   async createWikiPage(page: { project: number; slug: string; content: string }): Promise<{ id: number }> {
     return { id: field(record(await this.#request('POST', '/wiki', { body: page }), 'wiki page'), 'id', 'number', 'wiki page') };
+  }
+
+  /** Replaces a wiki page's Markdown (`PATCH /wiki/{id}` with its `version`, OCC like items). */
+  async updateWikiPage(id: number, content: string, version: number): Promise<TaigaWikiPage> {
+    return parseWikiPage(await this.#patch(`/wiki/${id}`, { content }, version));
+  }
+
+  // ---- Attachments (multipart) -----------------------------------------------------------------------
+
+  /** Attachments of one object (`GET /{type}/attachments?object_id=&project=`). */
+  async listAttachments(type: AttachmentObjectType, projectId: number, objectId: number): Promise<TaigaAttachment[]> {
+    const raw = await this.#request('GET', `/${type}/attachments`, { query: { object_id: objectId, project: projectId } });
+    return parseList(raw, 'attachment', parseAttachment);
+  }
+
+  /**
+   * Uploads `attachment.file` as multipart (`POST /{type}/attachments`). The file is streamed from disk
+   * (a file-backed Blob): it is never read into memory as a whole, and a retry (401, 429) reads it again.
+   */
+  async uploadAttachment(type: AttachmentObjectType, attachment: NewAttachment): Promise<TaigaAttachment> {
+    const form = new FormData();
+    form.set('object_id', String(attachment.object_id));
+    form.set('project', String(attachment.project));
+    form.set('description', attachment.description);
+    form.set('attached_file', await openAsBlob(attachment.file), attachment.name);
+    return parseAttachment(await this.#request('POST', `/${type}/attachments`, { form }));
   }
 
   /** Like #request, but a 404 means "absent" and returns undefined. */
@@ -571,7 +686,8 @@ export class TaigaClient {
       const response = await fetch(url, {
         method,
         headers,
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        // FormData (multipart, fetch sets the boundary) streams its file-backed Blobs from disk.
+        body: options.form ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
       });
       const text = await response.text();
       return { status: response.status, ok: response.ok, retryAfter: response.headers.get('retry-after'), text };

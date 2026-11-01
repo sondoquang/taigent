@@ -127,6 +127,12 @@ Done khi: API `POST /login` trả token, có test tích hợp, đã review và m
 
 **Epic** (`epics[]`): `key`, `subject`, `description` (mục tiêu của mảng việc, kèm link spec nếu có), `tags`.
 
+Epic, story và task đều có thể có `custom_attributes`: mapping **tên** custom attribute → giá trị (chuỗi, số hoặc
+`true`/`false`), ví dụ `custom_attributes: { "Estimate (h)": 4 }`. Tên phải trùng đúng (kể cả hoa/thường) với
+attribute của loại item đó trên Taiga, tức là attribute khai báo trong `custom_attributes` của `project.yaml` và
+đã tạo bằng `taigent bootstrap`. Tên không có trên project thì `plan`/`apply` báo lỗi và không ghi gì. `apply`
+chỉ ghi các attribute có trong manifest; giá trị người khác đặt cho attribute khác được giữ nguyên.
+
 ## 7. Ánh xạ status mặc định
 
 Status do người làm quản lý trên Taiga (hoặc qua tool MCP đọc/báo cáo). Manifest không khai báo status. Item
