@@ -255,6 +255,58 @@ Other operation shapes: `{ action, type: "custom-attribute", itemType, name, fie
 `{ project: { id, slug }, operations: [<operation> + { result: "created" | "updated" | "unchanged" }],
 summary: { created, updated, unchanged } }`.
 
+## Upload
+
+`taigent upload --project <slug> (--yes | --dry-run) [--json]` brings Taiga's wiki pages and attachments to what
+`taiga/<slug>/docs.yaml` declares (schema above; `backlog.yaml` is needed when attachments target item keys). Like
+`bootstrap`, without `--yes`/`--dry-run` it prints the operations and exits 2 when there are changes; `--dry-run`
+exits 3 when there are changes, 0 otherwise. It never deletes, renames or edits an existing attachment, and writes
+no `state.json`.
+
+- **Wiki pages** are upserted by slug: `GET /wiki/by_slug?slug=&project=`; missing → `POST /wiki
+  {project, slug, content}`; content different from the Markdown file → `PATCH /wiki/{id} {content, version}`
+  (OCC: if someone edited the page meanwhile, the run stops with a `conflict` error, `key: "wiki:<slug>"`, nothing
+  overwritten); same content → skipped. Re-runs never create a second page.
+- **Attachment targets**: an item key is resolved to the epic/story/task tagged `src:<key>` (state.json is not
+  needed); if `apply` has not created it yet, upload fails before writing anything (exit 5). `wiki:<slug>` is a page of
+  docs.yaml (created first in the same run) or an existing page such as `home`.
+- **Attachments** are compared with `GET /{epics,userstories,tasks,wiki}/attachments?object_id=&project=`: one with
+  the same name (the file's base name) and the same `size` and `sha1` is skipped. Otherwise the file is uploaded with
+  `POST /{epics,userstories,tasks,wiki}/attachments` as `multipart/form-data` (`object_id`, `project`, `description`,
+  `attached_file`). When attachments with that name but other content exist (the local file changed), the new version
+  is added and the output says the previous attachment stays on Taiga (`previous` in JSON); remove it by hand if it
+  is obsolete. Changing only `description` in docs.yaml does not update an uploaded attachment.
+- **Large files**: attachments are hashed and uploaded as streams from disk (the upload body is a file-backed `Blob`),
+  so a file is never read into memory as a whole and nothing passes through an agent's context; wiki Markdown is read
+  as a string because Taiga takes it in a JSON body. When the server refuses an upload as too large (HTTP 413, e.g.
+  nginx `client_max_body_size`, 100 MB in taiga-docker), the run stops with exit 5 and a message naming the file and
+  its size; `--json` adds `"file"` to the error. Uploads before it are kept and skipped by the next run.
+
+The run stops at the first error, naming the operation. `upload --dry-run --json` prints an `UploadPlan`
+(`file` paths are relative to the working directory):
+
+```json
+{
+  "project": { "id": 7, "slug": "demo" },
+  "changes": true,
+  "summary": { "create": 2, "update": 0, "skip": 1 },
+  "operations": [
+    { "action": "create", "type": "wiki", "slug": "spec-auth", "file": "taiga/demo/pages/spec-auth.md" },
+    { "action": "create", "type": "attachment", "target": "wiki:spec-auth", "targetType": "wiki", "objectId": null,
+      "name": "glossary.pdf", "file": "taiga/demo/files/glossary.pdf", "size": 1024, "sha1": "…", "description": "",
+      "previous": [] },
+    { "action": "skip", "type": "attachment", "target": "AUTH-LOGIN", "targetType": "story", "objectId": 15, "id": 31,
+      "name": "auth-login-flow.pdf", "file": "taiga/demo/files/auth-login-flow.pdf", "size": 2048, "sha1": "…",
+      "description": "Login flow" }
+  ]
+}
+```
+
+Wiki `update`/`skip` operations add `id` (and `version` for `update`); `objectId` is null for a page created in the
+same run; `previous: [{ id, size, sha1 }]` lists the same-name attachments that stay on Taiga. `upload --yes --json`
+prints an `UploadReport`: `{ project, operations: [<operation> + { id, result: "created" | "updated" | "unchanged" }],
+summary: { created, updated, unchanged } }`, where `id` is the wiki page or the (new) attachment.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -276,6 +328,7 @@ summary: { created, updated, unchanged } }`.
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath)`, `ApplyConflictError` (carries `key`) |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
+| Upload | `src/upload.ts` | `planUpload(docs, backlog, project, client, cwd)` (reads Taiga, hashes files), `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 
 Adding a manifest kind: write `load<Kind>(path, context)` that reads with `readManifestYaml`, reports every
 problem through an `issue(path, rule, message)` sink (reusing the `check*` functions of `conventions.ts`) and
@@ -297,3 +350,9 @@ payloads like Taiga (and additionally rejects unknown fields). Extend the fake r
 Bootstrap fixtures: `fake.addUser`, `fake.addProject({ admins, is_private, modules, tagsColors })`,
 `fake.addCustomAttribute`, `fake.addMembership`, `fake.addWikiPage`; `fake.state.templates` holds `scrum` (id 1)
 and `kanban` (id 2) with Epics off; `fake.settings.projectSlugPrefix = true` mimics DEFAULT_PROJECT_SLUG_PREFIX.
+Upload fixtures: `fake.addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki", object_id, name,
+content })` and `fake.editWikiPage(page, { content })` (bumps `version` for OCC); assert on `fake.state.attachments`
+(with the stored `content` bytes). The fake parses `multipart/form-data` with Node's own parser (`Response#formData`),
+computes `size`/`sha1` from the bytes like taiga-back, rejects unknown form fields, and records the body of a multipart
+request as a `MultipartForm { fields, files }`. `fake.settings.maxBodyBytes = n` makes it answer any larger request body
+with nginx's HTML 413 page, like Taiga's reverse proxy (`client_max_body_size`).
