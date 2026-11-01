@@ -24,15 +24,19 @@ Done when you have the id and slug.
 
 Take points from `getMilestone`, not `getMilestoneStats`: taiga-mcp-server@1.9.20 prints the stats' total points as `[object Object]`.
 
+Done when every picked sprint has its stats, points and story list, or the project has no sprints.
+
 ## 3. Read the epics and the stories
 
 1. `mcp__taiga__listEpics` with `project: <id>` (the numeric id): each epic's title, ID, status and number of stories.
-2. `mcp__taiga__listUserStories` with `projectIdentifier: "<slug>"`: stories as `#<ref>: <subject> (Status: <status>)`. It shows neither epic nor sprint, and with taiga-mcp-server@1.9.20 it returns only Taiga's first page (30 stories): when it returns exactly 30, report its counts as a lower bound. Stories whose ref is in none of the sprints read in step 2 are **outside those sprints**.
+2. `mcp__taiga__listUserStories` with `projectIdentifier: "<slug>"`: stories as `#<ref>: <subject> (Status: <status>)`. It shows no tags, epic or sprint, and with taiga-mcp-server@1.9.20 it returns only Taiga's first page (30 stories): when it returns exactly 30, report its counts as a lower bound. Stories whose ref is in none of the sprints read in step 2 are **outside those sprints**.
 3. Map stories to epics:
    - When the repository has `taiga/<slug>/backlog.yaml` and `taiga/<slug>/state.json`, the backlog lists each epic's stories by key and `state.json` gives each key's Taiga `id`. Call `mcp__taiga__getUserStory` with `userStoryId: "<id>"` (the id, never the `#ref`) for the stories you need: it shows status, epic, sprint, points and tags.
    - Otherwise use the `epics` field of the sprint stories from step 2; when the user asks about epics, read every sprint with `getMilestone` so more stories carry their epic. Report the remaining stories by status only, with their epic as unknown; say so rather than guessing from subjects.
 
 `mcp__taiga__advancedSearch` (syntax: `mcp__taiga__queryHelp`) can answer a filter the user asks for, such as one assignee's stories. With taiga-mcp-server@1.9.20 it prints fields as `[object Object]` and some filters match nothing, so use it only for counts and confirm the items with the list and get tools.
+
+Done when every story read has its epic, or is marked "No epic" or epic unknown.
 
 ## 4. Report
 

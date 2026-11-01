@@ -1,15 +1,15 @@
 ---
 name: taiga-apply-backlog
-description: "Apply a Taiga backlog: show `taigent plan` for taiga/[slug]/backlog.yaml, then run `taigent apply --yes` only after the user confirms. Run by hand after reviewing the manifest diff."
+description: "Show the Taiga plan of a backlog manifest, then apply it after you confirm."
 disable-model-invocation: true
-allowed-tools: Bash(npx taigent validate *) Bash(npx taigent plan *) Bash(npx taigent apply *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) PowerShell(npx taigent apply *) mcp__taiga__listProjects mcp__taiga__getProject mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory mcp__taiga__advancedSearch mcp__taiga__queryHelp mcp__taiga__validateQuery
+allowed-tools: Bash(npx taigent validate *) Bash(npx taigent plan *) Bash(npx taigent apply *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) PowerShell(npx taigent apply *)
 ---
 
 # Taiga apply backlog
 
 Push `taiga/<slug>/backlog.yaml` to Taiga in four moves: **plan**, show it, **confirm**, **apply**. The `taigent` CLI makes every write. It matches items by their `src:<key>` tag (re-running is safe), never deletes anything, and leaves status, assignee, sprint and points to the people doing the work.
 
-Run each command on its own from the repository root, exactly as written (`npx taigent …`, no `cd`, `&&`, `;` or `echo`): the shell tool reports its exit code. Exit codes (`docs/cli.md`): 0 success with nothing left to change, 2 usage error or missing `TAIGA_*` variable, 3 the plan has changes, 4 manifest invalid, 5 Taiga/network error or conflict.
+Run each `npx taigent …` command exactly as written, alone in its own shell call from the repository root, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
 
 ## 1. Pick the project
 
@@ -26,7 +26,7 @@ Run `npx taigent plan --project <slug>`.
 
 ## 3. Show the plan and ask
 
-Show the plan output exactly as printed: every `create`, `update` and `link` line, the orphans, and the summary line. When it has `update` lines, also run `npx taigent plan --project <slug> --json` and show each update's `changes` as `field: from → to`. Orphans are items on Taiga whose key left the manifest; `taigent` keeps them on Taiga, so say that.
+Show the plan output exactly as printed: every `create`, `update` and `link` line, the orphans, the stale links and the summary line. When it has `update` lines, also run `npx taigent plan --project <slug> --json` and show each update's `changes` as `field: from → to`. Orphans are items on Taiga whose key left the manifest; stale links are stories linked on Taiga to an epic other than their manifest epic. `taigent` keeps both on Taiga as they are, so say that.
 
 Then ask: "Apply these changes to Taiga project `<slug>`?" and end your turn. Go on only when the user explicitly confirms this plan; any other reply ends the skill with Taiga untouched.
 
@@ -46,4 +46,4 @@ Done when apply exits 0.
 
 Report apply's summary line (created, updated, linked, unchanged) and remind the user to commit `taiga/<slug>/state.json` together with the manifest.
 
-Taiga writes in this skill go only through `npx taigent apply --yes` after the user's confirmation. The Taiga MCP tools serve reading only (the ones in `allowed-tools`), never creating, updating, linking or deleting (`docs/taiga/conventions.md` §10).
+This skill reaches Taiga only through `npx taigent`, and writes only through `npx taigent apply --yes` after the user's confirmation (`docs/taiga/conventions.md` §10).

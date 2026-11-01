@@ -212,7 +212,7 @@ const shellRules = (...commands: string[]) => ['Bash', 'PowerShell'].flatMap((sh
 
 test('each taiga-* skill pre-approves only the taigent commands of its step', async () => {
   const expected: Record<string, string[]> = {
-    'taiga-plan-backlog': shellRules('validate'),
+    'taiga-plan-backlog': shellRules('validate', 'plan'),
     'taiga-apply-backlog': shellRules('validate', 'plan', 'apply'),
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),

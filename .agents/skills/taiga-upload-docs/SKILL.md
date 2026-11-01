@@ -1,15 +1,15 @@
 ---
 name: taiga-upload-docs
-description: "Upload docs to Taiga: update taiga/[slug]/docs.yaml (wiki pages, attachments), show `taigent upload --dry-run`, then run `taigent upload --yes` only after the user confirms. Upserts wiki pages by slug, adds missing attachments."
+description: "Upload the wiki pages and attachments of a docs.yaml to Taiga, after a dry run you confirm."
 disable-model-invocation: true
-allowed-tools: Bash(npx taigent validate *) Bash(npx taigent upload *) PowerShell(npx taigent validate *) PowerShell(npx taigent upload *) mcp__taiga__listWikiPages mcp__taiga__getWikiPage mcp__taiga__listAttachments
+allowed-tools: Bash(npx taigent validate *) Bash(npx taigent upload *) PowerShell(npx taigent validate *) PowerShell(npx taigent upload *)
 ---
 
 # Taiga upload docs
 
 Bring a project's Taiga wiki pages and attachments to what `taiga/<slug>/docs.yaml` declares, in four moves: **manifest**, **dry run**, **confirm**, **upload**. The `taigent` CLI makes every write. It upserts wiki pages by slug, skips attachments already on Taiga with the same name and content, and never deletes, renames or edits an existing attachment.
 
-Run each command on its own from the repository root, exactly as written (`npx taigent …`, no `cd`, `&&`, `;` or `echo`): the shell tool reports its exit code. Exit codes (`docs/cli.md`): 0 success with nothing left to change, 2 usage error or missing `TAIGA_*` variable, 3 the dry run has changes, 4 manifest invalid, 5 Taiga/network error, conflict or file too large.
+Run each `npx taigent …` command exactly as written, alone in its own shell call from the repository root, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
 
 ## 1. Pick the project
 
@@ -17,12 +17,11 @@ The slug the user named. With exactly one directory under `taiga/`, use it; othe
 
 ## 2. Update the manifest
 
-Read `docs/cli.md` sections "Manifest layout" (the `docs.yaml` schema) and "Upload", and `docs/taiga/conventions.md` §8–§9 (wiki slugs, attachment names). Then edit `taiga/<slug>/docs.yaml` in place, or create it, for the documents the user named:
+Read `docs/cli.md` sections "Manifest layout" (the `docs.yaml` schema) and "Upload", and `docs/taiga/conventions.md` §8–§9 (wiki slugs, attachment names and targets). Then edit `taiga/<slug>/docs.yaml` in place, or create it, for the documents the user named. Keep every existing entry; removing one does not remove it from Taiga.
 
-- **Wiki page**: a Markdown file, by convention under `taiga/<slug>/pages/`, listed as `{ slug, file }`. Slugs: `spec-<epic-key>`, `adr-<nnnn>-<title>`, `guide-<topic>`, `meeting-<yyyy-mm-dd>`. The file is the page: edit the file, not Taiga.
-- **Attachment**: a file, by convention under `taiga/<slug>/files/`, listed as `{ target, file, description }`. `target` is the narrowest related item key from `backlog.yaml` (task before story before epic), or `wiki:<slug>` for shared documents. The file name is the attachment name on Taiga (kebab-case, e.g. `auth-login-flow.pdf`): copy or rename the file to it before listing it, and never rename a file that was uploaded already.
-- `file` paths are relative to `docs.yaml`. Keep every existing entry; removing one does not remove it from Taiga.
-- Do not open binary files or paste their content anywhere: `taigent` hashes and streams them from disk. Copy a file into place with one plain command per file (`cp <from> <to>` or `Copy-Item <from> <to>`, after creating the directory with its own command); the user approves these.
+- **`file` paths** are relative to the directory of `docs.yaml` and may point anywhere in the repository, so list each document where it already lives (e.g. `../../docs/specs/auth.md`). `taigent` hashes and streams attachments from disk: leave binary files closed.
+- **Wiki page**: `{ slug, file }`, where `file` is a Markdown (`.md`) file. The file is the page: edit the file, not Taiga. Write a new page under `taiga/<slug>/pages/`.
+- **Attachment**: `{ target, file, description }`. The file's name is the attachment name on Taiga. When an existing file's name breaks the `attachment-name` rule, ask the user to copy it under a conforming name (by convention into `taiga/<slug>/files/`) and list the copy; a file already uploaded keeps its name.
 
 Then run `npx taigent validate --project <slug>`. Exit 4 prints each problem as `file: path: message [rule]`; fix every one and run it again. Done when it exits 0.
 
@@ -59,4 +58,4 @@ Done when it exits 0.
 
 Report the summary line (created, updated, unchanged), list attachments whose previous version stays on Taiga (remove those by hand if obsolete), and remind the user to commit `docs.yaml` with its pages and files.
 
-Taiga writes in this skill go only through `npx taigent upload --yes` after the user's confirmation. The Taiga MCP tools serve reading only (the ones in `allowed-tools`); never use MCP wiki or attachment write tools (`docs/taiga/conventions.md` §10).
+This skill reaches Taiga only through `npx taigent`, and writes only through `npx taigent upload --yes` after the user's confirmation (`docs/taiga/conventions.md` §10).

@@ -16,7 +16,8 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
 1. **Plan (chỉ ghi file).** Agent đọc spec/PRD rồi viết hoặc cập nhật manifest trong `taiga/<slug>/`
    (`project.yaml`, `backlog.yaml`, `docs.yaml`).
    - Sửa manifest hiện có, giữ nguyên `key` cũ. Không viết lại từ đầu.
-   - Có thể đọc Taiga qua MCP để tránh tạo trùng việc đã có.
+   - Có thể đọc Taiga để tránh tạo trùng việc đã có: `taigent plan --project <slug> --json` (chỉ đọc) cho các item
+     đã có tag `src:`, và tool MCP đọc cho việc người khác tạo tay.
    - Kết thúc bằng `taigent validate --project <slug>`. Phải ra exit 0.
 2. **Review.** Người dùng duyệt diff manifest trong git như duyệt code, rồi chạy (hoặc để agent chạy)
    `taigent plan --project <slug>` để xem chính xác những gì sẽ đổi trên Taiga (exit 3 = có thay đổi).

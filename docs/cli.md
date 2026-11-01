@@ -92,7 +92,8 @@ Empty parts are left out.
 Names, tags, keys, wiki slugs and attachment names follow `docs/taiga/conventions.md`; each rule there has the
 `rule` id that validation errors report. Keys are unique across epics, stories and tasks.
 
-`docs.yaml` (paths are relative to the directory of `docs.yaml`):
+`docs.yaml` (paths are relative to the directory of `docs.yaml` and may point outside it, so documents are referenced
+where they already are, e.g. `../../docs/specs/auth.md`):
 
 ```yaml
 wiki:
@@ -345,10 +346,10 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 
 | Skill | Invocation | Does |
 |---|---|---|
-| `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`) | Spec/PRD → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
+| `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
-| `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml`, `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
+| `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml` (referencing documents where they already are, no copies), `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
 | `taiga-status-report` | Model or user | Read-only report by sprint and by epic through Taiga MCP read tools (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); runs no shell command |
 
 Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply|bootstrap|upload` (as `Bash(...)` and, for
