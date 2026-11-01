@@ -16,7 +16,6 @@ prefix_rule(
     ],
     not_match = [
         "npx taigent skills check",
-        "npx taigent closed --from 2026-10-26 --to 2026-11-01",
         "npx -y taigent plan --project vigo-auth",
         "npm test",
     ],

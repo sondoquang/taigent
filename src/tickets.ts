@@ -13,7 +13,7 @@ export interface DayRange {
   end: Date;
 }
 
-export const DUE_STATUSES = ['On time', 'Late', 'Overdue', 'On track', 'No due date'] as const;
+const DUE_STATUSES = ['On time', 'Late', 'Overdue', 'On track', 'No due date'] as const;
 export type DueStatus = (typeof DUE_STATUSES)[number];
 
 /** One ticket of the period. */
@@ -57,11 +57,19 @@ export interface TicketsReport {
   summary: TicketsSummary;
   notes: {
     /** Runs of 3 or more tickets, each closed at most 60 seconds after the previous one, by closing time. */
-    bulkCloses: { count: number; first: string; last: string; tickets: { ref: number; project: string }[] }[];
+    bulkCloses: { count: number; first: string; last: string; tickets: TicketId[] }[];
     /** Tickets with neither Spent Time nor points. */
-    missingEffort: { ref: number; project: string }[];
+    missingEffort: TicketId[];
   };
 }
+
+/** How notes name a ticket: its ref and its project's slug. */
+export interface TicketId {
+  ref: number;
+  project: string;
+}
+
+const ticketId = (ticket: Ticket): TicketId => ({ ref: ticket.ref, project: ticket.project.slug });
 
 /** Totals of `tickets`. */
 export interface TicketsSummary {
@@ -101,7 +109,7 @@ function localDay(date: Date): string {
 }
 
 /** `YYYY-MM-DD HH:mm` in the local time zone. */
-export function localMinute(iso: string): string {
+function localMinute(iso: string): string {
   const date = new Date(iso);
   return `${localDay(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
@@ -132,7 +140,9 @@ function inPeriod(story: TaigaAssignedStory, range: DayRange): boolean {
   return story.dueDate !== null && story.dueDate >= range.from && story.dueDate <= range.to;
 }
 
-const OPEN_ORDER: Record<string, number> = { Overdue: 0, 'On track': 1, 'No due date': 2 };
+/** Order of open tickets; closed statuses never reach the lookup. */
+const OPEN_ORDER: Record<DueStatus, number> = { Overdue: 0, 'On track': 1, 'No due date': 2, 'On time': 3, Late: 3 };
+const openRank = (ticket: Ticket) => OPEN_ORDER[ticket.dueStatus ?? 'No due date'];
 
 function compareTickets(a: Ticket, b: Ticket): number {
   if (a.isClosed !== b.isClosed) return a.isClosed ? -1 : 1;
@@ -140,7 +150,7 @@ function compareTickets(a: Ticket, b: Ticket): number {
     if (a.closedAt === null || b.closedAt === null) return a.closedAt === b.closedAt ? 0 : a.closedAt === null ? 1 : -1;
     return Date.parse(a.closedAt) - Date.parse(b.closedAt);
   }
-  return OPEN_ORDER[a.dueStatus!]! - OPEN_ORDER[b.dueStatus!]! || (a.dueDate ?? '').localeCompare(b.dueDate ?? '');
+  return openRank(a) - openRank(b) || (a.dueDate ?? '').localeCompare(b.dueDate ?? '');
 }
 
 /** Sum of efforts in hours, rounded to hundredths so float noise never shows. */
@@ -209,7 +219,7 @@ function bulkCloses(tickets: Ticket[]): TicketsReport['notes']['bulkCloses'] {
       count: run.length,
       first: run[0]!.closedAt!,
       last: run.at(-1)!.closedAt!,
-      tickets: run.map((ticket) => ({ ref: ticket.ref, project: ticket.project.slug })),
+      tickets: run.map(ticketId),
     }));
 }
 
@@ -257,7 +267,7 @@ export async function readTickets(client: TaigaClient, range: DayRange, project?
     summary: summarize(tickets),
     notes: {
       bulkCloses: bulkCloses(tickets),
-      missingEffort: tickets.filter((ticket) => ticket.effort === null).map((ticket) => ({ ref: ticket.ref, project: ticket.project.slug })),
+      missingEffort: tickets.filter((ticket) => ticket.effort === null).map(ticketId),
     },
   };
 }
@@ -282,12 +292,13 @@ export function formatTicketsText(report: TicketsReport): string {
       ` effort ${effort.hours}h (Spent Time ${effort.spent.tickets} tickets, points ${effort.points.tickets} tickets)`,
   ];
   const byProject = Map.groupBy(tickets, (ticket) => ticket.project.slug);
-  for (const [slug, group] of [...byProject].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]))) {
-    lines.push('', `${slug} (${group[0]!.project.name}): ${group.length}`);
+  for (const project of summary.projects) {
+    const group = byProject.get(project.slug) ?? [];
+    lines.push('', `${project.slug} (${project.name}): ${project.tickets}`);
     for (const ticket of group) {
-      const closed = ticket.closedAt === null ? (ticket.isClosed ? 'closed' : 'open') : `closed ${localMinute(ticket.closedAt)}`;
+      const state = ticket.closedAt === null ? (ticket.isClosed ? 'closed' : 'open') : `closed ${localMinute(ticket.closedAt)}`;
       lines.push(
-        `  #${ticket.ref}  ${ticket.dueStatus ?? 'unknown'}  ${ticket.status}  due ${ticket.dueDate ?? '-'}  ${closed}  ${formatEffort(ticket)}  ${ticket.subject}`,
+        `  #${ticket.ref}  ${ticket.dueStatus ?? 'unknown'}  ${ticket.status}  due ${ticket.dueDate ?? '-'}  ${state}  ${formatEffort(ticket)}  ${ticket.subject}`,
       );
     }
   }

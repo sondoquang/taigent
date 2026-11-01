@@ -580,7 +580,8 @@ export class TaigaClient {
   async listAssignedStories(userId: number, projectId?: number): Promise<TaigaAssignedStory[]> {
     const query: Record<string, string | number> = { assigned_users: userId };
     if (projectId !== undefined) query.project = projectId;
-    return parseList(await this.#request('GET', '/userstories', { query }), 'user story', parseAssignedStory);
+    const { collection, what } = TAIGA_ITEM.story;
+    return parseList(await this.#request('GET', `/${collection}`, { query }), what, parseAssignedStory);
   }
 
   async listProjectTemplates(): Promise<TaigaProjectTemplate[]> {

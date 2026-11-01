@@ -50,8 +50,6 @@ Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. chang
             3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
 const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'skills'] as const;
-/** Commands taking a day range (`--from`/`--to`) and an optional `--project`. */
-const RANGE_COMMANDS: readonly Command[] = ['tickets'];
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
@@ -124,11 +122,11 @@ function parseOptions(argv: string[]): Options | 'help' {
   }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
-    if (command !== 'validate' && command !== 'skills' && !RANGE_COMMANDS.includes(command as Command)) throw new UsageError('--project <slug> is required');
+    if (command !== 'validate' && command !== 'skills' && command !== 'tickets') throw new UsageError('--project <slug> is required');
   } else if (!SLUG_PATTERN.test(values.project)) {
     throw new UsageError(`invalid project slug "${values.project}"`);
   }
-  if (RANGE_COMMANDS.includes(command as Command)) {
+  if (command === 'tickets') {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
       if (value === undefined) throw new UsageError(`${command} needs --${name} <YYYY-MM-DD>`);
@@ -136,7 +134,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     }
     if (parseDay(values.from!)! > parseDay(values.to!)!) throw new UsageError(`--from ${values.from} is after --to ${values.to}`);
   } else if (values.from !== undefined || values.to !== undefined) {
-    throw new UsageError(`--from and --to apply only to ${RANGE_COMMANDS.join(' and ')}`);
+    throw new UsageError('--from and --to apply only to tickets');
   }
   return {
     command: command as Command,

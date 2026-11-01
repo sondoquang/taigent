@@ -1,6 +1,6 @@
 ---
 name: taiga-my-tickets
-description: "Your Taiga tickets (user stories assigned to you) in a period, with due status (On time, Late, Overdue, On track) and effort. Use for my tickets or my work this week, last week, in October or between two days."
+description: "Your Taiga tickets (user stories assigned to you) in a period, with due status and effort. Use for my tickets or my work in a given period."
 allowed-tools: Bash(npx taigent tickets *) PowerShell(npx taigent tickets *)
 ---
 
