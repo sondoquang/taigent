@@ -4,24 +4,29 @@ import { relative } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ExitCode } from './exit-codes.ts';
 import { errorMessage } from './guards.ts';
+import { describeOperation, executeBootstrap, findTemplate, planBootstrap, type BootstrapPlan, type BootstrapReport } from './bootstrap.ts';
 import { ApplyConflictError, executePlan, type ApplyReport } from './executor.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
+import { WIKI_HOME_SLUG } from './manifest/project.ts';
+import { readSavedProject } from './manifest/state.ts';
 import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
 import { TaigaAuthError, TaigaClient, TaigaError } from './taiga/client.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
 Commands:
-  validate Check manifests against the conventions, offline (all projects without --project)
-  plan     Show what apply would change on Taiga (exit 3 when there are changes)
-  apply    Apply the manifest to Taiga (requires --yes)
+  validate  Check manifests against the conventions, offline (all projects without --project)
+  bootstrap Create or complete the Taiga project declared in project.yaml (requires --yes)
+  plan      Show what apply would change on Taiga (exit 3 when there are changes)
+  apply     Apply the manifest to Taiga (requires --yes)
 
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/
   --json            Machine-readable output on stdout
-  --yes             Confirm writes (apply)
+  --yes             Confirm writes (bootstrap, apply)
+  --dry-run         List the operations without writing anything (exit 3 when there are changes)
   -h, --help        Show this help
 
 Environment:
@@ -34,7 +39,7 @@ Environment:
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
             3 plan has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'plan', 'apply'] as const;
+const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply'] as const;
 type Command = (typeof COMMANDS)[number];
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
@@ -48,6 +53,7 @@ interface Options {
   project?: string;
   json: boolean;
   yes: boolean;
+  dryRun: boolean;
 }
 
 function parseOptions(argv: string[]): Options | 'help' {
@@ -60,6 +66,7 @@ function parseOptions(argv: string[]): Options | 'help' {
         project: { type: 'string' },
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
+        'dry-run': { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
     });
@@ -77,7 +84,7 @@ function parseOptions(argv: string[]): Options | 'help' {
   } else if (!SLUG_PATTERN.test(values.project)) {
     throw new UsageError(`invalid project slug "${values.project}"`);
   }
-  return { command: command as Command, project: values.project, json: values.json, yes: values.yes };
+  return { command: command as Command, project: values.project, json: values.json, yes: values.yes, dryRun: values['dry-run'] };
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
@@ -184,8 +191,69 @@ async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string
   return ExitCode.Ok;
 }
 
+function formatBootstrapPlan(plan: BootstrapPlan): string {
+  const { project } = plan;
+  const lines = [`Bootstrap plan for project ${project.slug} (${project.exists ? `id ${project.id}` : 'new'}):`];
+  for (const op of plan.operations) {
+    const marker = op.action === 'create' ? '  + ' : op.action === 'update' ? '  ~ ' : '    skip ';
+    lines.push(`${marker}${describeOperation(op)}`);
+  }
+  lines.push(
+    plan.changes
+      ? `${plan.summary.create} to create, ${plan.summary.update} to update, ${plan.summary.skip} unchanged.`
+      : 'No changes. Taiga matches the manifest.',
+  );
+  return `${lines.join('\n')}\n`;
+}
+
+function formatBootstrapReport(report: BootstrapReport): string {
+  const lines = [`Bootstrapped project ${report.project.slug} (id ${report.project.id}):`];
+  for (const op of report.operations) if (op.result !== 'unchanged') lines.push(`  ${op.result} ${describeOperation(op)}`);
+  lines.push(`${report.summary.created} created, ${report.summary.updated} updated, ${report.summary.unchanged} unchanged.`);
+  return `${lines.join('\n')}\n`;
+}
+
+/** `bootstrap`: create the project declared in project.yaml, or fill what an existing one lacks. */
+async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
+  const slug = options.project!;
+  const layout = projectLayout(slug, env, cwd);
+  const manifest = (await loadManifests(layout.dir, slug, { require: ['project'] })).manifests.project!;
+  const client = await connectTaiga(env);
+
+  const me = await client.getMe();
+  const project = await client.findProjectBySlug(manifest.slug);
+  if (!project) {
+    // A previous run may have created the project under another slug (see executeBootstrap): never create twice.
+    const saved = await readSavedProject(layout.state);
+    const recorded = saved && (await client.findProject(saved.id));
+    if (recorded) {
+      throw new TaigaError(
+        `state.json already points to project id ${recorded.id} (slug "${recorded.slug}"), but no project has slug "${manifest.slug}"; ` +
+          `refusing to create another one. Have a Taiga admin set its slug to "${manifest.slug}", or remove "project" from state.json ` +
+          'if that project is unrelated.',
+      );
+    }
+  }
+  const template = project ? undefined : findTemplate(await client.listProjectTemplates(), manifest.template);
+  const memberships = project ? await client.listMemberships(project.id) : [];
+  const wikiHomeExists = project !== undefined && manifest.wikiHome !== undefined && (await client.findWikiPage(project.id, WIKI_HOME_SLUG)) !== undefined;
+  const plan = planBootstrap(manifest, { me, project, template, memberships, wikiHomeExists });
+
+  if (options.dryRun || !options.yes) {
+    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatBootstrapPlan(plan));
+    if (!plan.changes) return ExitCode.Ok;
+    if (options.dryRun) return ExitCode.Changes;
+    throw new UsageError('refusing to bootstrap without --yes; review the operations above, then re-run with --yes');
+  }
+
+  const report = await executeBootstrap(plan, project, client, layout.state);
+  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatBootstrapReport(report));
+  return ExitCode.Ok;
+}
+
 async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
   if (options.command === 'validate') return runValidate(options, env, cwd);
+  if (options.command === 'bootstrap') return runBootstrap(options, env, cwd);
   const slug = options.project!;
   const layout = projectLayout(slug, env, cwd);
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
@@ -204,10 +272,10 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
   }
   const plan = buildPlan(backlog, { project: { id: project.id, slug: project.slug }, epics, stories, tasks, epicStories });
 
-  if (options.command === 'plan' || !options.yes) {
+  if (options.command === 'plan' || options.dryRun || !options.yes) {
     process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatPlan(plan));
     if (!plan.changes) return ExitCode.Ok;
-    if (options.command === 'plan') return ExitCode.Changes;
+    if (options.command === 'plan' || options.dryRun) return ExitCode.Changes;
     throw new UsageError('refusing to apply without --yes; review the plan above, then re-run with --yes');
   }
 

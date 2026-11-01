@@ -35,6 +35,16 @@ export async function readState(path: string, project: StateFile['project']): Pr
   return { project, items: state.items ?? {} };
 }
 
+/** The project recorded in the state file (by bootstrap or apply), or undefined when there is none. */
+export async function readSavedProject(path: string): Promise<StateFile['project'] | undefined> {
+  try {
+    return (JSON.parse(await readFile(path, 'utf8')) as Partial<StateFile>).project;
+  } catch (error) {
+    if (isFileNotFound(error)) return undefined;
+    throw error;
+  }
+}
+
 /** Writes the state atomically with sorted keys, so diffs stay stable. */
 export async function writeState(path: string, state: StateFile): Promise<void> {
   const items: Record<string, StateEntry> = {};

@@ -219,5 +219,5 @@ test('validate with no manifests at all is a validation error', async (t) => {
   await h.writeManifest('empty', 'notes.txt', '');
   const one = await h.taigent(['validate', '--project', 'empty'], { env: OFFLINE });
   assert.equal(one.code, 4);
-  assert.match(one.stderr, /no manifest found \(expected backlog\.yaml, docs\.yaml\) \[file-exists\]/);
+  assert.match(one.stderr, /no manifest found \(expected project\.yaml, backlog\.yaml, docs\.yaml\) \[file-exists\]/);
 });
