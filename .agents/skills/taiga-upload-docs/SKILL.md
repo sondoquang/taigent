@@ -22,7 +22,7 @@ Read `docs/cli.md` sections "Manifest layout" (the `docs.yaml` schema) and "Uplo
 - **Wiki page**: a Markdown file, by convention under `taiga/<slug>/pages/`, listed as `{ slug, file }`. Slugs: `spec-<epic-key>`, `adr-<nnnn>-<title>`, `guide-<topic>`, `meeting-<yyyy-mm-dd>`. The file is the page: edit the file, not Taiga.
 - **Attachment**: a file, by convention under `taiga/<slug>/files/`, listed as `{ target, file, description }`. `target` is the narrowest related item key from `backlog.yaml` (task before story before epic), or `wiki:<slug>` for shared documents. The file name is the attachment name on Taiga (kebab-case, e.g. `auth-login-flow.pdf`): copy or rename the file to it before listing it, and never rename a file that was uploaded already.
 - `file` paths are relative to `docs.yaml`. Keep every existing entry; removing one does not remove it from Taiga.
-- Do not open binary files or paste their content anywhere: `taigent` hashes and streams them from disk.
+- Do not open binary files or paste their content anywhere: `taigent` hashes and streams them from disk. Copy a file into place with one plain command per file (`cp <from> <to>` or `Copy-Item <from> <to>`, after creating the directory with its own command); the user approves these.
 
 Then run `npx taigent validate --project <slug>`. Exit 4 prints each problem as `file: path: message [rule]`; fix every one and run it again. Done when it exits 0.
 
