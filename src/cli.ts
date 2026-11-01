@@ -1,7 +1,8 @@
 // CLI: argument parsing, wiring of Manifest → Taiga client → Planner → Executor, output and exit codes.
 
-import { relative } from 'node:path';
-import { parseArgs } from 'node:util';
+import { readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { parseArgs, parseEnv } from 'node:util';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
@@ -35,7 +36,7 @@ Options:
   --dry-run         List the operations without writing anything (exit 3 when there are changes)
   -h, --help        Show this help
 
-Environment:
+Environment (a variable not set in the environment is read from ./.env):
   TAIGA_API_URL                    Taiga API base URL (includes /api/v1)
   TAIGA_USERNAME, TAIGA_PASSWORD   Login; also the fallback when TAIGA_TOKEN is rejected
   TAIGA_TOKEN                      Access token used instead of username/password
@@ -131,6 +132,22 @@ function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
   const missing = names.filter((name) => !env[name]);
   if (missing.length > 0) throw new UsageError(`missing environment variable(s): ${missing.join(', ')}`);
   return names.map((name) => env[name]!);
+}
+
+/** `env` completed from `<cwd>/.env`, if there is one: a variable set (non-empty) in `env` wins over the file. */
+function withDotEnv(env: NodeJS.ProcessEnv, cwd: string): NodeJS.ProcessEnv {
+  let text: string;
+  try {
+    text = readFileSync(join(cwd, '.env'), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return env;
+    throw new UsageError(`cannot read .env: ${errorMessage(error)}`);
+  }
+  const merged = { ...env };
+  for (const [name, value] of Object.entries(parseEnv(text))) {
+    if (!merged[name]) merged[name] = value;
+  }
+  return merged;
 }
 
 /**
@@ -401,11 +418,15 @@ function fail(secrets: Secrets, code: ExitCode, kind: string, error: Error, json
   return code;
 }
 
-/** Runs the CLI and returns the process exit code. */
-export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): Promise<number> {
+/**
+ * Runs the CLI and returns the process exit code. Variables missing from `processEnv` are read from `<cwd>/.env`.
+ */
+export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): Promise<number> {
   const json = argv.includes('--json');
-  const secrets = environmentSecrets(env);
+  let secrets = environmentSecrets(processEnv);
   try {
+    const env = withDotEnv(processEnv, cwd);
+    secrets = environmentSecrets(env);
     const options = parseOptions(argv);
     if (options === 'help') {
       process.stdout.write(`${USAGE}\n`);

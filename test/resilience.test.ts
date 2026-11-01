@@ -147,6 +147,26 @@ test('missing configuration names the variables to set', async (t) => {
   assert.deepEqual(h.fake.requests, []);
 });
 
+test('variables missing from the environment are read from .env in the working directory; the environment wins', async (t) => {
+  const h = await startHarness(t);
+  h.fake.addProject({ slug: 'demo' });
+  await h.writeManifest('demo', 'backlog.yaml', BACKLOG);
+  const { username, password } = h.fake.user;
+  writeFileSync(join(h.cwd, '.env'), `# credentials\nTAIGA_API_URL=http://127.0.0.1:9/api/v1\nTAIGA_USERNAME=${username}\nTAIGA_PASSWORD="${password}"\n`);
+  const fromDotEnv = { TAIGA_USERNAME: undefined, TAIGA_PASSWORD: undefined };
+
+  // TAIGA_API_URL from the environment (the fake) beats the unreachable one in .env; the login comes from .env.
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json'], { env: fromDotEnv });
+  assert.equal(plan.code, 3, plan.stderr);
+
+  // A password from .env is redacted like one from the environment.
+  h.fake.intercept({ method: 'POST', path: '/auth', status: 400, bodyFrom: (r) => ({ _error_message: `bad login ${JSON.stringify(r.body)}` }) });
+  const echoed = await h.taigent(['plan', '--project', 'demo', '--json'], { env: fromDotEnv });
+  assert.equal(echoed.code, 5, echoed.stderr);
+  assert.ok(!`${echoed.stdout}${echoed.stderr}`.includes(password), echoed.stderr);
+  assert.match(echoed.stderr, /\[redacted\]/);
+});
+
 test('a refused login names the URL and the variables to check', async (t) => {
   const h = await startHarness(t);
   h.fake.addProject({ slug: 'demo' });

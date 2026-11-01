@@ -31,7 +31,7 @@ Beside the main flow:
 
 Starting situations, and where each merges onto the flow.
 
-- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npx skills add sondoquang/taigent` for the skills, `npm install -D github:sondoquang/taigent` for the CLI; `taiga-setup` checks both and names each fix (`docs/cli.md` §Using the skills in another project).
+- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npx skills add sondoquang/taigent` for the skills, `npm install -D github:sondoquang/taigent` for the CLI; neither registers the Taiga MCP server. `taiga-setup` checks the variables (environment or `.env`), the CLI and the MCP server, including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
 - **Brand-new Taiga project** → `taiga-bootstrap-project`, then `taiga-plan-backlog` and `taiga-upload-docs`.
 - **Project already on Taiga, no manifest yet** → `taiga-plan-backlog`. Hand-made items carry no `src:` tag; it lists them and asks before adding the same work. `taiga-bootstrap-project` completes the existing project when you are its admin.
 - **New or changed requirement** → `taiga-plan-backlog` with the request as the spec, then review and `taiga-apply-backlog`.
@@ -69,4 +69,4 @@ In the taigent repository; `AGENTS.md` and `docs/cli.md` §Skills hold the full 
 - The **Taigent skills** are every `taiga-*` skill plus this one. Edit them in `.agents/skills/`, then run `npx taigent skills sync` to refresh the `.claude/skills/` copies; `npm test` fails while they differ. The other skills are vendored from `mattpocock/skills` (`skills-lock.json`), and taigent leaves them alone.
 - A skill that pre-approves `taigent apply`, `bootstrap` or `upload` is user-only on both agents.
 - Adding, removing or changing a Taigent skill: update this map in the same change.
-- Bumping the `taiga-mcp-server` pin: `.mcp.json`, `.codex/config.toml` and `taiga-setup` together.
+- Bumping the `taiga-mcp-server` pin: `.mcp.json`, `.codex/config.toml`, `taiga-setup` and `docs/cli.md` together.
