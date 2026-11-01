@@ -202,14 +202,13 @@ test('bootstrap on an existing project (matched by slug) only fills the gaps', a
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(h.fake.state.projects.length, 1, 'no duplicate project');
-  assert.deepEqual(writes(h.fake), [
-    `PATCH /projects/${project.id}`,
-    `POST /projects/${project.id}/edit_tag`,
-    'POST /userstory-custom-attributes',
-    'POST /task-custom-attributes',
-    'POST /memberships',
-    'POST /memberships',
-  ]);
+  assert.equal(project.modules.is_epics_activated, true);
+  assert.deepEqual(project.tagsColors, { 'area:billing': '#1565C0', 'type:feature': '#2E7D32' });
+  assert.deepEqual(projectAttributes(h.fake, project.id), [
+    { itemType: 'epic', name: 'Spec link', type: 'url', description: '' },
+    { itemType: 'userstory', name: 'Acceptance owner', type: 'text', description: '' },
+    { itemType: 'task', name: 'Estimate (h)', type: 'number', description: 'Hours of work' },
+  ], 'the existing epic attribute is kept, the missing ones are added');
   assert.deepEqual(h.fake.requests.find((r) => r.method === 'PATCH')?.body, { is_epics_activated: true });
   assert.deepEqual(h.fake.requests.find((r) => r.path.endsWith('/edit_tag'))?.body, { from_tag: 'type:feature', color: '#2E7D32' });
   assert.equal(h.fake.state.wikiPages[0]!.content, 'Hand-written home.', 'existing wiki home is left alone');

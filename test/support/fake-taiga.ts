@@ -8,7 +8,8 @@
 //   `Authorization: Bearer <token>`. Access tokens can be expired on demand (`expireTokens`); refresh
 //   tokens rotate on every `/auth/refresh`, like taiga-back's SIMPLE_JWT settings.
 // - Lists are paginated (30 per page, `x-pagination-*` headers) unless `x-disable-pagination` is sent.
-// - Tags are stored lowercased and returned as `[name, color|null]` pairs.
+// - Tags are stored lowercased and returned as `[name, color|null]` pairs. The epic, user story and task lists
+//   filter by `tags=a,b` (items carrying any listed tag, exact match), like taiga-back's TagsFilter.
 // - Validation errors are 400 with DRF-style `{ field: [message] }` bodies. The fake is STRICTER than
 //   Taiga on one point: unknown payload fields are rejected (Taiga silently ignores them), so typos
 //   such as `project_id` instead of `project` fail loudly in tests.
@@ -281,7 +282,7 @@ export interface FakeTaiga {
     modules?: Partial<FakeModules>;
     tagsColors?: Record<string, string | null>;
   }): FakeProject;
-  addEpic(input: { project: number; subject: string; description?: string; tags?: string[] }): FakeEpic;
+  addEpic(input: FakeItemInput): FakeEpic;
   addUser(input: { username: string; email?: string }): FakeUser;
   addCustomAttribute(input: { itemType: FakeCustomAttributeType; project: number; name: string; description?: string; type?: string }): FakeCustomAttribute;
   /** Sets an item's custom attribute values like a Taiga user would (replaces them, bumps `version`). */
@@ -293,8 +294,8 @@ export interface FakeTaiga {
   editWikiPage(page: FakeWikiPage, changes: Partial<Pick<FakeWikiPage, 'content' | 'slug'>>): void;
   /** Answer the next matching request(s) with a canned response instead of handling it. */
   intercept(rule: InterceptRule): void;
-  addUserStory(input: { project: number; subject: string; description?: string; tags?: string[] }): FakeUserStory;
-  addTask(input: { project: number; user_story?: number; subject: string; description?: string; tags?: string[] }): FakeTask;
+  addUserStory(input: FakeItemInput): FakeUserStory;
+  addTask(input: FakeItemInput & { user_story?: number }): FakeTask;
   addEpicRelatedUserStory(epic: number, userStory: number): FakeEpicRelatedUserStory;
   /** Edits an item like a Taiga user would: bumps `version` and records the fields for OCC checks. */
   editItem<T extends FakeItem>(item: T, changes: Partial<Omit<T, 'id' | 'ref' | 'version' | 'project'>>): void;
@@ -352,6 +353,27 @@ const TASK_FIELDS: Record<string, true> = {
 };
 
 const RELATED_USER_STORY_FIELDS: Record<string, true> = { epic: true, user_story: true, order: true };
+
+/** URL segment of the epic, user story and task endpoints (`/{segment}`, `/{segment}/{id}`, …). */
+type ItemSegment = 'epics' | 'userstories' | 'tasks';
+
+/**
+ * Per URL segment: the item type (custom attributes, values objects), the item key of its values object and the
+ * create/edit payload fields.
+ */
+const ITEM_KINDS: Record<ItemSegment, { itemType: FakeCustomAttributeType; valuesField: string; fields: Record<string, true> }> = {
+  epics: { itemType: 'epic', valuesField: 'epic', fields: EPIC_FIELDS },
+  userstories: { itemType: 'userstory', valuesField: 'user_story', fields: USER_STORY_FIELDS },
+  tasks: { itemType: 'task', valuesField: 'task', fields: TASK_FIELDS },
+};
+
+/** Fixture input shared by `addEpic`, `addUserStory` and `addTask`. */
+export interface FakeItemInput {
+  project: number;
+  subject: string;
+  description?: string;
+  tags?: string[];
+}
 
 /** Fields accepted by POST /projects and PATCH /projects/{id} (docs §10.2/10.5; `slug` is read-only in taiga-back). */
 const PROJECT_FIELDS: Record<string, true> = {
@@ -586,10 +608,16 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return page;
   }
 
-  function addEpic(input: { project: number; subject: string; description?: string; tags?: string[] }): FakeEpic {
+  /** The collection holding the epics, user stories or tasks. */
+  function itemsOf(itemType: FakeCustomAttributeType): FakeItem[] {
+    return { epic: state.epics, userstory: state.userStories, task: state.tasks }[itemType];
+  }
+
+  /** Creates an epic, user story or task with the next project ref and its (empty) custom attribute values. */
+  function addItem<T extends FakeItem>(itemType: FakeCustomAttributeType, input: FakeItemInput, extra: Omit<T, keyof FakeEpic>): T {
     const project = state.projects.find((p) => p.id === input.project);
     if (!project) throw new Error(`fake taiga: no project ${input.project}`);
-    const epic: FakeEpic = {
+    const item = {
       id: ++nextId,
       ref: ++project.lastRef,
       version: 1,
@@ -599,14 +627,23 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       tags: (input.tags ?? []).map((t) => t.toLowerCase()),
       status: null,
       assigned_to: null,
-    };
-    state.epics.push(epic);
-    createAttributeValues('epic', epic.id);
-    return epic;
+      ...extra,
+    } as T;
+    itemsOf(itemType).push(item);
+    createAttributeValues(itemType, item.id);
+    return item;
   }
 
-  function epicJson(epic: FakeEpic): Json {
-    return { ...epic, tags: epic.tags.map((t) => [t, null]) };
+  function addEpic(input: FakeItemInput): FakeEpic {
+    return addItem<FakeEpic>('epic', input, {});
+  }
+
+  function addUserStory(input: FakeItemInput): FakeUserStory {
+    return addItem<FakeUserStory>('userstory', input, { milestone: null, points: {} });
+  }
+
+  function addTask(input: FakeItemInput & { user_story?: number }): FakeTask {
+    return addItem<FakeTask>('task', input, { user_story: input.user_story ?? null, milestone: null });
   }
 
   /** Tags of the project (`tags_colors`): explicit colors plus tags used by items (null color), like taiga-back. */
@@ -910,55 +947,13 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       description: (data.description as string | undefined) ?? '',
       tags: tags ?? [],
     });
-    return { status: 201, body: epicJson(epic) };
+    return { status: 201, body: itemJson(epic) };
   }
 
   // --- User stories, tasks, epic ↔ story links, PATCH with OCC (ticket #4) ---
 
   /** Fields changed by each edit, per item: entry i = fields modified going from version i+1 to i+2. */
   const editHistory = new WeakMap<FakeItem | FakeWikiPage, string[][]>();
-
-  function addUserStory(input: { project: number; subject: string; description?: string; tags?: string[] }): FakeUserStory {
-    const project = state.projects.find((p) => p.id === input.project);
-    if (!project) throw new Error(`fake taiga: no project ${input.project}`);
-    const story: FakeUserStory = {
-      id: ++nextId,
-      ref: ++project.lastRef,
-      version: 1,
-      project: project.id,
-      subject: input.subject,
-      description: input.description ?? '',
-      tags: (input.tags ?? []).map((t) => t.toLowerCase()),
-      status: null,
-      assigned_to: null,
-      milestone: null,
-      points: {},
-    };
-    state.userStories.push(story);
-    createAttributeValues('userstory', story.id);
-    return story;
-  }
-
-  function addTask(input: { project: number; user_story?: number; subject: string; description?: string; tags?: string[] }): FakeTask {
-    const project = state.projects.find((p) => p.id === input.project);
-    if (!project) throw new Error(`fake taiga: no project ${input.project}`);
-    const task: FakeTask = {
-      id: ++nextId,
-      ref: ++project.lastRef,
-      version: 1,
-      project: project.id,
-      user_story: input.user_story ?? null,
-      subject: input.subject,
-      description: input.description ?? '',
-      tags: (input.tags ?? []).map((t) => t.toLowerCase()),
-      status: null,
-      assigned_to: null,
-      milestone: null,
-    };
-    state.tasks.push(task);
-    createAttributeValues('task', task.id);
-    return task;
-  }
 
   /** Values saves per values object: entry i = whether going from version i+1 to i+2 changed `attributes_values`. */
   const valuesHistory = new WeakMap<FakeCustomAttributeValues, boolean[]>();
@@ -984,13 +979,8 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   function routeAttributeValues(method: string, path: string, body: unknown, userId: number): Reply | undefined {
     const match = /^\/(epics|userstories|tasks)\/custom-attributes-values\/(\d+)$/.exec(path);
     if (!match) return undefined;
-    const [itemType, items, itemField] =
-      match[1] === 'epics'
-        ? (['epic', state.epics, 'epic'] as const)
-        : match[1] === 'userstories'
-          ? (['userstory', state.userStories, 'user_story'] as const)
-          : (['task', state.tasks, 'task'] as const);
-    const item = (items as FakeItem[]).find((i) => i.id === Number(match[2]) && visibleProject(i.project, userId));
+    const { itemType, valuesField: itemField } = ITEM_KINDS[match[1] as ItemSegment];
+    const item = itemsOf(itemType).find((i) => i.id === Number(match[2]) && visibleProject(i.project, userId));
     const values = item && state.customAttributeValues.find((v) => v.itemType === itemType && v.item === item.id);
     if (!item || !values) throw notFound();
     const json = () => ({ attributes_values: values.attributes_values, version: values.version, [itemField]: item.id });
@@ -1148,11 +1138,15 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return { ...item, tags: item.tags.map((t) => [t, null]) };
   }
 
-  /** Taiga's `tags=a,b` list filter keeps items carrying every listed tag. */
+  /**
+   * taiga-back's TagsFilter (taiga/base/filters.py): `tags=a,b` keeps items carrying ANY listed tag (OR of
+   * `tags__contains=[tag]`, exact match: tags are stored lowercased, the query is not lowercased). taiga-back has it in
+   * the `filter_backends` of epics, user stories and tasks alike: taiga/projects/{epics,userstories,tasks}/api.py.
+   */
   function hasTags(item: FakeItem, query: URLSearchParams): boolean {
     const wanted = query.get('tags');
     if (!wanted) return true;
-    return wanted.split(',').every((tag) => item.tags.includes(tag.trim().toLowerCase()));
+    return wanted.split(',').some((tag) => item.tags.includes(tag));
   }
 
   function queryNumber(query: URLSearchParams, name: string): number | undefined {
@@ -1214,12 +1208,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
 
     const itemPath = /^\/(epics|userstories|tasks)\/(\d+)$/.exec(path);
     if (itemPath && method === 'PATCH') {
-      const id = Number(itemPath[2]);
-      const [items, allowed] =
-        itemPath[1] === 'epics' ? [state.epics, EPIC_FIELDS] : itemPath[1] === 'userstories' ? [state.userStories, USER_STORY_FIELDS] : [state.tasks, TASK_FIELDS];
-      const item = (items as FakeItem[]).find((i) => i.id === id && visibleProject(i.project, userId));
+      const { itemType, fields } = ITEM_KINDS[itemPath[1] as ItemSegment];
+      const item = itemsOf(itemType).find((i) => i.id === Number(itemPath[2]) && visibleProject(i.project, userId));
       if (!item) throw notFound();
-      return { status: 200, body: patchItem(item, body, allowed, userId) };
+      return { status: 200, body: patchItem(item, body, fields, userId) };
     }
 
     const related = /^\/epics\/(\d+)\/related_userstories$/.exec(path);
@@ -1307,10 +1299,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
 
     if (path === '/epics') {
       if (method === 'GET') {
-        const projectId = query.has('project') ? Number(query.get('project')) : undefined;
+        const projectId = queryNumber(query, 'project');
         const epics = state.epics
-          .filter((e) => visibleProject(e.project, userId) && (projectId === undefined || e.project === projectId))
-          .map(epicJson);
+          .filter((e) => visibleProject(e.project, userId) && (projectId === undefined || e.project === projectId) && hasTags(e, query))
+          .map(itemJson);
         return paginate(req, query, epics);
       }
       if (method === 'POST') return createEpic(body, userId);
@@ -1379,8 +1371,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
 
   /** The epic, user story, task or wiki page an attachment hangs off. */
   function attachmentObject(type: FakeAttachmentObjectType, id: number): { project: number } | undefined {
-    const objects: { id: number; project: number }[] =
-      type === 'epics' ? state.epics : type === 'userstories' ? state.userStories : type === 'tasks' ? state.tasks : state.wikiPages;
+    const objects: { id: number; project: number }[] = type === 'wiki' ? state.wikiPages : itemsOf(ITEM_KINDS[type].itemType);
     return objects.find((o) => o.id === id);
   }
 

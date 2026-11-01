@@ -90,8 +90,8 @@ test('against a fake Taiga with the project seeded, the live smoke test passes a
   assert.equal(run.code, 0, run.output);
   assert.equal(summary(run.output, 'pass'), 1, run.output);
   assert.equal(summary(run.output, 'fail'), 0, run.output);
-  // The fake, like Taiga's documented API, has no tag filter on /epics.
-  assert.match(run.output, /epic tag filter: GET \/epics\?project=\d+&tags=src:smoke-[a-z0-9]+-epic returned 2 of 2 epics: ignored/);
+  // The fake, like taiga-back (TagsFilter in the epic list's filter_backends), filters /epics by tag.
+  assert.match(run.output, /epic tag filter: GET \/epics\?project=\d+&tags=src:smoke-[a-z0-9]+-epic returned 1 of 2 epics: applied server-side/);
 
   assert.deepEqual(
     fake.state.epics.map((e) => e.tags.filter((tag) => tag.startsWith('src:')).map((tag) => tag.replace(/^src:smoke-[a-z0-9]+-/, 'src:smoke-*-'))),

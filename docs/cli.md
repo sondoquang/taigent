@@ -393,25 +393,49 @@ dependency order (`context.loaded` holds the manifests loaded before it, `contex
 `npm test` (Node's built-in runner) and `npm run typecheck`. Tests only go through the CLI seam:
 `test/support/harness.ts` (`startHarness(t)`) spawns `bin/taigent.js` in a temp working directory against
 `test/support/fake-taiga.ts` (`startFakeTaiga()`), an in-process fake of the Taiga API that validates
-payloads like Taiga (and additionally rejects unknown fields). Extend the fake rather than mocking modules;
-`fake.intercept({ method, path, status, body, after?, times? })` injects canned failures, and
-`fake.onRequest({ method, path, run, times? })` runs a callback just before a request is handled (e.g.
-`fake.editItem(story, { subject })` to simulate a concurrent edit). The fake implements Taiga's OCC: PATCH needs
-`version`, and a stale version fails only when the same fields changed meanwhile. Seed data with `addEpic`,
-`addUserStory`, `addTask`, `addEpicRelatedUserStory`; assert on `fake.state.{epics,userStories,tasks,epicRelatedUserStories}`.
-Bootstrap fixtures: `fake.addUser`, `fake.addProject({ admins, is_private, modules, tagsColors })`,
-`fake.addCustomAttribute`, `fake.addMembership`, `fake.addWikiPage`; `fake.state.templates` holds `scrum` (id 1)
-and `kanban` (id 2) with Epics off; `fake.settings.projectSlugPrefix = true` mimics DEFAULT_PROJECT_SLUG_PREFIX.
-Upload fixtures: `fake.addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki", object_id, name,
-content })` and `fake.editWikiPage(page, { content })` (bumps `version` for OCC); assert on `fake.state.attachments`
-(with the stored `content` bytes). The fake parses `multipart/form-data` with Node's own parser (`Response#formData`),
-computes `size`/`sha1` from the bytes like taiga-back, rejects unknown form fields, and records the body of a multipart
-request as a `MultipartForm { fields, files }`. `fake.settings.maxBodyBytes = n` makes it answer any larger request body
-with nginx's HTML 413 page, like Taiga's reverse proxy (`client_max_body_size`).
-Custom attribute values: every epic/story/task gets an empty values object (version 1) on creation, served at
-`/{epics,userstories,tasks}/custom-attributes-values/{id}` (keys must be ids of the project's attributes of that type,
-PATCH replaces the object and needs its own `version`); `fake.editAttributeValues(itemType, itemId, values)` sets them
-like a user would; assert on `fake.state.customAttributeValues` (`{ itemType, item, version, attributes_values }`).
+payloads like Taiga (and additionally rejects unknown fields). Extend the fake rather than mocking modules.
+
+Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
+
+- `fake.url` (TAIGA_API_URL, includes `/api/v1`) and `fake.user` (`{ id, username, password, email }`, the account
+  `POST /auth` accepts; the harness logs in with it).
+- Seeding: `addEpic`, `addUserStory`, `addTask` (`{ project, subject, description?, tags? }`, plus `user_story?` for
+  tasks), `addEpicRelatedUserStory(epic, story)`; bootstrap fixtures `addUser`, `addProject({ slug, name?, members?,
+  admins?, is_private?, modules?, tagsColors? })`, `addCustomAttribute`, `addMembership`, `addWikiPage`; upload fixtures
+  `addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki", object_id, name, content })`.
+- Edits like a Taiga user (bump `version`, recorded for OCC): `editItem(item, changes)`, `editWikiPage(page, changes)`,
+  `editAttributeValues(itemType, itemId, values)`.
+- `fake.state`: what Taiga holds, the place to assert outcomes. `epics`, `userStories`, `tasks` (tags lowercased),
+  `epicRelatedUserStories` (`{ epic, user_story, order }`), `projects` (`modules`, `tagsColors`, `members`, `admins`),
+  `users`, `roles` (`{ id, project, name, slug }`), `memberships` (`{ project, role, user, email }`), `customAttributes`
+  (`{ itemType, project, name, description, type }`), `customAttributeValues` (`{ itemType, item, version,
+  attributes_values }`), `wikiPages` (`{ project, slug, content, version }`), `attachments` (with the stored `content`
+  bytes), `templates` (`scrum` id 1 and `kanban` id 2, Epics off).
+- `fake.requests`: every request received, in order, as `{ method, path, query, headers, body, at }`: `path` is below
+  `/api/v1`, `query` a `URLSearchParams`, `body` the parsed JSON (a `MultipartForm { fields, files }` for multipart
+  uploads; POST /auth bodies hold the password, never print them), `at` the `performance.now()` of arrival. Assert
+  outcomes on `fake.state`; use `fake.requests` only for what is a contract: the payload of a documented call (e.g.
+  PATCH carries `version`), "no write" / "no request" checks, and the auth and retry behaviour documented under
+  Environment (401 → `/auth/refresh` → new login order, at most 5 retries per 429, `Retry-After` waits via `at`).
+- Failure injection: `fake.intercept({ method, path, status, body?, bodyFrom?, headers?, after?, times? })` answers the
+  matching request(s) with a canned reply (`path` a string or RegExp below `/api/v1`; `bodyFrom(request)` builds the body
+  from the recorded request, e.g. to echo credentials; `headers` e.g. `retry-after`; `after` lets that many through
+  first; `times` default 1). `fake.onRequest({ method, path, run, times? })` runs a callback just before a request is
+  handled (e.g. `fake.editItem(story, { subject })` to simulate a concurrent edit).
+- Tokens: `fake.issueToken()` returns a valid access token without a login (for `TAIGA_TOKEN`);
+  `fake.expireTokens({ after?, refresh? })` expires all access tokens after `after` more authenticated requests (and
+  revokes refresh tokens with `refresh: true`); `fake.issuedTokens` lists every access and refresh token issued, for
+  leak checks.
+- `fake.settings`: `projectSlugPrefix = true` mimics DEFAULT_PROJECT_SLUG_PREFIX; `maxBodyBytes = n` answers any larger
+  request body with nginx's HTML 413 page, like Taiga's reverse proxy (`client_max_body_size`).
+
+Fidelity: the fake implements Taiga's OCC (PATCH needs `version`; a stale one fails only when the same fields changed
+meanwhile), 30-item pagination unless `x-disable-pagination`, taiga-back's `tags=a,b` filter on the epic, story and
+task lists (items with any listed tag, exact match; taigent itself does not use it and matches `src:` tags client-side),
+and the post-save empty custom attribute values object (version 1) of every epic/story/task, served at
+`/{epics,userstories,tasks}/custom-attributes-values/{id}` (keys must be ids of the project's attributes of that type;
+PATCH replaces the object and needs its own `version`). It parses `multipart/form-data` with Node's own parser
+(`Response#formData`), computes attachment `size`/`sha1` from the bytes like taiga-back and rejects unknown form fields.
 
 Live smoke test: `npm run test:live` runs `test/live/*.live.ts` against a real Taiga project. It is opt-in
 (`TAIGENT_LIVE_SMOKE=1`, target `TAIGENT_SMOKE_PROJECT`), never part of `npm test`, and only run by a person:
