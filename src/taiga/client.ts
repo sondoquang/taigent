@@ -16,6 +16,14 @@ export class TaigaError extends Error {
   }
 }
 
+/** A PATCH was refused because the item changed on Taiga since its `version` was read (OCC). */
+export class TaigaConflictError extends TaigaError {
+  constructor(message: string) {
+    super(message, 400);
+    this.name = 'TaigaConflictError';
+  }
+}
+
 /** Which secret Taiga rejected; lets the CLI name the variable to check. */
 export type TaigaCredentialKind = 'token' | 'password';
 
@@ -47,7 +55,8 @@ export interface TaigaProject {
   name: string;
 }
 
-export interface TaigaEpic {
+/** Common shape of epics, user stories and tasks. */
+export interface TaigaItem {
   id: number;
   ref: number;
   version: number;
@@ -58,12 +67,24 @@ export interface TaigaEpic {
   tags: string[];
 }
 
-export interface NewEpic {
+export interface TaigaTask extends TaigaItem {
+  /** Parent user story id, null for a task outside any story. */
+  userStory: number | null;
+}
+
+export interface NewItem {
   project: number;
   subject: string;
   description: string;
   tags: string[];
 }
+
+export interface NewTask extends NewItem {
+  user_story: number;
+}
+
+/** Manifest-managed fields an update may change; everything else on the item is left alone. */
+export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'>>;
 
 interface RequestOptions {
   query?: Record<string, string | number>;
@@ -91,19 +112,30 @@ function field<T>(raw: Record<string, unknown>, name: string, type: 'number' | '
   return value as T;
 }
 
-function parseEpic(raw: unknown): TaigaEpic {
-  if (!isRecord(raw)) throw new TaigaError('unexpected Taiga response: epic is not an object');
+function parseItem(raw: unknown, what: string): TaigaItem {
+  if (!isRecord(raw)) throw new TaigaError(`unexpected Taiga response: ${what} is not an object`);
   // Taiga returns tags as [name, color|null] pairs.
   const tags = Array.isArray(raw.tags) ? raw.tags.map((tag) => String(Array.isArray(tag) ? tag[0] : tag)) : [];
   return {
-    id: field(raw, 'id', 'number', 'epic'),
-    ref: field(raw, 'ref', 'number', 'epic'),
-    version: field(raw, 'version', 'number', 'epic'),
-    project: field(raw, 'project', 'number', 'epic'),
-    subject: field(raw, 'subject', 'string', 'epic'),
+    id: field(raw, 'id', 'number', what),
+    ref: field(raw, 'ref', 'number', what),
+    version: field(raw, 'version', 'number', what),
+    project: field(raw, 'project', 'number', what),
+    subject: field(raw, 'subject', 'string', what),
     description: typeof raw.description === 'string' ? raw.description : '',
     tags,
   };
+}
+
+function parseTask(raw: unknown): TaigaTask {
+  const task = parseItem(raw, 'task');
+  const userStory = isRecord(raw) && typeof raw.user_story === 'number' ? raw.user_story : null;
+  return { ...task, userStory };
+}
+
+function parseList<T>(raw: unknown, what: string, parse: (item: unknown) => T): T[] {
+  if (!Array.isArray(raw)) throw new TaigaError(`unexpected Taiga response: ${what} list is not an array`);
+  return raw.map(parse);
 }
 
 export class TaigaClient {
@@ -199,14 +231,68 @@ export class TaigaClient {
   }
 
   /** All epics of a project (Taiga's epic list has no documented tag filter, so filter client-side). */
-  async listEpics(projectId: number): Promise<TaigaEpic[]> {
+  async listEpics(projectId: number): Promise<TaigaItem[]> {
     const raw = await this.#request('GET', '/epics', { query: { project: projectId } });
-    if (!Array.isArray(raw)) throw new TaigaError('unexpected Taiga response: epic list is not an array');
-    return raw.map(parseEpic);
+    return parseList(raw, 'epic', (item) => parseItem(item, 'epic'));
   }
 
-  async createEpic(epic: NewEpic): Promise<TaigaEpic> {
-    return parseEpic(await this.#request('POST', '/epics', { body: epic }));
+  async createEpic(epic: NewItem): Promise<TaigaItem> {
+    return parseItem(await this.#request('POST', '/epics', { body: epic }), 'epic');
+  }
+
+  /** All user stories of a project (every `src:` tag is needed to find orphans, so no tag filter). */
+  async listUserStories(projectId: number): Promise<TaigaItem[]> {
+    const raw = await this.#request('GET', '/userstories', { query: { project: projectId } });
+    return parseList(raw, 'user story', (item) => parseItem(item, 'user story'));
+  }
+
+  async createUserStory(story: NewItem): Promise<TaigaItem> {
+    return parseItem(await this.#request('POST', '/userstories', { body: story }), 'user story');
+  }
+
+  /** All tasks of a project. */
+  async listTasks(projectId: number): Promise<TaigaTask[]> {
+    return parseList(await this.#request('GET', '/tasks', { query: { project: projectId } }), 'task', parseTask);
+  }
+
+  async createTask(task: NewTask): Promise<TaigaTask> {
+    return parseTask(await this.#request('POST', '/tasks', { body: task }));
+  }
+
+  /** Ids of the user stories linked to an epic (`GET /epics/{id}/related_userstories`). */
+  async listEpicUserStories(epicId: number): Promise<number[]> {
+    const raw = await this.#request('GET', `/epics/${epicId}/related_userstories`);
+    return parseList(raw, 'related user story', (link) => field<number>(isRecord(link) ? link : {}, 'user_story', 'number', 'related user story'));
+  }
+
+  /** Links a user story to an epic. The broken MCP `linkStoryToEpic` PATCHes the story instead. */
+  async linkEpicUserStory(epicId: number, userStoryId: number): Promise<void> {
+    await this.#request('POST', `/epics/${epicId}/related_userstories`, { body: { epic: epicId, user_story: userStoryId } });
+  }
+
+  async updateEpic(id: number, patch: ItemPatch, version: number): Promise<TaigaItem> {
+    return parseItem(await this.#patch(`/epics/${id}`, patch, version), 'epic');
+  }
+
+  async updateUserStory(id: number, patch: ItemPatch, version: number): Promise<TaigaItem> {
+    return parseItem(await this.#patch(`/userstories/${id}`, patch, version), 'user story');
+  }
+
+  async updateTask(id: number, patch: ItemPatch, version: number): Promise<TaigaTask> {
+    return parseTask(await this.#patch(`/tasks/${id}`, patch, version));
+  }
+
+  /** PATCH with the item's `version` (OCC); a stale version becomes a TaigaConflictError. */
+  async #patch(path: string, patch: ItemPatch, version: number): Promise<unknown> {
+    try {
+      return await this.#request('PATCH', path, { body: { ...patch, version } });
+    } catch (error) {
+      // taiga-back answers 400 {"version": "..."} for a stale or invalid version.
+      if (error instanceof TaigaError && error.status === 400 && /"version"\s*:/.test(error.message)) {
+        throw new TaigaConflictError(`version ${version} is stale: the item was changed on Taiga meanwhile`);
+      }
+      throw error;
+    }
   }
 
   /** One API call: renews the token and retries once on 401, backs off and retries on 429. */

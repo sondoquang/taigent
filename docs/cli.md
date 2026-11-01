@@ -44,7 +44,7 @@ One directory per Taiga project, named by its slug, committed to git:
 
 ```
 taiga/<slug>/
-  backlog.yaml   # desired epics (→ stories → tasks in later versions)
+  backlog.yaml   # desired epics → stories → tasks
   state.json     # written by apply: key → Taiga id/ref/version (commit it)
 ```
 
@@ -52,19 +52,46 @@ taiga/<slug>/
 
 ```yaml
 epics:
-  - key: AUTH            # required, unique, uppercase letters/digits/dashes
+  - key: AUTH            # required, unique across epics, stories and tasks; uppercase letters/digits/dashes
     subject: Authentication
     description: Users can sign in.   # optional
     tags: [type:feature, area:auth]   # optional
+    stories:                          # optional; each story is linked to this epic
+      - key: AUTH-LOGIN
+        subject: User can log in
+        description: As a user I want to log in.    # optional
+        acceptance_criteria:                         # optional
+          - Wrong password shows an error
+        spec: docs/specs/auth.md                     # optional link/path to the spec
+        tags: [type:feature]
+        tasks:                                       # optional; created under this story
+          - key: AUTH-LOGIN-API
+            subject: Login endpoint
+            description: POST /login returns a session.   # optional
+            tags: []                                      # optional
 ```
 
-Unknown fields are rejected.
+Unknown fields are rejected (there is no status, assignee, sprint or points field: those belong to the people
+doing the work). A story's Taiga description is rendered from a template:
+
+```
+<description>
+
+## Acceptance criteria
+
+- [ ] <criterion>
+
+Spec: <spec>
+```
+
+Empty parts are left out.
 
 ## Identity and state
 
 Every item created on Taiga gets the tag `src:<key>` (lowercase, because Taiga lowercases tags). That tag
-is the source of truth: plan/apply read the project's items back and match them by tag, so a deleted or
-stale `state.json` never causes duplicates. `state.json` is a cache, rewritten by every `apply --yes`:
+is the source of truth: plan/apply read the project's epics, stories and tasks back and match them by tag, so a
+deleted or stale `state.json` never causes duplicates. `state.json` is a cache, rewritten by every `apply --yes`
+(`type` is `epic`, `story` or `task`):
 
 ```json
 {
@@ -73,36 +100,63 @@ stale `state.json` never causes duplicates. `state.json` is a cache, rewritten b
 }
 ```
 
+## Reconciliation
+
+- **Create**: missing items, in dependency order: each epic, then each of its stories, the story's epic link,
+  and the story's tasks (created with `user_story` = the parent story).
+- **Link**: a story is linked to its epic with `POST /epics/{id}/related_userstories`, after
+  `GET /epics/{id}/related_userstories` shows the link is missing. Existing links are never removed.
+- **Update**: apply manages only `subject`, `description` and `tags`. When they differ from the manifest it PATCHes
+  them with the item's current `version` (OCC). Tags are only added: tags people put on Taiga stay, and removing
+  a tag from the manifest does not remove it from Taiga. Status, assignee, sprint, points and ordering are never
+  sent.
+- **Orphans**: items carrying a `src:` tag whose key is no longer in the manifest are listed by `plan` and never
+  deleted. They are not changes (they do not make `plan` exit 3).
+
 ## Commands
 
 Common options: `--project <slug>` (required), `--json` (machine-readable stdout), `--yes`, `-h/--help`.
 
-- `taigent plan --project <slug> [--json]`: reads Taiga, prints the operations `apply` would run. Never writes.
-- `taigent apply --project <slug> --yes [--json]`: runs the plan, creating missing items in order and writing
-  `state.json` after each created item (a failed run resumes where it stopped). Without `--yes` it prints the
-  plan, writes nothing (not even `state.json`) and exits 2 when there are changes.
+- `taigent plan --project <slug> [--json]`: reads Taiga, prints the operations `apply` would run and the
+  orphans. Never writes.
+- `taigent apply --project <slug> --yes [--json]`: runs the plan in order, writing `state.json` after each
+  write to Taiga (a failed run resumes where it stopped). It stops at the first error, naming the operation and
+  key. Without `--yes` it prints the plan, writes nothing (not even `state.json`) and exits 2 when there are
+  changes.
 
-`plan --json` prints a `Plan`:
+`plan --json` prints a `Plan`; operations are `create`, `update`, `link` or `skip`:
 
 ```json
 {
   "project": { "id": 7, "slug": "test" },
   "changes": true,
-  "summary": { "create": 1, "skip": 1 },
+  "summary": { "create": 2, "update": 1, "link": 1, "skip": 1 },
   "operations": [
-    { "action": "create", "type": "epic", "key": "AUTH",
-      "fields": { "subject": "Authentication", "description": "", "tags": ["type:feature", "src:auth"] } },
-    { "action": "skip", "type": "epic", "key": "BILLING", "id": 12, "ref": 3, "version": 1 }
-  ]
+    { "action": "skip", "type": "epic", "key": "AUTH", "id": 12, "ref": 3, "version": 1 },
+    { "action": "create", "type": "story", "key": "AUTH-LOGIN", "parent": "AUTH",
+      "fields": { "subject": "User can log in", "description": "…", "tags": ["type:feature", "src:auth-login"] } },
+    { "action": "link", "type": "story", "key": "AUTH-LOGIN", "epic": "AUTH" },
+    { "action": "create", "type": "task", "key": "AUTH-LOGIN-API", "parent": "AUTH-LOGIN",
+      "fields": { "subject": "Login endpoint", "description": "", "tags": ["src:auth-login-api"] } },
+    { "action": "update", "type": "story", "key": "AUTH-LOGOUT", "id": 15, "ref": 6, "version": 4,
+      "changes": { "subject": { "from": "Log out", "to": "User can log out" },
+                   "tags": { "from": ["src:auth-logout", "urgent"], "to": ["src:auth-logout", "urgent", "type:feature"] } } }
+  ],
+  "orphans": [ { "type": "task", "key": "AUTH-OLD", "id": 20, "ref": 9, "subject": "Old task" } ]
 }
 ```
 
-`apply --yes --json` prints an `ApplyReport`: `{ project, operations: [{ action, type, key, id, ref, result }],
-summary: { created, unchanged } }`.
+`create.parent` is the epic key (story) or story key (task). `update.changes` holds only the fields that differ.
+
+`apply --yes --json` prints an `ApplyReport`: `{ project, operations: [{ action, type, key, id, ref, epic?, result }],
+summary: { created, updated, linked, unchanged } }`; `result` is `created`, `updated`, `linked` or `unchanged`, and
+`epic` (the epic key) is set on `link` operations, whose `id`/`ref` are the story's.
 
 Errors print `taigent: <message>` on stderr; with `--json`, stdout also gets
-`{ "error": { "kind": "usage" | "validation" | "taiga", "message", "issues"?, "status"? } }`.
-Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1].key` / `key-unique`.
+`{ "error": { "kind": "usage" | "validation" | "taiga" | "conflict", "message", "issues"?, "status"?, "key"? } }`.
+Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1].stories[0].key` / `key-unique`.
+`conflict` means Taiga refused an update because the item changed on Taiga after apply read it (OCC); `key`
+names the item, nothing was overwritten, and re-running `plan` shows the new state.
 
 ## Exit codes
 
@@ -113,7 +167,7 @@ Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1]
 | 2 | Usage or configuration error: unknown command/flag, missing env var, `apply` with changes but no `--yes` |
 | 3 | `plan` found changes |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
-| 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project |
+| 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict |
 
 ## Code map
 
@@ -121,9 +175,9 @@ Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1]
 |---|---|---|
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`) |
 | Manifest | `src/manifest/` | `loadBacklog`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`), `TaigaError` |
-| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)`, `srcTag(key)` |
-| Executor | `src/executor.ts` | `executePlan(plan, client, statePath)` |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`), `TaigaError`, `TaigaConflictError` |
+| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `srcTag(key)` |
+| Executor | `src/executor.ts` | `executePlan(plan, client, statePath)`, `ApplyConflictError` (carries `key`) |
 
 ## Tests
 
@@ -131,4 +185,8 @@ Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1]
 `test/support/harness.ts` (`startHarness(t)`) spawns `bin/taigent.js` in a temp working directory against
 `test/support/fake-taiga.ts` (`startFakeTaiga()`), an in-process fake of the Taiga API that validates
 payloads like Taiga (and additionally rejects unknown fields). Extend the fake rather than mocking modules;
-`fake.intercept({ method, path, status, body, after?, times? })` injects canned failures.
+`fake.intercept({ method, path, status, body, after?, times? })` injects canned failures, and
+`fake.onRequest({ method, path, run, times? })` runs a callback just before a request is handled (e.g.
+`fake.editItem(story, { subject })` to simulate a concurrent edit). The fake implements Taiga's OCC: PATCH needs
+`version`, and a stale version fails only when the same fields changed meanwhile. Seed data with `addEpic`,
+`addUserStory`, `addTask`, `addEpicRelatedUserStory`; assert on `fake.state.{epics,userStories,tasks,epicRelatedUserStories}`.

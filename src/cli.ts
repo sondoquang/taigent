@@ -4,11 +4,11 @@ import { relative } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ExitCode } from './exit-codes.ts';
 import { errorMessage } from './guards.ts';
-import { executePlan, type ApplyReport } from './executor.ts';
+import { ApplyConflictError, executePlan, type ApplyReport } from './executor.ts';
 import { loadBacklog } from './manifest/backlog.ts';
 import { ManifestError } from './manifest/errors.ts';
 import { projectLayout } from './manifest/layout.ts';
-import { buildPlan, type Plan } from './planner.ts';
+import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
 import { TaigaAuthError, TaigaClient, TaigaError } from './taiga/client.ts';
 
 const USAGE = `Usage: taigent <command> --project <slug> [options]
@@ -81,6 +81,19 @@ function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
   return names.map((name) => env[name]!);
 }
 
+function formatOperation(op: Operation): string {
+  switch (op.action) {
+    case 'create':
+      return `  + create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}`;
+    case 'update':
+      return `  ~ update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}`;
+    case 'link':
+      return `  + link   story ${op.key} -> epic ${op.epic}`;
+    case 'skip':
+      return `    skip   ${op.type} ${op.key}  (#${op.ref}, id ${op.id}, unchanged)`;
+  }
+}
+
 /**
  * Connects to Taiga from the environment: TAIGA_TOKEN when set (username/password, if also set, are
  * the fallback when Taiga rejects it), else a TAIGA_USERNAME/TAIGA_PASSWORD login.
@@ -109,17 +122,18 @@ function retryUnitMs(env: NodeJS.ProcessEnv): number | undefined {
 
 function formatPlan(plan: Plan): string {
   const lines = [`Plan for project ${plan.project.slug} (id ${plan.project.id}):`];
-  for (const op of plan.operations) {
-    lines.push(
-      op.action === 'create'
-        ? `  + create epic ${op.key}  "${op.fields.subject}"`
-        : `    skip   epic ${op.key}  (#${op.ref}, id ${op.id}, unchanged)`,
-    );
-  }
+  lines.push(...plan.operations.map(formatOperation));
   if (plan.operations.length === 0) lines.push('  (manifest has no items)');
+  if (plan.orphans.length > 0) {
+    lines.push('Orphans (tagged src: on Taiga but not in the manifest; never deleted):');
+    for (const orphan of plan.orphans) {
+      lines.push(`  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`);
+    }
+  }
+  const { create, update, link, skip } = plan.summary;
   lines.push(
     plan.changes
-      ? `${plan.summary.create} to create, ${plan.summary.skip} unchanged.`
+      ? `${create} to create, ${update} to update, ${link} to link, ${skip} unchanged.`
       : 'No changes. Taiga matches the manifest.',
   );
   return `${lines.join('\n')}\n`;
@@ -128,9 +142,12 @@ function formatPlan(plan: Plan): string {
 function formatReport(report: ApplyReport): string {
   const lines = [`Applied to project ${report.project.slug} (id ${report.project.id}):`];
   for (const op of report.operations) {
-    if (op.result === 'created') lines.push(`  + created epic ${op.key}  #${op.ref} (id ${op.id})`);
+    if (op.result === 'created') lines.push(`  + created ${op.type} ${op.key}  #${op.ref} (id ${op.id})`);
+    if (op.result === 'updated') lines.push(`  ~ updated ${op.type} ${op.key}  #${op.ref} (id ${op.id})`);
+    if (op.result === 'linked') lines.push(`  + linked  story ${op.key} -> epic ${op.epic}`);
   }
-  lines.push(`${report.summary.created} created, ${report.summary.unchanged} unchanged.`);
+  const { created, updated, linked, unchanged } = report.summary;
+  lines.push(`${created} created, ${updated} updated, ${linked} linked, ${unchanged} unchanged.`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -139,8 +156,18 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
   const backlog = await loadBacklog(layout.backlog);
   const client = await connectTaiga(env);
   const project = await client.getProjectBySlug(options.project);
-  const epics = await client.listEpics(project.id);
-  const plan = buildPlan(backlog, { project: { id: project.id, slug: project.slug }, epics });
+  const [epics, stories, tasks] = await Promise.all([
+    client.listEpics(project.id),
+    client.listUserStories(project.id),
+    client.listTasks(project.id),
+  ]);
+  // Existing links only matter for manifest epics that have stories.
+  const epicTagsWithStories = new Set(backlog.epics.filter((epic) => epic.stories.length > 0).map((epic) => srcTag(epic.key)));
+  const epicStories = new Map<number, number[]>();
+  for (const epic of epics) {
+    if (epic.tags.some((tag) => epicTagsWithStories.has(tag))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
+  }
+  const plan = buildPlan(backlog, { project: { id: project.id, slug: project.slug }, epics, stories, tasks, epicStories });
 
   if (options.command === 'plan' || !options.yes) {
     process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatPlan(plan));
@@ -179,6 +206,9 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       // Report manifest files relative to the working directory, as the user wrote them.
       const relativeError = new ManifestError(error.issues.map((issue) => ({ ...issue, file: relative(cwd, issue.file) })));
       return fail(ExitCode.Validation, 'validation', relativeError, json, { issues: relativeError.issues });
+    }
+    if (error instanceof ApplyConflictError) {
+      return fail(ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key });
     }
     if (error instanceof TaigaAuthError) {
       const check = error.credential === 'token' ? 'TAIGA_TOKEN' : 'TAIGA_USERNAME and TAIGA_PASSWORD';

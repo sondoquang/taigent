@@ -59,3 +59,65 @@ test('fake Taiga requires a bearer token outside /auth', async (t) => {
   const response = await fetch(`${fake.url}/epics`, { headers: { 'x-disable-pagination': 'True' } });
   assert.equal(response.status, 401);
 });
+
+async function send(fake: FakeTaiga, token: string, method: string, path: string, body: unknown): Promise<{ status: number; body: unknown }> {
+  const response = await fetch(`${fake.url}${path}`, {
+    method,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+test('fake Taiga rejects the payload mistakes of the MCP batch tools (projectId, userStoryId, numeric points)', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const token = await login(fake);
+
+  const story = await send(fake, token, 'POST', '/userstories', { projectId: project.id, subject: 'S', points: 3 });
+  assert.equal(story.status, 400);
+  assert.deepEqual(Object.keys(story.body as object).sort(), ['points', 'project', 'projectId']);
+  const ok = await send(fake, token, 'POST', '/userstories', { project: project.id, subject: 'S', points: { '1': 2 } });
+  assert.equal(ok.status, 201);
+  const created = ok.body;
+  assert.ok(isRecord(created) && typeof created.id === 'number');
+  const storyId = created.id;
+
+  const task = await send(fake, token, 'POST', '/tasks', { project: project.id, userStoryId: storyId, subject: 'T' });
+  assert.equal(task.status, 400);
+  assert.deepEqual(Object.keys(task.body as object), ['userStoryId']);
+  const badParent = await send(fake, token, 'POST', '/tasks', { project: project.id, user_story: 999999, subject: 'T' });
+  assert.equal(badParent.status, 400);
+  assert.equal(fake.state.tasks.length, 0);
+});
+
+test('fake Taiga enforces OCC versions on PATCH and unique epic ↔ story links', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const token = await login(fake);
+  const epic = fake.addEpic({ project: project.id, subject: 'E' });
+  const story = fake.addUserStory({ project: project.id, subject: 'S' });
+
+  assert.deepEqual(await send(fake, token, 'PATCH', `/userstories/${story.id}`, { subject: 'No version' }), {
+    status: 400,
+    body: { version: 'The version parameter is not valid' },
+  });
+  fake.editItem(story, { subject: 'Edited' });
+  assert.deepEqual(await send(fake, token, 'PATCH', `/userstories/${story.id}`, { subject: 'Stale', version: 1 }), {
+    status: 400,
+    body: { version: "The version doesn't match with the current one" },
+  });
+  const merged = await send(fake, token, 'PATCH', `/userstories/${story.id}`, { description: 'Other field', version: 1 });
+  assert.equal(merged.status, 200, 'a stale version is accepted when other fields changed meanwhile');
+  assert.deepEqual([story.subject, story.description, story.version], ['Edited', 'Other field', 3]);
+
+  const link = { epic: epic.id, user_story: story.id };
+  assert.equal((await send(fake, token, 'POST', `/epics/${epic.id}/related_userstories`, link)).status, 201);
+  assert.deepEqual(await send(fake, token, 'POST', `/epics/${epic.id}/related_userstories`, link), {
+    status: 400,
+    body: { non_field_errors: ['The fields user_story, epic must make a unique set.'] },
+  });
+  assert.equal(fake.state.epicRelatedUserStories.length, 1);
+});
