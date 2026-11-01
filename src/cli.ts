@@ -41,8 +41,8 @@ Environment:
   TAIGENT_MANIFESTS_DIR            Manifests root (default: ./taiga)
   TAIGENT_RETRY_UNIT_MS            Milliseconds per second of 429 backoff (default: 1000)
 
-Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
-            3 plan/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
+Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes),
+            3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
 const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'skills'] as const;
 const SKILLS_ACTIONS = ['sync', 'check'] as const;

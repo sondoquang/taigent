@@ -144,9 +144,11 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
 
 ## Commands
 
-Common options: `--project <slug>` (required except for `validate`), `--json` (machine-readable stdout), `--yes`,
-`--dry-run`, `-h/--help`. `--dry-run` lists the operations a writing command (`bootstrap`, `apply`) would run and writes nothing, not even
-`state.json`; it exits 3 when there are changes, 0 otherwise (`apply --dry-run` is the same as `plan`).
+Common options: `--project <slug>` (required except for `validate` and `skills`), `--json` (machine-readable stdout),
+`--yes`, `--dry-run`, `-h/--help`. `--dry-run` lists the operations a writing command (`bootstrap`, `apply`, `upload`)
+would run and writes nothing, not even `state.json`; it exits 3 when there are changes, 0 otherwise (`apply --dry-run`
+is the same as `plan`). Without `--yes` or `--dry-run`, a writing command prints the same operations, writes nothing
+and exits 2 when there are changes.
 
 - `taigent validate [--project <slug>] [--json]`: checks every manifest present in `taiga/<slug>/` (all project
   directories without `--project`) against the schema and the conventions. Offline: needs no `TAIGA_*` variable
@@ -361,7 +363,7 @@ Codex's skill docs do not document `allowed-tools`; there, approvals come from `
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, `apply`/`bootstrap` with changes but no `--yes`, `skills` outside a repository root |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `skills` outside a repository root |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
