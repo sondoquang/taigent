@@ -1,0 +1,153 @@
+// CLI: argument parsing, wiring of Manifest → Taiga client → Planner → Executor, output and exit codes.
+
+import { parseArgs } from 'node:util';
+import { ExitCode } from './exit-codes.ts';
+import { executePlan, type ApplyReport } from './executor.ts';
+import { loadBacklog } from './manifest/backlog.ts';
+import { ManifestError } from './manifest/errors.ts';
+import { projectLayout } from './manifest/layout.ts';
+import { buildPlan, type Plan } from './planner.ts';
+import { TaigaClient, TaigaError } from './taiga/client.ts';
+
+const USAGE = `Usage: taigent <command> --project <slug> [options]
+
+Commands:
+  plan     Show what apply would change on Taiga (exit 3 when there are changes)
+  apply    Apply the manifest to Taiga (requires --yes)
+
+Options:
+  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/
+  --json            Machine-readable output on stdout
+  --yes             Confirm writes (apply)
+  -h, --help        Show this help
+
+Environment:
+  TAIGA_API_URL, TAIGA_USERNAME, TAIGA_PASSWORD   Taiga connection (URL includes /api/v1)
+  TAIGENT_MANIFESTS_DIR                           Manifests root (default: ./taiga)
+
+Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
+            3 plan has changes, 4 manifest invalid, 5 Taiga/network error`;
+
+const COMMANDS = ['plan', 'apply'] as const;
+type Command = (typeof COMMANDS)[number];
+
+/** Bad usage or configuration. Maps to ExitCode.Usage. */
+class UsageError extends Error {}
+
+const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
+interface Options {
+  command: Command;
+  project: string;
+  json: boolean;
+  yes: boolean;
+}
+
+function parseOptions(argv: string[]): Options | 'help' {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      options: {
+        project: { type: 'string' },
+        json: { type: 'boolean', default: false },
+        yes: { type: 'boolean', default: false },
+        help: { type: 'boolean', short: 'h', default: false },
+      },
+    });
+  } catch (error) {
+    throw new UsageError((error as Error).message);
+  }
+  const { values, positionals } = parsed;
+  if (values.help) return 'help';
+  const [command, ...extra] = positionals;
+  if (!command) throw new UsageError('missing command');
+  if (!COMMANDS.includes(command as Command)) throw new UsageError(`unknown command "${command}"`);
+  if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+  if (!values.project) throw new UsageError('--project <slug> is required');
+  if (!SLUG_PATTERN.test(values.project)) throw new UsageError(`invalid project slug "${values.project}"`);
+  return { command: command as Command, project: values.project, json: values.json, yes: values.yes };
+}
+
+function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
+  const missing = names.filter((name) => !env[name]);
+  if (missing.length > 0) throw new UsageError(`missing environment variable(s): ${missing.join(', ')}`);
+  return names.map((name) => env[name]!);
+}
+
+function formatPlan(plan: Plan): string {
+  const lines = [`Plan for project ${plan.project.slug} (id ${plan.project.id}):`];
+  for (const op of plan.operations) {
+    lines.push(
+      op.action === 'create'
+        ? `  + create epic ${op.key}  "${op.fields.subject}"`
+        : `    skip   epic ${op.key}  (#${op.ref}, id ${op.id}, unchanged)`,
+    );
+  }
+  if (plan.operations.length === 0) lines.push('  (manifest has no items)');
+  lines.push(
+    plan.changes
+      ? `${plan.summary.create} to create, ${plan.summary.skip} unchanged.`
+      : 'No changes. Taiga matches the manifest.',
+  );
+  return `${lines.join('\n')}\n`;
+}
+
+function formatReport(report: ApplyReport): string {
+  const lines = [`Applied to project ${report.project.slug} (id ${report.project.id}):`];
+  for (const op of report.operations) {
+    if (op.result === 'created') lines.push(`  + created epic ${op.key}  #${op.ref} (id ${op.id})`);
+  }
+  lines.push(`${report.summary.created} created, ${report.summary.unchanged} unchanged.`);
+  return `${lines.join('\n')}\n`;
+}
+
+async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
+  const layout = projectLayout(options.project, env, cwd);
+  const backlog = await loadBacklog(layout.backlog);
+  const [apiUrl, username, password] = requireEnv(env, ['TAIGA_API_URL', 'TAIGA_USERNAME', 'TAIGA_PASSWORD']);
+  const client = await TaigaClient.login({ apiUrl: apiUrl!, username: username!, password: password! });
+  const project = await client.getProjectBySlug(options.project);
+  const epics = await client.listEpics(project.id);
+  const plan = buildPlan(backlog, { project: { id: project.id, slug: project.slug }, epics });
+
+  if (options.command === 'plan' || !options.yes) {
+    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatPlan(plan));
+    if (!plan.changes) return ExitCode.Ok;
+    if (options.command === 'plan') return ExitCode.Changes;
+    throw new UsageError('refusing to apply without --yes; review the plan above, then re-run with --yes');
+  }
+
+  const report = await executePlan(plan, client, layout.state);
+  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatReport(report));
+  return ExitCode.Ok;
+}
+
+function fail(code: ExitCode, kind: string, error: Error, json: boolean, extra: Record<string, unknown> = {}): number {
+  process.stderr.write(`taigent: ${error.message}\n`);
+  if (json) process.stdout.write(`${JSON.stringify({ error: { kind, message: error.message, ...extra } }, null, 2)}\n`);
+  return code;
+}
+
+/** Runs the CLI and returns the process exit code. */
+export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): Promise<number> {
+  const json = argv.includes('--json');
+  try {
+    const options = parseOptions(argv);
+    if (options === 'help') {
+      process.stdout.write(`${USAGE}\n`);
+      return ExitCode.Ok;
+    }
+    return await run(options, env, cwd);
+  } catch (error) {
+    if (error instanceof UsageError) {
+      process.stderr.write(json ? '' : `${USAGE}\n\n`);
+      return fail(ExitCode.Usage, 'usage', error, json);
+    }
+    if (error instanceof ManifestError) return fail(ExitCode.Validation, 'validation', error, json, { issues: error.issues });
+    if (error instanceof TaigaError) return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
+    process.stderr.write(`taigent: internal error: ${(error as Error).stack ?? String(error)}\n`);
+    return ExitCode.Internal;
+  }
+}
