@@ -8,10 +8,14 @@ import { fileURLToPath } from 'node:url';
 
 // Headless wrapper: tools/taiga/run-skill.ps1 and run-skill.sh build one `claude -p` / `codex exec` command from
 // the shared allowlist (tools/taiga/allowlist.txt). Tests only use `--dry-run`, which prints the command (a JSON
-// array of arguments) instead of launching an agent.
+// array of arguments) instead of launching an agent. Codex's shell parity lives in .codex/rules/taigent.rules
+// (execpolicy) and .codex/hooks/taigent-shell-guard.mjs (PreToolUse hook), both checked here against the allowlist.
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const ALLOWLIST = join(REPO_ROOT, 'tools/taiga/allowlist.txt');
+const CODEX_RULES = join(REPO_ROOT, '.codex/rules/taigent.rules');
+const SHELL_GUARD = '.codex/hooks/taigent-shell-guard.mjs';
+const GUARD_HOOK = `hooks.PreToolUse=[{matcher='^Bash$',hooks=[{type='command',command='node ${SHELL_GUARD}',timeout=30}]}]`;
 
 /** Taiga MCP tools that only read (taiga-mcp-server@1.9.20). */
 const MCP_READ_TOOLS = [
@@ -60,6 +64,72 @@ test('the headless allowlist pre-approves Taiga MCP read tools and taigent comma
     ...TAIGENT_COMMANDS.map((command) => `Bash(npx taigent ${command} *)`),
     ...TAIGENT_COMMANDS.map((command) => `PowerShell(npx taigent ${command} *)`),
   ]);
+});
+
+test('the Codex execpolicy rule allows exactly the taigent commands of the allowlist', async () => {
+  const rules = await readFile(CODEX_RULES, 'utf8');
+  const patterns = [...rules.matchAll(/^\s*pattern = (.+),$/gm)].map((match) => JSON.parse(match[1]!) as unknown);
+  const commands = (await readAllowlist()).flatMap((rule) => /^(?:Bash|PowerShell)\(npx taigent (\w+) \*\)$/.exec(rule)?.[1] ?? []);
+
+  assert.deepEqual(patterns, [['npx', 'taigent', [...new Set(commands)]]]);
+  assert.equal([...rules.matchAll(/prefix_rule\(/g)].length, 1, 'one prefix_rule only');
+  assert.match(rules, /decision = "allow"/);
+});
+
+async function runGuard(stdin: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const child = spawn(process.execPath, [join(REPO_ROOT, SHELL_GUARD)], { cwd: REPO_ROOT, stdio: ['pipe', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+  child.stdin.end(stdin);
+  const [code] = (await once(child, 'close')) as [number | null];
+  return { code, stdout, stderr };
+}
+
+const hookInput = (command: unknown): string =>
+  JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: REPO_ROOT });
+
+test('the Codex shell guard lets through the allowlist taigent commands, run on their own', async () => {
+  for (const command of [
+    ...TAIGENT_COMMANDS.map((name) => `npx taigent ${name} --project vigo-auth`),
+    'npx taigent apply --project vigo-auth --yes',
+    '  npx  taigent plan --project "vigo auth" --json ',
+    'npx taigent validate',
+  ]) {
+    const result = await runGuard(hookInput(command));
+    assert.deepEqual(result, { code: 0, stdout: '', stderr: '' }, command);
+  }
+});
+
+test('the Codex shell guard blocks every other command (exit 2 with the reason on stderr)', async () => {
+  for (const command of [
+    'npm test',
+    'npx taigent skills check',
+    'npx -y taigent plan --project vigo-auth',
+    'npx taigentx plan',
+    'echo npx taigent plan',
+    'npx taigent plan --project vigo-auth && rm -rf ~',
+    'npx taigent plan --project vigo-auth; Remove-Item -Recurse .',
+    'npx taigent plan --project vigo-auth | tee out.txt',
+    'npx taigent plan --project vigo-auth > out.txt',
+    'npx taigent plan --project $(whoami)',
+    'npx taigent plan --project `whoami`',
+    'npx taigent plan --project $env:TAIGA_PASSWORD',
+    'npx taigent plan --project vigo-auth\nrm -rf ~',
+    'npx taigent upload --project vigo-auth docs/*',
+    '',
+  ]) {
+    const result = await runGuard(hookInput(command));
+    assert.equal(result.code, 2, JSON.stringify(command));
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /^Blocked: headless runs allow only these commands, each run on its own: `npx taigent validate \.\.\.`, `npx taigent plan \.\.\.`/);
+  }
+  for (const stdin of [hookInput(['npx', 'taigent', 'plan']), JSON.stringify({ tool_input: {} }), 'not json']) {
+    const result = await runGuard(stdin);
+    assert.equal(result.code, 2, stdin);
+    assert.match(result.stderr, /^Blocked: /);
+  }
 });
 
 interface Shell {
@@ -120,12 +190,17 @@ for (const shell of SHELLS) {
     ]);
   });
 
-  test(`${shell.name}: codex exec mentions the skill, writes only the workspace and exposes only the MCP read tools`, { skip }, async () => {
+  // codex exec runs with approval policy `never`: the hook blocks non-allowlist shell commands, the execpolicy rule
+  // runs the taigent ones outside the sandbox, and approvals_reviewer/features.hooks are pinned against personal config.
+  test(`${shell.name}: codex exec mentions the skill, limits the shell to taigent and exposes only the MCP read tools`, { skip }, async () => {
     const command = await dryRun(shell, ['codex', 'taiga-plan-backlog', 'docs/specs/auth.md']);
     const readTools = (await readAllowlist()).filter((rule) => rule.startsWith('mcp__taiga__')).map((rule) => `'${rule.slice('mcp__taiga__'.length)}'`);
 
     assert.deepEqual(command, [
-      'codex', 'exec', '--sandbox', 'workspace-write', '--json',
+      'codex', 'exec', '--sandbox', 'workspace-write', '--dangerously-bypass-hook-trust', '--json',
+      '-c', `approvals_reviewer='user'`,
+      '-c', 'features.hooks=true',
+      '-c', GUARD_HOOK,
       '-c', `mcp_servers.taiga.enabled_tools=[${readTools.join(',')}]`,
       '-c', `mcp_servers.taiga.default_tools_approval_mode='approve'`,
       '$taiga-plan-backlog docs/specs/auth.md',

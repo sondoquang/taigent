@@ -195,13 +195,13 @@ test('an attachment with the same name, size and sha1 is skipped; a changed file
   const upload = await h.taigent(['upload', '--project', SLUG, '--yes']);
   assert.equal(upload.code, 0, upload.stderr);
   assert.match(upload.stdout, new RegExp(`login-flow\\.pdf -> story AUTH-LOGIN .*previous attachment \\(id ${old.id}\\) stays on Taiga`));
+  const [kept, added] = h.fake.state.attachments;
+  assert.equal(h.fake.state.attachments.length, 2);
+  assert.deepEqual({ id: kept!.id, content: kept!.content }, { id: old.id, content: PDF }, 'the old attachment stays');
   assert.deepEqual(
-    h.fake.state.attachments.map((a) => ({ id: a.id, content: a.content })),
-    [
-      { id: old.id, content: PDF },
-      { id: h.fake.state.attachments[1]!.id, content: changed },
-    ],
-    'the old attachment stays, the new one is added',
+    { name: added!.name, objectType: added!.objectType, object_id: added!.object_id, content: added!.content },
+    { name: 'login-flow.pdf', objectType: 'userstories', object_id: story.id, content: changed },
+    'the new version is added to the same story',
   );
 
   const rerun = await h.taigent(['upload', '--project', SLUG, '--dry-run']);
@@ -289,7 +289,8 @@ test('an upload interrupted by an expired token is sent again in full after the 
   const result = await h.taigent(['upload', '--project', SLUG, '--yes']);
 
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(h.fake.requests.filter((r) => r.method === 'POST' && r.path === '/userstories/attachments').length, 2);
+  // The first attempt got 401; the documented renewal (docs/cli.md §Environment) ran before the retry.
+  assert.ok(h.fake.requests.some((r) => r.path === '/auth/refresh'));
   assert.deepEqual(
     h.fake.state.attachments.map((a) => ({ object_id: a.object_id, content: a.content })),
     [{ object_id: story.id, content: PDF }],

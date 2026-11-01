@@ -63,7 +63,7 @@ cr=$(printf '\r')
 if [ "$agent" = claude ]; then
   set -- claude -p "/$request" --output-format "$format" --permission-mode acceptEdits --allowedTools
 else
-  set -- codex exec --sandbox workspace-write
+  set -- codex exec --sandbox workspace-write --dangerously-bypass-hook-trust
   [ "$format" = json ] && set -- "$@" --json
   tools=
 fi
@@ -78,8 +78,12 @@ while IFS= read -r rule || [ -n "$rule" ]; do
   fi
 done <"$root/tools/taiga/allowlist.txt"
 
+# Shell parity with Claude (docs/headless.md): the PreToolUse hook blocks every shell command but the allowlist's
+# taigent commands, which .codex/rules/taigent.rules runs outside the sandbox (network to reach Taiga).
 if [ "$agent" = codex ]; then
-  set -- "$@" -c "mcp_servers.taiga.enabled_tools=[$tools]" -c "mcp_servers.taiga.default_tools_approval_mode='approve'" "\$$request"
+  set -- "$@" -c "approvals_reviewer='user'" -c "features.hooks=true" \
+    -c "hooks.PreToolUse=[{matcher='^Bash\$',hooks=[{type='command',command='node .codex/hooks/taigent-shell-guard.mjs',timeout=30}]}]" \
+    -c "mcp_servers.taiga.enabled_tools=[$tools]" -c "mcp_servers.taiga.default_tools_approval_mode='approve'" "\$$request"
 fi
 
 if [ "$dry_run" = true ]; then

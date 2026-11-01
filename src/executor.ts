@@ -1,12 +1,12 @@
 // Executor: runs a plan through the Taiga client in dependency order and records every item in the
 // state file, writing it after each successful write to Taiga so a failed run can be resumed.
 
+import type { ItemType } from './items.ts';
 import type { AttributeValue } from './manifest/backlog.ts';
-import { readState, writeState, type ItemType, type StateFile } from './manifest/state.ts';
-import { ATTRIBUTE_ITEM_TYPE, type Operation, type Plan, type PlanProject, type RemoteState } from './planner.ts';
+import { readState, writeState, type StateFile } from './manifest/state.ts';
+import { RESULT, tally, type Result } from './operations.ts';
+import { PLAN_ACTIONS, type Operation, type Plan, type PlanProject, type RemoteState } from './planner.ts';
 import { TaigaConflictError, TaigaError, type ItemPatch, type TaigaClient, type TaigaItem } from './taiga/client.ts';
-
-export type OperationResult = 'created' | 'updated' | 'linked' | 'unchanged';
 
 export interface AppliedOperation {
   action: Operation['action'];
@@ -16,23 +16,18 @@ export interface AppliedOperation {
   ref: number;
   /** For `link`: key of the epic the story was linked to. */
   epic?: string;
-  result: OperationResult;
+  result: Result;
 }
 
 export interface ApplyReport {
   project: PlanProject;
   operations: AppliedOperation[];
-  summary: Record<OperationResult, number>;
+  summary: Record<Result, number>;
 }
 
-/** An update refused by Taiga's OCC check: the item changed on Taiga after the plan read it. */
-export class ApplyConflictError extends TaigaConflictError {
-  readonly key: string;
-
-  constructor(key: string, message: string) {
-    super(message);
-    this.key = key;
-  }
+/** Human-readable description of an applied operation, for the text form of the report. */
+export function describeAppliedOperation(op: AppliedOperation): string {
+  return op.action === 'link' ? `story ${op.key} -> epic ${op.epic}` : `${op.type} ${op.key}  #${op.ref} (id ${op.id})`;
 }
 
 /** Id of an item recorded earlier in this run (parents always precede their children in a plan). */
@@ -44,19 +39,19 @@ function recordedId(state: StateFile, key: string): number {
 
 function create(op: Extract<Operation, { action: 'create' }>, plan: Plan, state: StateFile, client: TaigaClient): Promise<TaigaItem> {
   const item = { project: plan.project.id, ...op.fields };
-  if (op.type === 'epic') return client.createEpic(item);
-  if (op.type === 'story') return client.createUserStory(item);
-  return client.createTask({ ...item, user_story: recordedId(state, op.parent!) });
+  return client.createItem(op.type, op.type === 'task' ? { ...item, user_story: recordedId(state, op.parent!) } : item);
 }
 
-/** PATCHes the changed item fields; an update of custom attribute values alone leaves the item untouched. */
-async function update(op: Extract<Operation, { action: 'update' }>, client: TaigaClient): Promise<Pick<TaigaItem, 'id' | 'ref' | 'version'>> {
-  const { custom_attributes: _attributes, ...fields } = op.changes;
-  if (Object.keys(fields).length === 0) return op;
+/**
+ * PATCHes the changed item fields (a moved task: `user_story` = its manifest parent, recorded earlier in the run);
+ * an update of custom attribute values alone leaves the item untouched.
+ */
+async function update(op: Extract<Operation, { action: 'update' }>, state: StateFile, client: TaigaClient): Promise<Pick<TaigaItem, 'id' | 'ref' | 'version'>> {
+  const { custom_attributes: _attributes, parent, ...fields } = op.changes;
   const patch: ItemPatch = Object.fromEntries(Object.entries(fields).map(([field, change]) => [field, change.to]));
-  if (op.type === 'epic') return client.updateEpic(op.id, patch, op.version);
-  if (op.type === 'story') return client.updateUserStory(op.id, patch, op.version);
-  return client.updateTask(op.id, patch, op.version);
+  if (parent) patch.user_story = recordedId(state, parent.to);
+  if (Object.keys(patch).length === 0) return op;
+  return client.updateItem(op.type, op.id, patch, op.version);
 }
 
 /**
@@ -71,58 +66,55 @@ async function writeAttributes(
   attributes: RemoteState['customAttributes'],
   client: TaigaClient,
 ): Promise<void> {
-  const itemType = ATTRIBUTE_ITEM_TYPE[type];
-  const current = await client.getAttributeValues(itemType, itemId);
+  const current = await client.getAttributeValues(type, itemId);
   const merged = { ...current.values };
   for (const [name, value] of Object.entries(values)) {
-    const attribute = attributes[itemType].find((a) => a.name === name);
+    const attribute = attributes[type].find((a) => a.name === name);
     if (!attribute) throw new Error(`executor: custom attribute "${name}" was not planned for ${type}s`);
     merged[String(attribute.id)] = value;
   }
-  await client.updateAttributeValues(itemType, itemId, merged, version ?? current.version);
+  await client.updateAttributeValues(type, itemId, merged, version ?? current.version);
 }
 
 /** `attributes`: the project's custom attributes, to resolve the attribute names of the plan to ids. */
 export async function executePlan(plan: Plan, client: TaigaClient, statePath: string, attributes: RemoteState['customAttributes']): Promise<ApplyReport> {
   const state = await readState(statePath, plan.project);
   const operations: AppliedOperation[] = [];
-  const summary: Record<OperationResult, number> = { created: 0, updated: 0, linked: 0, unchanged: 0 };
 
   for (const op of plan.operations) {
     let applied: AppliedOperation;
     if (op.action === 'skip') {
       state.items[op.key] = { type: op.type, id: op.id, ref: op.ref, version: op.version };
-      applied = { action: op.action, type: op.type, key: op.key, id: op.id, ref: op.ref, result: 'unchanged' };
+      applied = { action: op.action, type: op.type, key: op.key, id: op.id, ref: op.ref, result: RESULT[op.action] };
     } else {
       try {
         if (op.action === 'link') {
           const story = state.items[op.key]!;
           await client.linkEpicUserStory(recordedId(state, op.epic), story.id);
-          applied = { action: op.action, type: op.type, key: op.key, id: story.id, ref: story.ref, epic: op.epic, result: 'linked' };
+          applied = { action: op.action, type: op.type, key: op.key, id: story.id, ref: story.ref, epic: op.epic, result: RESULT[op.action] };
         } else {
-          const item = op.action === 'create' ? await create(op, plan, state, client) : await update(op, client);
+          const item = op.action === 'create' ? await create(op, plan, state, client) : await update(op, state, client);
           state.items[op.key] = { type: op.type, id: item.id, ref: item.ref, version: item.version };
           const values = op.action === 'create' ? op.custom_attributes : op.changes.custom_attributes?.to;
           const valuesVersion = op.action === 'update' ? op.changes.custom_attributes?.version : undefined;
           if (values) await writeAttributes(op.type, item.id, values, valuesVersion, attributes, client);
-          applied = { action: op.action, type: op.type, key: op.key, id: item.id, ref: item.ref, result: op.action === 'create' ? 'created' : 'updated' };
+          applied = { action: op.action, type: op.type, key: op.key, id: item.id, ref: item.ref, result: RESULT[op.action] };
         }
       } catch (error) {
         if (!(error instanceof TaigaError)) throw error;
         await writeState(statePath, state);
         const what = op.action === 'link' ? `link story ${op.key} to epic ${op.epic}` : `${op.action} ${op.type} ${op.key}`;
         if (error instanceof TaigaConflictError) {
-          throw new ApplyConflictError(op.key, `${what}: version conflict, ${op.key} was changed on Taiga by someone else after it was read; nothing was overwritten. Re-run plan to review.`);
+          throw new TaigaConflictError(`${what}: version conflict, ${op.key} was changed on Taiga by someone else after it was read; nothing was overwritten. Re-run plan to review.`, op.key);
         }
         throw new TaigaError(`${what} failed: ${error.message}`, error.status);
       }
       await writeState(statePath, state);
     }
     operations.push(applied);
-    summary[applied.result] += 1;
   }
 
   // Final write also refreshes the cache when nothing was created (e.g. the state file had been deleted).
   await writeState(statePath, state);
-  return { project: plan.project, operations, summary };
+  return { project: plan.project, operations, summary: tally(PLAN_ACTIONS, operations) };
 }

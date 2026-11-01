@@ -2,19 +2,20 @@
 
 import { relative } from 'node:path';
 import { parseArgs } from 'node:util';
+import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { ExitCode } from './exit-codes.ts';
+import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
-import { describeOperation, executeBootstrap, findTemplate, planBootstrap, type BootstrapPlan, type BootstrapReport } from './bootstrap.ts';
-import { ApplyConflictError, executePlan, type ApplyReport } from './executor.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
-import { WIKI_HOME_SLUG } from './manifest/project.ts';
-import { readSavedProject, type ItemType } from './manifest/state.ts';
-import { ATTRIBUTE_ITEM_TYPE, buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
+import type { Action, PlanSummary, Result } from './operations.ts';
+import { buildPlan, describePlanOperation, type Plan } from './planner.ts';
+import { readBacklogRemote } from './remote.ts';
+import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
-import { TaigaAuthError, TaigaClient, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
-import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError, type UploadPlan, type UploadReport } from './upload.ts';
+import { TaigaAuthError, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
+import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
@@ -41,8 +42,8 @@ Environment:
   TAIGENT_MANIFESTS_DIR            Manifests root (default: ./taiga)
   TAIGENT_RETRY_UNIT_MS            Milliseconds per second of 429 backoff (default: 1000)
 
-Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
-            3 plan/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
+Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes),
+            3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
 const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'skills'] as const;
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
@@ -63,6 +64,23 @@ interface Options {
   json: boolean;
   yes: boolean;
   dryRun: boolean;
+}
+
+/** One CLI run: its options, environment, working directory, and the secrets none of its output may show. */
+interface Run {
+  options: Options;
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+  secrets: Secrets;
+}
+
+/** Every write to stdout goes through here (and every write to stderr through `printError`), redacted. */
+function print(run: Run, text: string): void {
+  process.stdout.write(run.secrets.redact(text));
+}
+
+function printError(secrets: Secrets, text: string): void {
+  process.stderr.write(secrets.redact(text));
 }
 
 function parseOptions(argv: string[]): Options | 'help' {
@@ -115,44 +133,39 @@ function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
   return names.map((name) => env[name]!);
 }
 
-/** ` Name: from -> to; …` for the attribute values an operation sets. */
-function formatAttributes(from: Record<string, unknown>, to: Record<string, unknown>): string {
-  return Object.entries(to)
-    .map(([name, value]) => `${name}: ${name in from ? `${JSON.stringify(from[name])} -> ` : ''}${JSON.stringify(value)}`)
-    .join('; ');
-}
-
-function formatOperation(op: Operation): string {
-  switch (op.action) {
-    case 'create': {
-      const attributes = op.custom_attributes ? `  [custom attributes ${formatAttributes({}, op.custom_attributes)}]` : '';
-      return `  + create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}${attributes}`;
-    }
-    case 'update': {
-      const changed = op.changes.custom_attributes;
-      const attributes = changed ? `  [custom attributes ${formatAttributes(changed.from, changed.to)}]` : '';
-      return `  ~ update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${Object.keys(op.changes).join(', ')}${attributes}`;
-    }
-    case 'link':
-      return `  + link   story ${op.key} -> epic ${op.epic}`;
-    case 'skip':
-      return `    skip   ${op.type} ${op.key}  (#${op.ref}, id ${op.id}, unchanged)`;
+/**
+ * The secrets of the environment: TAIGA_PASSWORD, TAIGA_TOKEN and the password of a `user:password@` in TAIGA_API_URL
+ * (raw and decoded). The client adds the tokens it obtains.
+ */
+function environmentSecrets(env: NodeJS.ProcessEnv): Secrets {
+  const secrets = new Secrets();
+  secrets.add(env.TAIGA_PASSWORD);
+  secrets.add(env.TAIGA_TOKEN);
+  const url = env.TAIGA_API_URL && URL.canParse(env.TAIGA_API_URL) ? new URL(env.TAIGA_API_URL) : undefined;
+  if (url?.password) {
+    secrets.add(url.password);
+    secrets.add(decodeURIComponent(url.password));
   }
+  return secrets;
 }
 
 /**
  * Connects to Taiga from the environment: TAIGA_TOKEN when set (username/password, if also set, are
  * the fallback when Taiga rejects it), else a TAIGA_USERNAME/TAIGA_PASSWORD login.
  */
-async function connectTaiga(env: NodeJS.ProcessEnv): Promise<TaigaClient> {
+async function connectTaiga({ env, secrets }: Run): Promise<TaigaClient> {
   const [apiUrl] = requireEnv(env, ['TAIGA_API_URL']);
+  const url = URL.canParse(apiUrl!) ? new URL(apiUrl!) : undefined;
+  if (url?.username || url?.password) {
+    throw new UsageError('TAIGA_API_URL must not contain credentials (user:password@); set TAIGA_USERNAME and TAIGA_PASSWORD (or TAIGA_TOKEN) instead');
+  }
   const token = env.TAIGA_TOKEN || undefined;
   const missing = ['TAIGA_USERNAME', 'TAIGA_PASSWORD'].filter((name) => !env[name]);
   if (!token && missing.length > 0) {
     throw new UsageError(`missing environment variable(s): ${missing.join(', ')} (or set TAIGA_TOKEN instead)`);
   }
   const credentials = missing.length === 0 ? { username: env.TAIGA_USERNAME!, password: env.TAIGA_PASSWORD! } : undefined;
-  return TaigaClient.connect({ apiUrl: apiUrl!, token, credentials, retryUnitMs: retryUnitMs(env) });
+  return TaigaClient.connect({ apiUrl: apiUrl!, token, credentials, retryUnitMs: retryUnitMs(env), secrets });
 }
 
 /** TAIGENT_RETRY_UNIT_MS: milliseconds per second of 429 backoff (default 1000). */
@@ -166,39 +179,76 @@ function retryUnitMs(env: NodeJS.ProcessEnv): number | undefined {
   return value;
 }
 
-function formatPlan(plan: Plan): string {
-  const lines = [`Plan for project ${plan.project.slug} (id ${plan.project.id}):`];
-  lines.push(...plan.operations.map(formatOperation));
-  if (plan.operations.length === 0) lines.push('  (manifest has no items)');
-  if (plan.orphans.length > 0) {
-    lines.push('Orphans (tagged src: on Taiga but not in the manifest; never deleted):');
-    for (const orphan of plan.orphans) {
-      lines.push(`  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`);
-    }
-  }
-  const { create, update, link, skip } = plan.summary;
-  lines.push(
-    plan.changes
-      ? `${create} to create, ${update} to update, ${link} to link, ${skip} unchanged.`
-      : 'No changes. Taiga matches the manifest.',
-  );
+const MARKER: Record<Action, string> = { create: '  + ', update: '  ~ ', link: '  + ', skip: '    skip ' };
+
+/** Text form of a plan: a title, one line per operation, `extra` lines (e.g. orphans), then the counts. */
+function formatPlanText<A extends Action, O extends { action: A }>(
+  title: string,
+  plan: PlanSummary<A> & { operations: O[] },
+  describe: (op: O) => string,
+  texts: { empty: string; matches: string; extra?: string[] },
+): string {
+  const lines = [title, ...plan.operations.map((op) => `${MARKER[op.action]}${describe(op)}`)];
+  if (plan.operations.length === 0) lines.push(`  (${texts.empty})`);
+  lines.push(...(texts.extra ?? []));
+  const counts = Object.entries<number>(plan.summary).map(([action, n]) => `${n} ${action === 'skip' ? 'unchanged' : `to ${action}`}`);
+  lines.push(plan.changes ? `${counts.join(', ')}.` : `No changes. Taiga matches ${texts.matches}.`);
   return `${lines.join('\n')}\n`;
 }
 
-function formatReport(report: ApplyReport): string {
-  const lines = [`Applied to project ${report.project.slug} (id ${report.project.id}):`];
-  for (const op of report.operations) {
-    if (op.result === 'created') lines.push(`  + created ${op.type} ${op.key}  #${op.ref} (id ${op.id})`);
-    if (op.result === 'updated') lines.push(`  ~ updated ${op.type} ${op.key}  #${op.ref} (id ${op.id})`);
-    if (op.result === 'linked') lines.push(`  + linked  story ${op.key} -> epic ${op.epic}`);
-  }
-  const { created, updated, linked, unchanged } = report.summary;
-  lines.push(`${created} created, ${updated} updated, ${linked} linked, ${unchanged} unchanged.`);
+/** Text form of a report: a title, one line per operation that wrote something, then the counts. */
+function formatReportText<O extends { result: Result }>(
+  title: string,
+  report: { operations: O[]; summary: Partial<Record<Result, number>> },
+  describe: (op: O) => string,
+): string {
+  const lines = [title, ...report.operations.filter((op) => op.result !== 'unchanged').map((op) => `  ${op.result} ${describe(op)}`)];
+  lines.push(`${Object.entries(report.summary).map(([result, n]) => `${n} ${result}`).join(', ')}.`);
   return `${lines.join('\n')}\n`;
+}
+
+/** The parts of a backlog plan that are reported but never acted on: orphans and stale epic links. */
+function formatLeftovers(plan: Plan): string[] {
+  const lines: string[] = [];
+  if (plan.orphans.length > 0) {
+    lines.push('Orphans (tagged src: on Taiga but not in the manifest; never deleted):');
+    lines.push(...plan.orphans.map((orphan) => `  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`));
+  }
+  if (plan.staleLinks.length > 0) {
+    lines.push('Stale links (story linked on Taiga to an epic it no longer belongs to in the manifest):');
+    lines.push(
+      ...plan.staleLinks.map(
+        (link) =>
+          `  ! stale link story ${link.key}  (#${link.ref}, id ${link.id}) -> epic ${link.epic}  (#${link.epicRef}, id ${link.epicId}): never removed; unlink it on Taiga if obsolete`,
+      ),
+    );
+  }
+  return lines;
+}
+
+/** Prints `value` as JSON with --json, else `text()`. */
+function emit(run: Run, value: unknown, text: () => string): void {
+  print(run, run.options.json ? `${JSON.stringify(value, null, 2)}\n` : text());
+}
+
+/**
+ * The review gate of plan/apply, bootstrap and upload. Unless the run may write (`--yes` without `--dry-run`; never
+ * for `plan`), it prints the plan and returns the exit code: 0 without changes, 3 for `plan` and `--dry-run`, and a
+ * usage error (2) for a writing command without `--yes`. Returns undefined when the run goes on to write.
+ */
+function reviewGate(run: Run, plan: { changes: boolean }, text: () => string): number | undefined {
+  const { options } = run;
+  const review = options.command === 'plan' || options.dryRun;
+  if (options.yes && !review) return undefined;
+  emit(run, plan, text);
+  if (!plan.changes) return ExitCode.Ok;
+  if (review) return ExitCode.Changes;
+  throw new UsageError(`refusing to ${options.command} without --yes; review the operations above, then re-run with --yes`);
 }
 
 /** Validates one project's manifests, or every project under the manifests root. Offline: no env needed. */
-async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
+async function runValidate(run: Run): Promise<number> {
+  const { options, env, cwd } = run;
   const root = manifestsRoot(env, cwd);
   const slugs = options.project ? [options.project] : await listProjectSlugs(root);
   if (slugs.length === 0) {
@@ -217,7 +267,8 @@ async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string
   if (issues.length > 0) throw new ManifestError(issues);
 
   const report = projects.map(({ slug, files }) => ({ slug, files: files.map((file) => relative(cwd, file)) }));
-  process.stdout.write(
+  print(
+    run,
     options.json
       ? `${JSON.stringify({ valid: true, projects: report }, null, 2)}\n`
       : `${report.flatMap(({ files }) => files.map((file) => `${file}: ok`)).join('\n')}\nAll manifests follow the conventions.\n`,
@@ -225,110 +276,55 @@ async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string
   return ExitCode.Ok;
 }
 
-function formatBootstrapPlan(plan: BootstrapPlan): string {
-  const { project } = plan;
-  const lines = [`Bootstrap plan for project ${project.slug} (${project.exists ? `id ${project.id}` : 'new'}):`];
-  for (const op of plan.operations) {
-    const marker = op.action === 'create' ? '  + ' : op.action === 'update' ? '  ~ ' : '    skip ';
-    lines.push(`${marker}${describeOperation(op)}`);
-  }
-  lines.push(
-    plan.changes
-      ? `${plan.summary.create} to create, ${plan.summary.update} to update, ${plan.summary.skip} unchanged.`
-      : 'No changes. Taiga matches the manifest.',
-  );
-  return `${lines.join('\n')}\n`;
-}
-
-function formatBootstrapReport(report: BootstrapReport): string {
-  const lines = [`Bootstrapped project ${report.project.slug} (id ${report.project.id}):`];
-  for (const op of report.operations) if (op.result !== 'unchanged') lines.push(`  ${op.result} ${describeOperation(op)}`);
-  lines.push(`${report.summary.created} created, ${report.summary.updated} updated, ${report.summary.unchanged} unchanged.`);
-  return `${lines.join('\n')}\n`;
-}
-
 /** `bootstrap`: create the project declared in project.yaml, or fill what an existing one lacks. */
-async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  const slug = options.project!;
-  const layout = projectLayout(slug, env, cwd);
+async function runBootstrap(run: Run): Promise<number> {
+  const slug = run.options.project!;
+  const layout = projectLayout(slug, run.env, run.cwd);
   const manifest = (await loadManifests(layout.dir, slug, { require: ['project'] })).manifests.project!;
-  const client = await connectTaiga(env);
+  const client = await connectTaiga(run);
 
-  const me = await client.getMe();
-  const project = await client.findProjectBySlug(manifest.slug);
-  if (!project) {
-    // A previous run may have created the project under another slug (see executeBootstrap): never create twice.
-    const saved = await readSavedProject(layout.state);
-    const recorded = saved && (await client.findProject(saved.id));
-    if (recorded) {
-      throw new TaigaError(
-        `state.json already points to project id ${recorded.id} (slug "${recorded.slug}"), but no project has slug "${manifest.slug}"; ` +
-          `refusing to create another one. Have a Taiga admin set its slug to "${manifest.slug}", or remove "project" from state.json ` +
-          'if that project is unrelated.',
-      );
-    }
-  }
-  const template = project ? undefined : findTemplate(await client.listProjectTemplates(), manifest.template);
-  const memberships = project ? await client.listMemberships(project.id) : [];
-  const wikiHomeExists = project !== undefined && manifest.wikiHome !== undefined && (await client.findWikiPage(project.id, WIKI_HOME_SLUG)) !== undefined;
-  const plan = planBootstrap(manifest, { me, project, template, memberships, wikiHomeExists });
+  const remote = await readBootstrapRemote(manifest, client, layout.state);
+  const plan = planBootstrap(manifest, remote);
 
-  if (options.dryRun || !options.yes) {
-    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatBootstrapPlan(plan));
-    if (!plan.changes) return ExitCode.Ok;
-    if (options.dryRun) return ExitCode.Changes;
-    throw new UsageError('refusing to bootstrap without --yes; review the operations above, then re-run with --yes');
-  }
+  const gate = reviewGate(run, plan, () =>
+    formatPlanText(`Bootstrap plan for project ${plan.project.slug} (${plan.project.exists ? `id ${plan.project.id}` : 'new'}):`, plan, describeBootstrapOperation, {
+      empty: 'project.yaml declares nothing',
+      matches: 'the manifest',
+    }),
+  );
+  if (gate !== undefined) return gate;
 
-  const report = await executeBootstrap(plan, project, client, layout.state);
-  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatBootstrapReport(report));
+  const report = await executeBootstrap(plan, remote.project, client, layout.state);
+  emit(run, report, () => formatReportText(`Bootstrapped project ${report.project.slug} (id ${report.project.id}):`, report, describeBootstrapOperation));
   return ExitCode.Ok;
 }
 
-function formatUploadPlan(plan: UploadPlan): string {
-  const lines = [`Upload plan for project ${plan.project.slug} (id ${plan.project.id}):`];
-  for (const op of plan.operations) {
-    const marker = op.action === 'create' ? '  + ' : op.action === 'update' ? '  ~ ' : '    skip ';
-    lines.push(`${marker}${describeUploadOperation(op)}`);
-  }
-  if (plan.operations.length === 0) lines.push('  (docs.yaml declares nothing)');
-  lines.push(
-    plan.changes
-      ? `${plan.summary.create} to create, ${plan.summary.update} to update, ${plan.summary.skip} unchanged.`
-      : 'No changes. Taiga matches docs.yaml.',
-  );
-  return `${lines.join('\n')}\n`;
-}
-
-function formatUploadReport(report: UploadReport): string {
-  const lines = [`Uploaded to project ${report.project.slug} (id ${report.project.id}):`];
-  for (const op of report.operations) if (op.result !== 'unchanged') lines.push(`  ${op.result} ${describeUploadOperation(op)}  -> id ${op.id}`);
-  lines.push(`${report.summary.created} created, ${report.summary.updated} updated, ${report.summary.unchanged} unchanged.`);
-  return `${lines.join('\n')}\n`;
-}
-
 /** `upload`: upsert docs.yaml's wiki pages by slug and add its attachments that Taiga lacks. */
-async function runUpload(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  const slug = options.project!;
-  const { manifests } = await loadManifests(projectLayout(slug, env, cwd).dir, slug, { require: ['docs'] });
-  const client = await connectTaiga(env);
-  const project = await client.getProjectBySlug(slug);
-  const plan = await planUpload(manifests.docs!, manifests.backlog, { id: project.id, slug: project.slug }, client, cwd);
+async function runUpload(run: Run): Promise<number> {
+  const slug = run.options.project!;
+  const { manifests } = await loadManifests(projectLayout(slug, run.env, run.cwd).dir, slug, { require: ['docs'] });
+  const client = await connectTaiga(run);
+  const remote = await readUploadRemote(manifests.docs!, manifests.backlog, client, slug);
+  const plan = planUpload(manifests.docs!, remote, run.cwd);
 
-  if (options.dryRun || !options.yes) {
-    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatUploadPlan(plan));
-    if (!plan.changes) return ExitCode.Ok;
-    if (options.dryRun) return ExitCode.Changes;
-    throw new UsageError('refusing to upload without --yes; review the operations above, then re-run with --yes');
-  }
+  const gate = reviewGate(run, plan, () =>
+    formatPlanText(`Upload plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describeUploadOperation, {
+      empty: 'docs.yaml declares nothing',
+      matches: 'docs.yaml',
+    }),
+  );
+  if (gate !== undefined) return gate;
 
-  const report = await executeUpload(plan, client, cwd);
-  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatUploadReport(report));
+  const report = await executeUpload(plan, client, run.cwd);
+  emit(run, report, () =>
+    formatReportText(`Uploaded to project ${report.project.slug} (id ${report.project.id}):`, report, (op) => `${describeUploadOperation(op)}  -> id ${op.id}`),
+  );
   return ExitCode.Ok;
 }
 
 /** `skills sync|check`: keep the Claude copies of the taiga-* skills identical to their source. Offline. */
-async function runSkills(options: Options, cwd: string): Promise<number> {
+async function runSkills(run: Run): Promise<number> {
+  const { options, cwd } = run;
   try {
     if (options.skillsAction === 'sync') {
       const report = await syncSkills(cwd);
@@ -336,7 +332,8 @@ async function runSkills(options: Options, cwd: string): Promise<number> {
         ...report.synced.map((skill) => `${SKILLS_TARGET}/${skill}: synced`),
         ...report.removed.map((skill) => `${SKILLS_TARGET}/${skill}: removed`),
       ];
-      process.stdout.write(
+      print(
+        run,
         options.json
           ? `${JSON.stringify(report, null, 2)}\n`
           : `${[...lines, `${report.skills.length} taiga-* skill(s) in sync.`].join('\n')}\n`,
@@ -345,12 +342,12 @@ async function runSkills(options: Options, cwd: string): Promise<number> {
     }
     const comparison = await compareSkills(cwd);
     if (options.json) {
-      process.stdout.write(`${JSON.stringify(comparison, null, 2)}\n`);
+      print(run, `${JSON.stringify(comparison, null, 2)}\n`);
     } else if (comparison.inSync) {
-      process.stdout.write(`${comparison.skills.length} taiga-* skill(s) in sync.\n`);
+      print(run, `${comparison.skills.length} taiga-* skill(s) in sync.\n`);
     } else {
       const lines = comparison.differences.map(({ skill, file, status }) => `${SKILLS_TARGET}/${skill}/${file}: ${status}`);
-      process.stdout.write(`${lines.join('\n')}\nThe Claude copies differ from ${SKILLS_SOURCE}; run \`taigent skills sync\`.\n`);
+      print(run, `${lines.join('\n')}\nThe Claude copies differ from ${SKILLS_SOURCE}; run \`taigent skills sync\`.\n`);
     }
     return comparison.inSync ? ExitCode.Ok : ExitCode.Changes;
   } catch (error) {
@@ -359,101 +356,85 @@ async function runSkills(options: Options, cwd: string): Promise<number> {
   }
 }
 
-async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  if (options.command === 'validate') return runValidate(options, env, cwd);
-  if (options.command === 'bootstrap') return runBootstrap(options, env, cwd);
-  if (options.command === 'upload') return runUpload(options, env, cwd);
-  if (options.command === 'skills') return runSkills(options, cwd);
-  const slug = options.project!;
-  const layout = projectLayout(slug, env, cwd);
+/** `plan` and `apply`: compare backlog.yaml with Taiga, then (apply --yes) run the plan. */
+async function runPlan(run: Run): Promise<number> {
+  const slug = run.options.project!;
+  const layout = projectLayout(slug, run.env, run.cwd);
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
-  const client = await connectTaiga(env);
-  const project = await client.getProjectBySlug(slug);
-  const [epics, stories, tasks] = await Promise.all([
-    client.listEpics(project.id),
-    client.listUserStories(project.id),
-    client.listTasks(project.id),
-  ]);
-  // Existing links only matter for manifest epics that have stories.
-  const epicTagsWithStories = new Set(backlog.epics.filter((epic) => epic.stories.length > 0).map((epic) => srcTag(epic.key)));
-  const epicStories = new Map<number, number[]>();
-  for (const epic of epics) {
-    if (epic.tags.some((tag) => epicTagsWithStories.has(tag))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
-  }
-  // Current custom attribute values, only for existing items that declare some in the manifest.
-  const attributeValues: Record<ItemType, Map<number, TaigaAttributeValues>> = { epic: new Map(), story: new Map(), task: new Map() };
-  const declaringTags = new Set<string>();
-  for (const epic of backlog.epics) {
-    for (const item of [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]) {
-      if (Object.keys(item.customAttributes).length > 0) declaringTags.add(srcTag(item.key));
-    }
-  }
-  for (const [type, items] of [['epic', epics], ['story', stories], ['task', tasks]] as const) {
-    for (const item of items) {
-      if (item.tags.some((tag) => declaringTags.has(tag))) attributeValues[type].set(item.id, await client.getAttributeValues(ATTRIBUTE_ITEM_TYPE[type], item.id));
-    }
-  }
-  const plan = buildPlan(backlog, {
-    project: { id: project.id, slug: project.slug },
-    epics,
-    stories,
-    tasks,
-    epicStories,
-    customAttributes: project.customAttributes,
-    attributeValues,
-  });
+  const client = await connectTaiga(run);
+  const remote = await readBacklogRemote(backlog, client, slug);
+  const plan = buildPlan(backlog, remote);
 
-  if (options.command === 'plan' || options.dryRun || !options.yes) {
-    process.stdout.write(options.json ? `${JSON.stringify(plan, null, 2)}\n` : formatPlan(plan));
-    if (!plan.changes) return ExitCode.Ok;
-    if (options.command === 'plan' || options.dryRun) return ExitCode.Changes;
-    throw new UsageError('refusing to apply without --yes; review the plan above, then re-run with --yes');
-  }
+  const gate = reviewGate(run, plan, () =>
+    formatPlanText(`Plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describePlanOperation, {
+      empty: 'manifest has no items',
+      matches: 'the manifest',
+      extra: formatLeftovers(plan),
+    }),
+  );
+  if (gate !== undefined) return gate;
 
-  const report = await executePlan(plan, client, layout.state, project.customAttributes);
-  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : formatReport(report));
+  const report = await executePlan(plan, client, layout.state, remote.customAttributes);
+  emit(run, report, () => formatReportText(`Applied to project ${report.project.slug} (id ${report.project.id}):`, report, describeAppliedOperation));
   return ExitCode.Ok;
 }
 
-function fail(code: ExitCode, kind: string, error: Error, json: boolean, extra: Record<string, unknown> = {}): number {
-  process.stderr.write(`taigent: ${error.message}\n`);
-  if (json) process.stdout.write(`${JSON.stringify({ error: { kind, message: error.message, ...extra } }, null, 2)}\n`);
+function dispatch(run: Run): Promise<number> {
+  switch (run.options.command) {
+    case 'validate':
+      return runValidate(run);
+    case 'bootstrap':
+      return runBootstrap(run);
+    case 'upload':
+      return runUpload(run);
+    case 'skills':
+      return runSkills(run);
+    case 'plan':
+    case 'apply':
+      return runPlan(run);
+  }
+}
+
+function fail(secrets: Secrets, code: ExitCode, kind: string, error: Error, json: boolean, extra: Record<string, unknown> = {}): number {
+  printError(secrets, `taigent: ${error.message}\n`);
+  if (json) process.stdout.write(secrets.redact(`${JSON.stringify({ error: { kind, message: error.message, ...extra } }, null, 2)}\n`));
   return code;
 }
 
 /** Runs the CLI and returns the process exit code. */
 export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): Promise<number> {
   const json = argv.includes('--json');
+  const secrets = environmentSecrets(env);
   try {
     const options = parseOptions(argv);
     if (options === 'help') {
       process.stdout.write(`${USAGE}\n`);
       return ExitCode.Ok;
     }
-    return await run(options, env, cwd);
+    return await dispatch({ options, env, cwd, secrets });
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(json ? '' : `${USAGE}\n\n`);
-      return fail(ExitCode.Usage, 'usage', error, json);
+      return fail(secrets, ExitCode.Usage, 'usage', error, json);
     }
     if (error instanceof ManifestError) {
       // Report manifest files relative to the working directory, as the user wrote them.
       const relativeError = new ManifestError(error.issues.map((issue) => ({ ...issue, file: relative(cwd, issue.file) })));
-      return fail(ExitCode.Validation, 'validation', relativeError, json, { issues: relativeError.issues });
+      return fail(secrets, ExitCode.Validation, 'validation', relativeError, json, { issues: relativeError.issues });
     }
-    if (error instanceof ApplyConflictError) {
-      return fail(ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key });
+    if (error instanceof TaigaConflictError) {
+      return fail(secrets, ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key ?? null });
     }
     if (error instanceof UploadTooLargeError) {
-      return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
+      return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
     }
     if (error instanceof TaigaAuthError) {
       const check = error.credential === 'token' ? 'TAIGA_TOKEN' : 'TAIGA_USERNAME and TAIGA_PASSWORD';
       const hinted = new TaigaAuthError(error.credential, `${error.message} (check ${check})`, error.status);
-      return fail(ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
+      return fail(secrets, ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
     }
-    if (error instanceof TaigaError) return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
-    process.stderr.write(`taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);
+    if (error instanceof TaigaError) return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
+    printError(secrets, `taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);
     return ExitCode.Internal;
   }
 }

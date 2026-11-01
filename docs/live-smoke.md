@@ -45,7 +45,7 @@ A pass looks like this (the `ℹ` lines are what you need next):
 ✔ live smoke: apply + upload create linked items, wiki page and attachments; a re-run changes and duplicates nothing
 ℹ run mvxf673h on project test: keys SMOKE-MVXF673H-EPIC, SMOKE-MVXF673H-EPIC2, SMOKE-MVXF673H-STORY, SMOKE-MVXF673H-TASK; wiki page smoke-mvxf673h
 ℹ check in the web UI: epic #41 (story #42 linked, attachment smoke-mvxf673h-epic.txt), task #43, wiki page smoke-mvxf673h (attachment smoke-mvxf673h-wiki.txt)
-ℹ epic tag filter: GET /epics?project=7&tags=src:smoke-mvxf673h-epic returned 2 of 9 epics: ignored
+ℹ epic tag filter: GET /epics?project=7&tags=src:smoke-mvxf673h-epic returned 1 of 9 epics: applied server-side
 ```
 
 A failure names the command (with its stdout/stderr) or the item that is missing, duplicated or wrong. Remove
@@ -64,12 +64,16 @@ Use the refs from the `check in the web UI` line:
 
 ## Answer the open questions
 
-**Does `GET /epics` filter by tag on the server?** Read the `epic tag filter` line:
+**Does `GET /epics` filter by tag on the server?** taiga-back's source says yes (`TagsFilter` is in the epic list's
+`filter_backends`, taiga/projects/epics/api.py; `tags=a,b` keeps items with any listed tag, exact match), and the
+test fake behaves that way. The `epic tag filter` line checks that the instance does too:
 
 - `applied server-side`: only the run's epic came back, Taiga honours `tags` on epics.
-- `ignored`: every epic of the project came back (taigent's current assumption: `TaigaClient.listEpics` reads all
-  epics and matches `src:` tags client-side, which stays correct either way).
+- `ignored`: every epic of the project came back (an older or patched server).
 - `inconclusive`: record the two counts as printed.
+
+Either way taigent stays correct: it reads all items of a project (every `src:` tag is needed to find orphans) and
+matches `src:` tags client-side.
 
 **What upload size does the server accept?** The optional probe uploads one zero-filled attachment of
 `TAIGENT_SMOKE_UPLOAD_PROBE_BYTES` bytes to a wiki page `smoke-<run>-probe` and prints

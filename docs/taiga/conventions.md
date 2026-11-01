@@ -16,7 +16,8 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
 1. **Plan (chỉ ghi file).** Agent đọc spec/PRD rồi viết hoặc cập nhật manifest trong `taiga/<slug>/`
    (`project.yaml`, `backlog.yaml`, `docs.yaml`).
    - Sửa manifest hiện có, giữ nguyên `key` cũ. Không viết lại từ đầu.
-   - Có thể đọc Taiga qua MCP để tránh tạo trùng việc đã có.
+   - Có thể đọc Taiga để tránh tạo trùng việc đã có: `taigent plan --project <slug> --json` (chỉ đọc) cho các item
+     đã có tag `src:`, và tool MCP đọc cho việc người khác tạo tay.
    - Kết thúc bằng `taigent validate --project <slug>`. Phải ra exit 0.
 2. **Review.** Người dùng duyệt diff manifest trong git như duyệt code, rồi chạy (hoặc để agent chạy)
    `taigent plan --project <slug>` để xem chính xác những gì sẽ đổi trên Taiga (exit 3 = có thay đổi).
@@ -42,8 +43,9 @@ item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao gi
 
 Lưu ý: Taiga coi `slug` là read-only khi tạo project và tự sinh nó từ tên. Nếu instance bật
 `DEFAULT_PROJECT_SLUG_PREFIX` (mặc định của taiga-back), slug sẽ có thêm tiền tố username của người tạo.
-`taigent bootstrap` kiểm slug thực tế sau khi tạo và báo lỗi nếu nó khác manifest. Đổi tên project về sau
-**không** đổi slug.
+`taigent bootstrap` kiểm slug thực tế sau khi tạo và báo lỗi nếu nó khác manifest. Slug trùng với project private
+mà bạn không thấy (không là thành viên) thì bootstrap từ chối trước khi tạo gì (nếu không Taiga sẽ tạo project thứ
+hai với slug `<slug>-1`). Đổi tên project về sau **không** đổi slug.
 
 ## 3. Template và module
 
@@ -92,6 +94,9 @@ Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên
 - Gợi ý đặt key: epic là tên mảng (`AUTH`), story là `<EPIC>-<việc>` (`AUTH-LOGIN`), task là
   `<STORY>-<bước>` (`AUTH-LOGIN-API`).
 - Item bỏ khỏi manifest không bị xoá trên Taiga. `plan` báo nó là mồ côi để người quyết định.
+- Chuyển task sang story khác (hoặc story sang epic khác) trong manifest: `apply` gắn task vào story mới
+  (`user_story`), và gắn story vào epic mới. Liên kết cũ với epic cũ **không bị gỡ**; `plan` báo nó trong
+  `staleLinks` để người quyết định gỡ tay trên Taiga.
 
 ## 6. Mẫu mô tả story và task
 

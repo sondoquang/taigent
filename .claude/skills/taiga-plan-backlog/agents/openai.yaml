@@ -1,3 +1,5 @@
 interface:
   display_name: "Taiga Plan Backlog"
   short_description: "Turn a spec into the Taiga backlog manifest"
+policy:
+  allow_implicit_invocation: true

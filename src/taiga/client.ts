@@ -5,6 +5,8 @@
 import { openAsBlob } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
+import { ITEM_TYPES, type ItemType } from '../items.ts';
+import { Secrets } from '../secrets.ts';
 
 /** Thrown for any Taiga/network failure. Maps to ExitCode.Taiga. Never contains credentials. */
 export class TaigaError extends Error {
@@ -17,11 +19,18 @@ export class TaigaError extends Error {
   }
 }
 
-/** A PATCH was refused because the item changed on Taiga since its `version` was read (OCC). */
+/**
+ * A PATCH was refused because the object changed on Taiga since its `version` was read (OCC). The client throws it
+ * without a key; the command that planned the write rethrows it with `key` naming what conflicted (an item key, or
+ * `wiki:<slug>`), which the CLI reports.
+ */
 export class TaigaConflictError extends TaigaError {
-  constructor(message: string) {
+  readonly key: string | undefined;
+
+  constructor(message: string, key?: string) {
     super(message, 400);
     this.name = 'TaigaConflictError';
+    this.key = key;
   }
 }
 
@@ -48,6 +57,11 @@ export interface TaigaConnectOptions {
   credentials?: { username: string; password: string };
   /** Milliseconds per second of 429 backoff (default 1000); tests shrink it. */
   retryUnitMs?: number;
+  /**
+   * Where the client registers every secret it holds (password, tokens), redacted from its error messages in case
+   * Taiga echoes one back. The CLI passes its own, so its output redacts tokens the client obtained too.
+   */
+  secrets?: Secrets;
 }
 
 export interface TaigaProject {
@@ -55,7 +69,7 @@ export interface TaigaProject {
   slug: string;
   name: string;
   /** Custom attributes defined on the project, per item type. */
-  customAttributes: Record<CustomAttributeItemType, TaigaCustomAttribute[]>;
+  customAttributes: Record<ItemType, TaigaCustomAttribute[]>;
 }
 
 /** Custom attribute values of one item (`/{epics,userstories,tasks}/custom-attributes-values/{id}`). */
@@ -88,14 +102,12 @@ export interface NewItem {
   subject: string;
   description: string;
   tags: string[];
+  /** Tasks only: the parent user story. */
+  user_story?: number;
 }
 
-export interface NewTask extends NewItem {
-  user_story: number;
-}
-
-/** Manifest-managed fields an update may change; everything else on the item is left alone. */
-export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'>>;
+/** Manifest-managed fields an update may change (`user_story`: a task's parent); everything else is left alone. */
+export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'>> & { user_story?: number };
 
 interface RequestOptions {
   query?: Record<string, string | number>;
@@ -117,7 +129,6 @@ const MAX_ERROR_BODY = 500;
 /** 429 handling: retries per request, and the longest single wait, in backoff units (seconds by default). */
 const MAX_THROTTLE_RETRIES = 5;
 const MAX_BACKOFF_UNITS = 60;
-const REDACTED = '[redacted]';
 
 function field<T>(raw: Record<string, unknown>, name: string, type: 'number' | 'string', what: string): T {
   const value = raw[name];
@@ -146,6 +157,21 @@ function parseTask(raw: unknown): TaigaTask {
   return { ...task, userStory };
 }
 
+/**
+ * Taiga's names for each item type: its REST collection (`/userstories`, also used under attachments and custom
+ * attribute values), its custom attribute prefix (`/userstory-custom-attributes`, `userstory_custom_attributes`
+ * of a project) and how messages name it.
+ */
+const TAIGA_ITEM: Record<ItemType, { collection: string; attributes: string; what: string }> = {
+  epic: { collection: 'epics', attributes: 'epic', what: 'epic' },
+  story: { collection: 'userstories', attributes: 'userstory', what: 'user story' },
+  task: { collection: 'tasks', attributes: 'task', what: 'task' },
+};
+
+function parseItemOf(type: ItemType, raw: unknown): TaigaItem {
+  return type === 'task' ? parseTask(raw) : parseItem(raw, TAIGA_ITEM[type].what);
+}
+
 function parseList<T>(raw: unknown, what: string, parse: (item: unknown) => T): T[] {
   if (!Array.isArray(raw)) throw new TaigaError(`unexpected Taiga response: ${what} list is not an array`);
   return raw.map(parse);
@@ -156,8 +182,6 @@ function parseList<T>(raw: unknown, what: string, parse: (item: unknown) => T): 
 /** Project module flags, as in `PATCH /projects/{id}`. */
 export const MODULE_FLAGS = ['is_epics_activated', 'is_backlog_activated', 'is_kanban_activated', 'is_issues_activated', 'is_wiki_activated'] as const;
 export type ModuleFlag = (typeof MODULE_FLAGS)[number];
-
-export type CustomAttributeItemType = 'epic' | 'userstory' | 'task';
 
 export interface TaigaUser {
   id: number;
@@ -196,7 +220,7 @@ export interface TaigaProjectDetail {
   roles: TaigaRole[];
   /** Active members (accepted memberships). */
   members: { id: number; username: string }[];
-  customAttributes: Record<CustomAttributeItemType, TaigaCustomAttribute[]>;
+  customAttributes: Record<ItemType, TaigaCustomAttribute[]>;
 }
 
 export interface TaigaMembership {
@@ -239,8 +263,8 @@ export interface TaigaWikiPage {
   version: number;
 }
 
-/** URL segment of the objects attachments hang off (`/{type}/attachments`). */
-export type AttachmentObjectType = 'epics' | 'userstories' | 'tasks' | 'wiki';
+/** What an attachment hangs off: an item or a wiki page (`/{epics,userstories,tasks,wiki}/attachments`). */
+export type AttachmentTargetType = ItemType | 'wiki';
 
 export interface TaigaAttachment {
   id: number;
@@ -280,17 +304,14 @@ function parseCustomAttribute(raw: unknown): TaigaCustomAttribute {
   return { id: field(r, 'id', 'number', 'custom attribute'), name: field(r, 'name', 'string', 'custom attribute') };
 }
 
-/** `*_custom_attributes` of a project detail object. */
-function parseCustomAttributes(r: Record<string, unknown>): Record<CustomAttributeItemType, TaigaCustomAttribute[]> {
-  return {
-    epic: list(r.epic_custom_attributes ?? [], 'epic custom attributes').map(parseCustomAttribute),
-    userstory: list(r.userstory_custom_attributes ?? [], 'user story custom attributes').map(parseCustomAttribute),
-    task: list(r.task_custom_attributes ?? [], 'task custom attributes').map(parseCustomAttribute),
-  };
+/** `<epic|userstory|task>_custom_attributes` of a project detail object. */
+function parseCustomAttributes(r: Record<string, unknown>): Record<ItemType, TaigaCustomAttribute[]> {
+  const byType = ITEM_TYPES.map((type) => {
+    const { attributes, what } = TAIGA_ITEM[type];
+    return [type, list(r[`${attributes}_custom_attributes`] ?? [], `${what} custom attributes`).map(parseCustomAttribute)];
+  });
+  return Object.fromEntries(byType) as Record<ItemType, TaigaCustomAttribute[]>;
 }
-
-/** URL segment of an item type's custom attribute values. */
-const ATTRIBUTE_VALUES_PATH: Record<CustomAttributeItemType, string> = { epic: 'epics', userstory: 'userstories', task: 'tasks' };
 
 function parseAttributeValues(raw: unknown): TaigaAttributeValues {
   const r = record(raw, 'custom attributes values');
@@ -362,13 +383,13 @@ export class TaigaClient {
   readonly #retryUnitMs: number;
   #token: string | undefined;
   #refresh: string | undefined;
-  /** Every secret this client has held; redacted from error messages in case Taiga echoes one back. */
-  readonly #secrets = new Set<string>();
+  readonly #secrets: Secrets;
 
   private constructor(options: TaigaConnectOptions) {
     this.apiUrl = options.apiUrl.replace(/\/+$/, '');
     this.#credentials = options.credentials;
     this.#retryUnitMs = options.retryUnitMs ?? 1000;
+    this.#secrets = options.secrets ?? new Secrets();
     if (options.credentials) this.#secrets.add(options.credentials.password);
     if (options.token) this.#setTokens(options.token, undefined);
   }
@@ -449,33 +470,16 @@ export class TaigaClient {
     };
   }
 
-  /** All epics of a project (Taiga's epic list has no documented tag filter, so filter client-side). */
-  async listEpics(projectId: number): Promise<TaigaItem[]> {
-    const raw = await this.#request('GET', '/epics', { query: { project: projectId } });
-    return parseList(raw, 'epic', (item) => parseItem(item, 'epic'));
+  /** All items of one type in a project, unfiltered: every `src:` tag is needed to find orphans. */
+  listItems(type: 'task', projectId: number): Promise<TaigaTask[]>;
+  listItems(type: ItemType, projectId: number): Promise<TaigaItem[]>;
+  async listItems(type: ItemType, projectId: number): Promise<TaigaItem[]> {
+    const raw = await this.#request('GET', `/${TAIGA_ITEM[type].collection}`, { query: { project: projectId } });
+    return parseList(raw, TAIGA_ITEM[type].what, (item) => parseItemOf(type, item));
   }
 
-  async createEpic(epic: NewItem): Promise<TaigaItem> {
-    return parseItem(await this.#request('POST', '/epics', { body: epic }), 'epic');
-  }
-
-  /** All user stories of a project (every `src:` tag is needed to find orphans, so no tag filter). */
-  async listUserStories(projectId: number): Promise<TaigaItem[]> {
-    const raw = await this.#request('GET', '/userstories', { query: { project: projectId } });
-    return parseList(raw, 'user story', (item) => parseItem(item, 'user story'));
-  }
-
-  async createUserStory(story: NewItem): Promise<TaigaItem> {
-    return parseItem(await this.#request('POST', '/userstories', { body: story }), 'user story');
-  }
-
-  /** All tasks of a project. */
-  async listTasks(projectId: number): Promise<TaigaTask[]> {
-    return parseList(await this.#request('GET', '/tasks', { query: { project: projectId } }), 'task', parseTask);
-  }
-
-  async createTask(task: NewTask): Promise<TaigaTask> {
-    return parseTask(await this.#request('POST', '/tasks', { body: task }));
+  async createItem(type: ItemType, item: NewItem): Promise<TaigaItem> {
+    return parseItemOf(type, await this.#request('POST', `/${TAIGA_ITEM[type].collection}`, { body: item }));
   }
 
   /** Ids of the user stories linked to an epic (`GET /epics/{id}/related_userstories`). */
@@ -489,26 +493,18 @@ export class TaigaClient {
     await this.#request('POST', `/epics/${epicId}/related_userstories`, { body: { epic: epicId, user_story: userStoryId } });
   }
 
-  async updateEpic(id: number, patch: ItemPatch, version: number): Promise<TaigaItem> {
-    return parseItem(await this.#patch(`/epics/${id}`, patch, version), 'epic');
-  }
-
-  async updateUserStory(id: number, patch: ItemPatch, version: number): Promise<TaigaItem> {
-    return parseItem(await this.#patch(`/userstories/${id}`, patch, version), 'user story');
-  }
-
-  async updateTask(id: number, patch: ItemPatch, version: number): Promise<TaigaTask> {
-    return parseTask(await this.#patch(`/tasks/${id}`, patch, version));
+  async updateItem(type: ItemType, id: number, patch: ItemPatch, version: number): Promise<TaigaItem> {
+    return parseItemOf(type, await this.#patch(`/${TAIGA_ITEM[type].collection}/${id}`, patch, version));
   }
 
   /** Custom attribute values of an item (Taiga creates the values object together with the item). */
-  async getAttributeValues(itemType: CustomAttributeItemType, itemId: number): Promise<TaigaAttributeValues> {
-    return parseAttributeValues(await this.#request('GET', `/${ATTRIBUTE_VALUES_PATH[itemType]}/custom-attributes-values/${itemId}`));
+  async getAttributeValues(type: ItemType, itemId: number): Promise<TaigaAttributeValues> {
+    return parseAttributeValues(await this.#request('GET', `/${TAIGA_ITEM[type].collection}/custom-attributes-values/${itemId}`));
   }
 
   /** Replaces all values of an item (attribute id → value), with the values object's `version` (OCC). */
-  async updateAttributeValues(itemType: CustomAttributeItemType, itemId: number, values: Record<string, unknown>, version: number): Promise<TaigaAttributeValues> {
-    const path = `/${ATTRIBUTE_VALUES_PATH[itemType]}/custom-attributes-values/${itemId}`;
+  async updateAttributeValues(type: ItemType, itemId: number, values: Record<string, unknown>, version: number): Promise<TaigaAttributeValues> {
+    const path = `/${TAIGA_ITEM[type].collection}/custom-attributes-values/${itemId}`;
     return parseAttributeValues(await this.#patch(path, { attributes_values: values }, version));
   }
 
@@ -559,6 +555,22 @@ export class TaigaClient {
     return raw === undefined ? undefined : parseProjectDetail(raw);
   }
 
+  /**
+   * Whether a project the user cannot see has `slug`. `by_slug` answers 404 both for a free slug and for a private
+   * project the user is not a member of; `GET /resolver?project=<slug>` answers 403 for the latter (taiga-back
+   * `ResolverViewSet.list` looks the slug up unfiltered, then checks `view_project`) and 404 for a free slug.
+   */
+  async isSlugTakenByInvisibleProject(slug: string): Promise<boolean> {
+    try {
+      await this.#request('GET', '/resolver', { query: { project: slug } });
+      return false;
+    } catch (error) {
+      if (error instanceof TaigaError && error.status === 403) return true;
+      if (error instanceof TaigaError && error.status === 404) return false;
+      throw error;
+    }
+  }
+
   /** Project detail by id, or undefined when it does not exist or is not visible. */
   async findProject(id: number): Promise<TaigaProjectDetail | undefined> {
     const raw = await this.#find('GET', `/projects/${id}`);
@@ -583,8 +595,8 @@ export class TaigaClient {
     await this.#request('POST', `/projects/${projectId}/edit_tag`, { body: { from_tag: tag, color } });
   }
 
-  async createCustomAttribute(itemType: CustomAttributeItemType, attribute: NewCustomAttribute): Promise<TaigaCustomAttribute> {
-    return parseCustomAttribute(await this.#request('POST', `/${itemType}-custom-attributes`, { body: attribute }));
+  async createCustomAttribute(type: ItemType, attribute: NewCustomAttribute): Promise<TaigaCustomAttribute> {
+    return parseCustomAttribute(await this.#request('POST', `/${TAIGA_ITEM[type].attributes}-custom-attributes`, { body: attribute }));
   }
 
   async listMemberships(projectId: number): Promise<TaigaMembership[]> {
@@ -613,23 +625,25 @@ export class TaigaClient {
 
   // ---- Attachments (multipart) -----------------------------------------------------------------------
 
-  /** Attachments of one object (`GET /{type}/attachments?object_id=&project=`). */
-  async listAttachments(type: AttachmentObjectType, projectId: number, objectId: number): Promise<TaigaAttachment[]> {
-    const raw = await this.#request('GET', `/${type}/attachments`, { query: { object_id: objectId, project: projectId } });
+  /** Attachments of one object (`GET /{epics,userstories,tasks,wiki}/attachments?object_id=&project=`). */
+  async listAttachments(type: AttachmentTargetType, projectId: number, objectId: number): Promise<TaigaAttachment[]> {
+    const collection = type === 'wiki' ? 'wiki' : TAIGA_ITEM[type].collection;
+    const raw = await this.#request('GET', `/${collection}/attachments`, { query: { object_id: objectId, project: projectId } });
     return parseList(raw, 'attachment', parseAttachment);
   }
 
   /**
-   * Uploads `attachment.file` as multipart (`POST /{type}/attachments`). The file is streamed from disk
-   * (a file-backed Blob): it is never read into memory as a whole, and a retry (401, 429) reads it again.
+   * Uploads `attachment.file` as multipart (`POST /{epics,userstories,tasks,wiki}/attachments`). The file is streamed
+   * from disk (a file-backed Blob): it is never read into memory as a whole, and a retry (401, 429) reads it again.
    */
-  async uploadAttachment(type: AttachmentObjectType, attachment: NewAttachment): Promise<TaigaAttachment> {
+  async uploadAttachment(type: AttachmentTargetType, attachment: NewAttachment): Promise<TaigaAttachment> {
+    const collection = type === 'wiki' ? 'wiki' : TAIGA_ITEM[type].collection;
     const form = new FormData();
     form.set('object_id', String(attachment.object_id));
     form.set('project', String(attachment.project));
     form.set('description', attachment.description);
     form.set('attached_file', await openAsBlob(attachment.file), attachment.name);
-    return parseAttachment(await this.#request('POST', `/${type}/attachments`, { form }));
+    return parseAttachment(await this.#request('POST', `/${collection}/attachments`, { form }));
   }
 
   /** Like #request, but a 404 means "absent" and returns undefined. */
@@ -694,13 +708,13 @@ export class TaigaClient {
     } catch (error) {
       // fetch() reports the real reason (ECONNREFUSED, DNS failure, ...) as the error's cause.
       const reason = error instanceof Error && error.cause !== undefined ? error.cause : error;
-      throw new TaigaError(this.#redact(`cannot reach Taiga at ${this.apiUrl}: ${errorMessage(reason)}`));
+      throw new TaigaError(this.#secrets.redact(`cannot reach Taiga at ${this.apiUrl}: ${errorMessage(reason)}`));
     }
   }
 
   /** `METHOD /path failed: HTTP <status> <body>`, with any secret Taiga echoed redacted (before truncating). */
   #failure(method: string, path: string, response: RawResponse): string {
-    const text = this.#redact(response.text);
+    const text = this.#secrets.redact(response.text);
     const detail = text.length > MAX_ERROR_BODY ? `${text.slice(0, MAX_ERROR_BODY)}…` : text;
     return `${method} ${path} failed: HTTP ${response.status}${detail ? ` ${detail}` : ''}`;
   }
@@ -715,14 +729,5 @@ export class TaigaClient {
       else if (!Number.isNaN(date)) units = (date - Date.now()) / 1000;
     }
     return Math.min(Math.max(units, 0), MAX_BACKOFF_UNITS) * this.#retryUnitMs;
-  }
-
-  #redact(text: string): string {
-    let result = text;
-    // Longest first, so a secret containing another one is replaced whole.
-    for (const secret of [...this.#secrets].sort((a, b) => b.length - a.length)) {
-      if (secret !== '') result = result.replaceAll(secret, REDACTED);
-    }
-    return result;
   }
 }

@@ -1,11 +1,13 @@
-// Bootstrap: brings a Taiga project to the state declared in project.yaml. `planBootstrap` is pure: from
-// the manifest and what Taiga reports it derives an ordered list of operations that only fill gaps
-// (create the project, enable modules, create/color tags, create custom attributes, invite members, create
+// Bootstrap: brings a Taiga project to the state declared in project.yaml. `readBootstrapRemote` reads what Taiga
+// has; `planBootstrap` is pure: from the manifest and that state it derives an ordered list of operations that only
+// fill gaps (create the project, enable modules, create/color tags, create custom attributes, invite members, create
 // the wiki home). It never disables, renames or deletes anything. `executeBootstrap` runs that plan.
 
-import type { ProjectModule } from './manifest/conventions.ts';
-import { WIKI_HOME_SLUG, type CustomAttributeItemType, type CustomAttributeSpec, type ProjectManifest } from './manifest/project.ts';
-import { readState, writeState } from './manifest/state.ts';
+import { ITEM_TYPES, type ItemType } from './items.ts';
+import { WIKI_HOME_SLUG, type ProjectModule } from './manifest/conventions.ts';
+import type { CustomAttributeSpec, ProjectManifest } from './manifest/project.ts';
+import { readSavedProject, readState, writeState } from './manifest/state.ts';
+import { FILL_ACTIONS, RESULT, summarize, tally, type FillAction, type FillResult, type PlanSummary } from './operations.ts';
 import {
   TaigaError,
   type ModuleFlag,
@@ -17,7 +19,7 @@ import {
   type TaigaUser,
 } from './taiga/client.ts';
 
-/** What Taiga currently has, as read by the CLI before planning. */
+/** What Taiga currently has, as read by `readBootstrapRemote` before planning. */
 export interface BootstrapRemote {
   me: TaigaUser;
   /** The existing project matched by slug, if any. */
@@ -36,36 +38,64 @@ export type BootstrapOperation =
   | { action: 'skip'; type: 'modules'; modules: ProjectModule[] }
   | { action: 'create' | 'skip'; type: 'tag'; name: string; color: string }
   | { action: 'update'; type: 'tag'; name: string; color: string; current: string | null }
-  | { action: 'create' | 'skip'; type: 'custom-attribute'; itemType: CustomAttributeItemType; name: string; fields: CustomAttributeSpec }
+  | { action: 'create' | 'skip'; type: 'custom-attribute'; itemType: ItemType; name: string; fields: CustomAttributeSpec }
   | { action: 'create' | 'skip'; type: 'membership'; member: string; role: string }
   | { action: 'create'; type: 'wiki'; slug: string; content: string }
   | { action: 'skip'; type: 'wiki'; slug: string };
 
-export interface BootstrapPlan {
+export interface BootstrapPlan extends PlanSummary<FillAction> {
   project: { id: number | null; slug: string; name: string; exists: boolean };
-  changes: boolean;
-  summary: { create: number; update: number; skip: number };
   operations: BootstrapOperation[];
 }
 
-export type BootstrapResult = 'created' | 'updated' | 'unchanged';
-
 export interface BootstrapReport {
   project: { id: number; slug: string };
-  operations: (BootstrapOperation & { result: BootstrapResult })[];
-  summary: Record<BootstrapResult, number>;
+  operations: (BootstrapOperation & { result: FillResult })[];
+  summary: Record<FillResult, number>;
 }
 
 const moduleFlag = (module: ProjectModule) => `is_${module}_activated` as ModuleFlag;
 
 /** Finds the template the manifest names (`scrum`, `kanban`) among Taiga's, by slug or name. */
-export function findTemplate(templates: TaigaProjectTemplate[], name: string): TaigaProjectTemplate {
+function findTemplate(templates: TaigaProjectTemplate[], name: string): TaigaProjectTemplate {
   const wanted = name.toLowerCase();
   const template = templates.find((t) => t.slug === wanted || t.name.toLowerCase() === wanted);
   if (!template) {
     throw new TaigaError(`project template "${name}" not found on Taiga; available: ${templates.map((t) => t.slug).join(', ') || '(none)'}`);
   }
   return template;
+}
+
+/**
+ * Reads what bootstrap compares project.yaml with. Refuses (before any write) when no visible project has the
+ * manifest's slug but `statePath` records a project a previous run created under another slug, or a project the user
+ * cannot see already has the slug: never create a second project.
+ */
+export async function readBootstrapRemote(manifest: ProjectManifest, client: TaigaClient, statePath: string): Promise<BootstrapRemote> {
+  const me = await client.getMe();
+  const project = await client.findProjectBySlug(manifest.slug);
+  if (!project) {
+    const saved = await readSavedProject(statePath);
+    const recorded = saved && (await client.findProject(saved.id));
+    if (recorded) {
+      throw new TaigaError(
+        `state.json already points to project id ${recorded.id} (slug "${recorded.slug}"), but no project has slug "${manifest.slug}"; ` +
+          `refusing to create another one. Have a Taiga admin set its slug to "${manifest.slug}", or remove "project" from state.json ` +
+          'if that project is unrelated.',
+      );
+    }
+    if (await client.isSlugTakenByInvisibleProject(manifest.slug)) {
+      throw new TaigaError(
+        `slug "${manifest.slug}" is already taken by a project you cannot see (private, and you are not a member); refusing to ` +
+          `create another one, which Taiga would give a suffixed slug. Ask its admin to add you as an admin, or rename the project.`,
+        403,
+      );
+    }
+  }
+  const template = project ? undefined : findTemplate(await client.listProjectTemplates(), manifest.template);
+  const memberships = project ? await client.listMemberships(project.id) : [];
+  const wikiHomeExists = project !== undefined && manifest.wikiHome !== undefined && (await client.findWikiPage(project.id, WIKI_HOME_SLUG)) !== undefined;
+  return { me, project, template, memberships, wikiHomeExists };
 }
 
 export function planBootstrap(manifest: ProjectManifest, remote: BootstrapRemote): BootstrapPlan {
@@ -106,7 +136,7 @@ export function planBootstrap(manifest: ProjectManifest, remote: BootstrapRemote
     else operations.push({ action: 'skip', type: 'tag', name, color });
   }
 
-  for (const itemType of ['epic', 'userstory', 'task'] as const) {
+  for (const itemType of ITEM_TYPES) {
     const existing = new Set(project?.customAttributes[itemType].map((a) => a.name));
     for (const fields of manifest.customAttributes[itemType]) {
       operations.push({ action: existing.has(fields.name) ? 'skip' : 'create', type: 'custom-attribute', itemType, name: fields.name, fields });
@@ -141,18 +171,15 @@ export function planBootstrap(manifest: ProjectManifest, remote: BootstrapRemote
     );
   }
 
-  const summary = { create: 0, update: 0, skip: 0 };
-  for (const op of operations) summary[op.action] += 1;
   return {
     project: { id: project?.id ?? null, slug: manifest.slug, name: manifest.name, exists: project !== undefined },
-    changes: summary.create + summary.update > 0,
-    summary,
+    ...summarize(FILL_ACTIONS, operations),
     operations,
   };
 }
 
 /** Human-readable description of one operation, shared by the plan and the report. */
-export function describeOperation(op: BootstrapOperation): string {
+export function describeBootstrapOperation(op: BootstrapOperation): string {
   switch (op.type) {
     case 'project':
       return op.action === 'create'
@@ -190,10 +217,8 @@ export async function executeBootstrap(
     await writeState(statePath, state);
   };
   const operations: BootstrapReport['operations'] = [];
-  const summary: Record<BootstrapResult, number> = { created: 0, updated: 0, unchanged: 0 };
 
   for (const op of plan.operations) {
-    const result: BootstrapResult = op.action === 'create' ? 'created' : op.action === 'update' ? 'updated' : 'unchanged';
     try {
       if (op.type === 'project' && op.action === 'create') {
         project = await client.createProject(op.fields);
@@ -232,12 +257,11 @@ export async function executeBootstrap(
       }
     } catch (error) {
       if (!(error instanceof TaigaError)) throw error;
-      throw new TaigaError(`bootstrap step "${describeOperation(op)}" failed: ${error.message}`, error.status);
+      throw new TaigaError(`bootstrap step "${describeBootstrapOperation(op)}" failed: ${error.message}`, error.status);
     }
-    operations.push({ ...op, result });
-    summary[result] += 1;
+    operations.push({ ...op, result: RESULT[op.action] });
   }
 
   await saveProject(project!);
-  return { project: { id: project!.id, slug: project!.slug }, operations, summary };
+  return { project: { id: project!.id, slug: project!.slug }, operations, summary: tally(FILL_ACTIONS, operations) };
 }

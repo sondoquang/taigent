@@ -20,7 +20,7 @@ custom_attributes:
   epic:
     - name: Spec link
       type: url
-  userstory:
+  story:
     - name: Acceptance owner
   task:
     - name: Estimate (h)
@@ -120,7 +120,7 @@ test('bootstrap --dry-run lists the operations, writes nothing and exits 3', asy
   assert.match(text.stdout, /template scrum/);
   assert.match(text.stdout, /enable modules epics, kanban/);
   assert.match(text.stdout, /create tag type:feature +#2E7D32/);
-  assert.match(text.stdout, /create userstory custom attribute "Acceptance owner"/);
+  assert.match(text.stdout, /create story custom attribute "Acceptance owner"/);
   assert.match(text.stdout, /invite carol@newcomer\.test as UX/);
   assert.match(text.stdout, /create wiki page home/);
 
@@ -202,14 +202,13 @@ test('bootstrap on an existing project (matched by slug) only fills the gaps', a
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(h.fake.state.projects.length, 1, 'no duplicate project');
-  assert.deepEqual(writes(h.fake), [
-    `PATCH /projects/${project.id}`,
-    `POST /projects/${project.id}/edit_tag`,
-    'POST /userstory-custom-attributes',
-    'POST /task-custom-attributes',
-    'POST /memberships',
-    'POST /memberships',
-  ]);
+  assert.equal(project.modules.is_epics_activated, true);
+  assert.deepEqual(project.tagsColors, { 'area:billing': '#1565C0', 'type:feature': '#2E7D32' });
+  assert.deepEqual(projectAttributes(h.fake, project.id), [
+    { itemType: 'epic', name: 'Spec link', type: 'url', description: '' },
+    { itemType: 'userstory', name: 'Acceptance owner', type: 'text', description: '' },
+    { itemType: 'task', name: 'Estimate (h)', type: 'number', description: 'Hours of work' },
+  ], 'the existing epic attribute is kept, the missing ones are added');
   assert.deepEqual(h.fake.requests.find((r) => r.method === 'PATCH')?.body, { is_epics_activated: true });
   assert.deepEqual(h.fake.requests.find((r) => r.path.endsWith('/edit_tag'))?.body, { from_tag: 'type:feature', color: '#2E7D32' });
   assert.equal(h.fake.state.wikiPages[0]!.content, 'Hand-written home.', 'existing wiki home is left alone');
@@ -234,6 +233,21 @@ test('bootstrap refuses an existing slug whose project the user does not adminis
     assert.match(result.stderr, /project "acme-portal" already exists.*not an admin/);
     assert.equal(result.json<{ error: { kind: string; status: number } }>().error.status, 403);
   }
+  assert.deepEqual(writes(h.fake), []);
+});
+
+test('bootstrap refuses a slug taken by a private project the user cannot see, before creating anything', async (t) => {
+  const h = await setup(t);
+  // Another user's private project: by_slug answers 404 like for a free slug, the resolver answers 403.
+  const other = h.fake.addUser({ username: 'someone-else', email: 'else@example.test' });
+  h.fake.addProject({ slug: SLUG, name: 'Acme - Portal', members: [other.id], admins: [other.id], is_private: true });
+
+  for (const args of [['--yes'], ['--dry-run']]) {
+    const result = await h.taigent(['bootstrap', '--project', SLUG, ...args, '--json']);
+    assert.equal(result.code, 5, result.stderr);
+    assert.match(result.stderr, /slug "acme-portal" is already taken by a project you cannot see/);
+  }
+  assert.equal(h.fake.state.projects.length, 1, 'no second project');
   assert.deepEqual(writes(h.fake), []);
 });
 

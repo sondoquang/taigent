@@ -161,6 +161,33 @@ test('fake Taiga keeps custom attribute values per item: string id keys, full re
   });
 });
 
+test('fake Taiga filters the epic, user story and task lists by tags= like taiga-back (any listed tag, exact match)', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const token = await login(fake);
+  const story = fake.addUserStory({ project: project.id, subject: 'Story A', tags: ['src:a', 'area:auth'] });
+  fake.addUserStory({ project: project.id, subject: 'Story B', tags: ['src:b'] });
+  fake.addUserStory({ project: project.id, subject: 'Story C', tags: ['src:c'] });
+  fake.addEpic({ project: project.id, subject: 'Epic A', tags: ['SRC:A'] });
+  fake.addEpic({ project: project.id, subject: 'Epic B', tags: ['src:b'] });
+  fake.addEpic({ project: project.id, subject: 'Epic C', tags: ['src:c'] });
+  fake.addTask({ project: project.id, user_story: story.id, subject: 'Task A', tags: ['src:a'] });
+  fake.addTask({ project: project.id, user_story: story.id, subject: 'Task B', tags: ['src:b'] });
+  fake.addTask({ project: project.id, user_story: story.id, subject: 'Task C' });
+
+  const list = async (path: string, tags: string) => {
+    const response = await fetch(`${fake.url}${path}?project=${project.id}&tags=${tags}`, {
+      headers: { authorization: `Bearer ${token}`, 'x-disable-pagination': 'True' },
+    });
+    return ((await response.json()) as { subject: string }[]).map((item) => item.subject);
+  };
+  for (const [path, kind] of [['/epics', 'Epic'], ['/userstories', 'Story'], ['/tasks', 'Task']] as const) {
+    assert.deepEqual(await list(path, 'src:a,src:b'), [`${kind} A`, `${kind} B`], `${path}: any listed tag`);
+    assert.deepEqual(await list(path, 'SRC:A'), [], `${path}: tags are matched exactly (stored lowercased)`);
+  }
+});
+
 async function postAttachment(fake: FakeTaiga, token: string, path: string, form: FormData | string): Promise<{ status: number; body: unknown }> {
   const headers: Record<string, string> = { authorization: `Bearer ${token}` };
   if (typeof form === 'string') headers['content-type'] = 'application/json';

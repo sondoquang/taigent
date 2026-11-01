@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import type { ApplyReport } from '../src/executor.ts';
 import { startHarness } from './support/harness.ts';
@@ -28,10 +30,8 @@ test('an access token that expires mid-apply is refreshed via /auth/refresh and 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.json<ApplyReport>().summary.created, 3);
   assert.deepEqual(h.fake.state.epics.map((e) => e.subject), ['Authentication', 'Billing', 'Search']);
-  assert.deepEqual(
-    h.fake.requests.filter((r) => r.path.startsWith('/auth')).map((r) => r.path),
-    ['/auth', '/auth/refresh'],
-  );
+  // Documented contract (docs/cli.md §Environment): a 401 renews the token with POST /auth/refresh, no new login.
+  assert.deepEqual(authPaths(h), ['/auth', '/auth/refresh']);
 });
 
 test('when the refresh token is revoked too, the CLI logs in again and completes', async (t) => {
@@ -44,6 +44,7 @@ test('when the refresh token is revoked too, the CLI logs in again and completes
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(h.fake.state.epics.length, 3);
+  // Documented contract: a rejected refresh falls back to a new login.
   assert.deepEqual(authPaths(h), ['/auth', '/auth/refresh', '/auth']);
 });
 
@@ -103,6 +104,7 @@ test('429 responses are retried with backoff that honors Retry-After, then the j
   assert.equal(result.code, 0, result.stderr);
   assert.deepEqual(h.fake.state.epics.map((e) => e.subject), ['Authentication', 'Billing', 'Search']);
   const creates = h.fake.requests.filter((r) => r.method === 'POST' && r.path === '/epics');
+  // 3 creates + the 2 throttled attempts retried: the documented Retry-After waits are measured between them.
   assert.equal(creates.length, 5);
   // Retry-After: 5 at 20 ms per second → at least 100 ms between the throttled attempts.
   assert.ok(creates[2]!.at - creates[1]!.at >= 95, `waited ${creates[2]!.at - creates[1]!.at} ms`);
@@ -119,6 +121,7 @@ test('429 retries are bounded: a Taiga that keeps throttling fails with exit 5',
 
   assert.equal(result.code, 5);
   assert.match(result.stderr, /GET \/epics failed: HTTP 429 .*throttled/);
+  // Documented contract (docs/cli.md §Environment): up to 5 retries per request.
   assert.equal(h.fake.requests.filter((r) => r.path === '/epics').length, 6, 'one attempt + 5 retries');
 });
 
@@ -137,6 +140,10 @@ test('missing configuration names the variables to set', async (t) => {
   const badUnit = await h.taigent(['plan', '--project', 'demo'], { env: { TAIGENT_RETRY_UNIT_MS: 'soon' } });
   assert.equal(badUnit.code, 2);
   assert.match(badUnit.stderr, /TAIGENT_RETRY_UNIT_MS/);
+
+  const userinfo = await h.taigent(['plan', '--project', 'demo', '--json'], { env: { TAIGA_API_URL: h.fake.url.replace('://', '://bot:pw@') } });
+  assert.equal(userinfo.code, 2);
+  assert.match(userinfo.json<ErrorOutput>().error.message, /TAIGA_API_URL must not contain credentials.*TAIGA_USERNAME and TAIGA_PASSWORD/);
   assert.deepEqual(h.fake.requests, []);
 });
 
@@ -220,7 +227,21 @@ test('stdout, stderr and --json output never contain a password or token, on suc
     h.fake.intercept({ method: 'POST', path: '/epics', status: 500, bodyFrom: (r) => ({ echoed: r.headers.authorization }) }),
   );
 
-  const secrets = [h.fake.user.password, wrongPassword, bogusToken, ...h.fake.issuedTokens];
+  // Credentials embedded in TAIGA_API_URL (user:password@) are a configuration error that never echoes the URL.
+  const urlPassword = 'url-secret-pass';
+  const urlWithUserinfo = h.fake.url.replace('://', `://taigent-bot:${urlPassword}@`);
+  await scenario('URL userinfo', 2, ['plan', '--project', 'demo'], { TAIGA_API_URL: urlWithUserinfo });
+  await scenario('URL userinfo, unreachable', 2, ['plan', '--project', 'demo'], { TAIGA_API_URL: `http://bot:${urlPassword}@127.0.0.1:9/api/v1` });
+
+  // Internal error (exit 1, stack trace printed): a hand-broken state.json whose text ends up in the error message.
+  await h.writeManifest('demo', 'state.json', h.fake.user.password);
+  await scenario('internal error', 1, ['apply', '--project', 'demo', '--yes']);
+  const freshToken = h.fake.issueToken();
+  await scenario('internal error with token', 1, ['apply', '--project', 'demo', '--yes'], { TAIGA_TOKEN: freshToken, ...noCredentials }, () =>
+    writeFileSync(join(h.manifestsDir, 'demo', 'state.json'), freshToken),
+  );
+
+  const secrets = [h.fake.user.password, wrongPassword, bogusToken, urlPassword, ...h.fake.issuedTokens];
   const all = outputs.join('\n');
   for (const secret of secrets) assert.ok(!all.includes(secret), `output leaks ${secret}:\n${all}`);
   assert.match(all, /\[redacted\]/, 'the echoing scenarios must have exercised redaction');
