@@ -4,7 +4,9 @@
 // instead of mocking internal modules.
 //
 // Fidelity rules (mirroring taiga-back):
-// - Every route lives under /api/v1; everything except POST /auth needs `Authorization: Bearer <token>`.
+// - Every route lives under /api/v1; everything except POST /auth and POST /auth/refresh needs
+//   `Authorization: Bearer <token>`. Access tokens can be expired on demand (`expireTokens`); refresh
+//   tokens rotate on every `/auth/refresh`, like taiga-back's SIMPLE_JWT settings.
 // - Lists are paginated (30 per page, `x-pagination-*` headers) unless `x-disable-pagination` is sent.
 // - Tags are stored lowercased and returned as `[name, color|null]` pairs.
 // - Validation errors are 400 with DRF-style `{ field: [message] }` bodies. The fake is STRICTER than
@@ -124,6 +126,8 @@ export interface RecordedRequest {
   query: URLSearchParams;
   headers: IncomingMessage['headers'];
   body: unknown;
+  /** `performance.now()` when the request arrived (for asserting backoff delays). */
+  at: number;
 }
 
 export interface InterceptRule {
@@ -132,6 +136,8 @@ export interface InterceptRule {
   path: string | RegExp;
   status: number;
   body?: unknown;
+  /** Builds the body from the intercepted request instead (e.g. a server echoing what it received). */
+  bodyFrom?: (request: RecordedRequest) => unknown;
   headers?: Record<string, string>;
   /** How many matching requests to let through untouched before intercepting (default 0). */
   after?: number;
@@ -169,6 +175,16 @@ export interface FakeTaiga {
   /** Answer the next matching request(s) with a canned response instead of handling it. */
   intercept(rule: InterceptRule): void;
   close(): Promise<void>;
+  /** Every access and refresh token issued so far, in order (for asserting they never leak). */
+  issuedTokens: string[];
+  /** Issues an access token for the default user without POST /auth (e.g. for TAIGA_TOKEN). */
+  issueToken(): string;
+  /**
+   * Expires every access token issued so far, like Taiga's 24h access-token lifetime running out,
+   * once `after` more authenticated requests have been served (default 0: before the next one).
+   * With `refresh: true` the refresh tokens are revoked too, forcing a new login.
+   */
+  expireTokens(options?: { after?: number; refresh?: boolean }): void;
 }
 
 type Json = Record<string, unknown>;
@@ -279,6 +295,49 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   const intercepts: InterceptRule[] = [];
   const tokens = new Map<string, number>();
   let nextId = 1000;
+  // Auth: access and refresh tokens map to a user id. Expiry is scheduled by expireTokens().
+  const refreshTokens = new Map<string, number>();
+  const issuedTokens: string[] = [];
+  let tokenSeq = 0;
+  let pendingExpiry: { after: number; refresh: boolean } | undefined;
+
+  function issueTokens(userId: number): { auth_token: string; refresh: string } {
+    const seq = ++tokenSeq;
+    const pair = { auth_token: `token-${userId}-${seq}`, refresh: `refresh-${userId}-${seq}` };
+    tokens.set(pair.auth_token, userId);
+    refreshTokens.set(pair.refresh, userId);
+    issuedTokens.push(pair.auth_token, pair.refresh);
+    return pair;
+  }
+
+  function applyPendingExpiry(): void {
+    if (!pendingExpiry) return;
+    if (pendingExpiry.after > 0) {
+      pendingExpiry.after -= 1;
+      return;
+    }
+    tokens.clear();
+    if (pendingExpiry.refresh) refreshTokens.clear();
+    pendingExpiry = undefined;
+  }
+
+  // POST /auth/refresh (https://docs.taiga.io/api.html#auth-refresh): { refresh } → new token pair.
+  function refreshAuth(body: unknown): Reply {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw fieldErrors({ non_field_errors: ['Invalid data'] });
+    }
+    const data = body as Json;
+    const errors: Record<string, string[]> = {};
+    for (const field of Object.keys(data)) {
+      if (field !== 'refresh') errors[field] = ['Unknown field (the fake Taiga rejects unknown fields).'];
+    }
+    if (typeof data.refresh !== 'string' || data.refresh === '') errors.refresh = ['This field is required.'];
+    if (Object.keys(errors).length > 0) throw fieldErrors(errors);
+    const userId = refreshTokens.get(data.refresh as string);
+    if (userId === undefined) throw new HttpError(401, { detail: 'Token is invalid or expired', code: 'token_not_valid' });
+    refreshTokens.delete(data.refresh as string);
+    return { status: 200, body: issueTokens(userId) };
+  }
 
   function addRoles(project: FakeProject, roles: { name: string; slug: string }[]): void {
     for (const role of roles) state.roles.push({ id: ++nextId, project: project.id, name: role.name, slug: role.slug });
@@ -718,9 +777,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
           _error_type: 'taiga.base.exceptions.NotAuthenticated',
         });
       }
-      const token = `token-${found.id}-${tokens.size + 1}`;
-      tokens.set(token, found.id);
-      return { status: 200, body: { id: found.id, username: found.username, auth_token: token, refresh: `refresh-${token}` } };
+      return { status: 200, body: { id: found.id, username: found.username, ...issueTokens(found.id) } };
     }
 
     if (method === 'GET' && path === '/project-templates') {
@@ -736,6 +793,9 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       return { status: 200, body: templates };
     }
 
+    if (method === 'POST' && path === '/auth/refresh') return refreshAuth(body);
+
+    applyPendingExpiry();
     const userId = authenticate(req);
 
     if (method === 'GET' && path === '/projects/by_slug') {
@@ -777,6 +837,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const at = performance.now();
     const url = new URL(req.url ?? '/', 'http://fake');
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
@@ -790,12 +851,14 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     }
     const path = url.pathname.startsWith('/api/v1/') ? url.pathname.slice('/api/v1'.length) : undefined;
     const method = req.method ?? 'GET';
-    requests.push({ method, path: path ?? url.pathname, query: url.searchParams, headers: req.headers, body });
+    const request: RecordedRequest = { method, path: path ?? url.pathname, query: url.searchParams, headers: req.headers, body, at };
+    requests.push(request);
     try {
       if (path === undefined) throw notFound();
       if (typeof body === 'string') throw new HttpError(400, { _error_message: 'JSON parse error' });
       const rule = takeIntercept(method, path);
-      reply = rule ? { status: rule.status, body: rule.body, headers: rule.headers } : route(req, path, url.searchParams, body);
+      const replyBody = rule?.bodyFrom ? rule.bodyFrom(request) : rule?.body;
+      reply = rule ? { status: rule.status, body: replyBody, headers: rule.headers } : route(req, path, url.searchParams, body);
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
       reply = error.reply;
@@ -827,6 +890,11 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     addMembership,
     addWikiPage,
     intercept: (rule) => void intercepts.push({ ...rule }),
+    issuedTokens,
+    issueToken: () => issueTokens(user.id).auth_token,
+    expireTokens: (options = {}) => {
+      pendingExpiry = { after: options.after ?? 0, refresh: options.refresh ?? false };
+    },
     close: () => {
       const { promise, resolve, reject } = Promise.withResolvers<void>();
       server.closeAllConnections();
