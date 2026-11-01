@@ -393,14 +393,24 @@ tickets. Read-only: it needs no manifest and writes nothing. Days are calendar d
 
 It reads `GET /users/me`, then every `GET /userstories?assigned_users=<me>` (open and closed, plus `project=<id>` with
 `--project`; pagination disabled, so no page is missed), then `GET /projects/<id>` for each project holding a ticket,
-to turn assignee ids into usernames. A story is a ticket when its `finish_date` falls in the range, its `due_date`
-(a plain day) falls in it, or it is open. Due status compares calendar days: a closed ticket's local closing day on or
-before its due date is `On time`, after it `Late`; an open ticket's due date before today is `Overdue`, otherwise
-`On track`; without a due date, `No due date`. A closed story without a `finish_date` still counts as closed, has no
-`closedAt`, and is a ticket only when due in the range; its due status is `null` (unknown, it cannot be compared).
+to turn assignee ids into usernames and find its user story custom attribute "Spent Time", then, in a project that has
+it, `GET /userstories/custom-attributes-values/<id>` for each ticket. A story is a ticket when its `finish_date` falls
+in the range, its `due_date` (a plain day) falls in it, or it is open. Due status compares calendar days: a closed
+ticket's local closing day on or before its due date is `On time`, after it `Late`; an open ticket's due date before
+today is `Overdue`, otherwise `On track`; without a due date, `No due date`. A closed story without a `finish_date`
+still counts as closed, has no `closedAt`, and is a ticket only when due in the range; its due status is `null`
+(unknown, it cannot be compared).
+
+**Effort** (`GLOSSARY.md`) is in hours. The "Spent Time" attribute is found by name in each project (trimmed, any case),
+since its id differs from project to project. A ticket whose Spent Time holds a number has that effort, source
+`spent` (0 included); otherwise its `total_points` (the sum of every role's points, 1 point = 1 hour), source
+`points`, an estimate; with neither, `effort` and `effortSource` are null and the ticket is listed in
+`notes.missingEffort` (`ref`, project slug). A project without the attribute uses points only.
+
 Missing or invalid days, or `--from` after `--to`, are a usage error (exit 2) before Taiga is contacted. The text form
 gives one line of totals by due status, then each project with one line per ticket (ref, due status, status, due date,
-local closing time, subject). `tickets --json` prints a `TicketsReport`:
+local closing time, effort, subject); an effort from points reads `5h (estimated from points)`, a missing one
+`no effort`. `tickets --json` prints a `TicketsReport`:
 
 ```json
 {
@@ -412,8 +422,10 @@ local closing time, subject). `tickets --json` prints a `TicketsReport`:
   "tickets": [
     { "id": 281, "ref": 84, "subject": "Guideline flow", "status": "Done", "isClosed": true,
       "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" }, "assignees": ["son.do", "an.tran"],
-      "dueDate": "2026-10-30", "closedAt": "2026-11-01T04:26:49.642Z", "dueStatus": "Late" }
-  ]
+      "dueDate": "2026-10-30", "closedAt": "2026-11-01T04:26:49.642Z", "dueStatus": "Late",
+      "effort": 8, "effortSource": "spent" }
+  ],
+  "notes": { "missingEffort": [{ "ref": 12, "project": "internal-taigent" }] }
 }
 ```
 
@@ -537,11 +549,13 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   name?, members?, admins?, is_private?, modules?, tagsColors? })`, `addCustomAttribute`, `addMembership`,
   `addWikiPage`; upload fixtures `addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki",
   object_id, name, content })`. For `closed` and `tickets`, set the returned item's `assigned_users` (stories) or
-  `assigned_to`, `is_closed` and `finish_date` (stories) or `finished_date`, and a story's `due_date` (YYYY-MM-DD) and
-  `status_name` (its status name when open or closed, null for the default): list responses embed
-  `project_extra_info` and `status_extra_info` (closed stories `Done`, closed tasks and issues `Closed`, otherwise
-  `New`, unless `status_name` is set), and the list endpoints filter on `assigned_users`/`is_closed` (stories) and
-  `assigned_to`/`status__is_closed` (tasks, issues), ignoring the other names like Taiga.
+  `assigned_to`, `is_closed` and `finish_date` (stories) or `finished_date`, and a story's `due_date` (YYYY-MM-DD),
+  `total_points` (number or null) and `status_name` (its status name when open or closed, null for the default): list
+  responses embed `project_extra_info` and `status_extra_info` (closed stories `Done`, closed tasks and issues
+  `Closed`, otherwise `New`, unless `status_name` is set), and the list endpoints filter on `assigned_users`/`is_closed`
+  (stories) and `assigned_to`/`status__is_closed` (tasks, issues), ignoring the other names like Taiga. A ticket's
+  Spent Time: `addCustomAttribute({ itemType: "userstory", project, name: "Spent Time" })`, then
+  `editAttributeValues("userstory", storyId, { [attributeId]: hours })`.
 - Edits like a Taiga user (bump `version`, recorded for OCC): `editItem(item, changes)`, `editWikiPage(page, changes)`,
   `editAttributeValues(itemType, itemId, values)`.
 - `fake.state`: what Taiga holds, the place to assert outcomes. `epics`, `userStories`, `tasks`, `issues` (tags lowercased),

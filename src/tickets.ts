@@ -1,4 +1,4 @@
-// `taigent tickets`: the Period's tickets of the authenticated user (see GLOSSARY.md), each with its Due status.
+// `taigent tickets`: the Period's tickets of the authenticated user (see GLOSSARY.md), each with its Due status and Effort.
 // Read-only. Days are calendar days in the local time zone (TZ); the client knows Taiga's field names.
 
 import type { TaigaAssignedStory, TaigaClient } from './taiga/client.ts';
@@ -33,7 +33,13 @@ export interface Ticket {
   closedAt: string | null;
   /** Null only for a closed ticket with a due date but no closing day: it cannot be compared. */
   dueStatus: DueStatus | null;
+  /** Hours: the Spent Time value when set (0 included), else `total_points` (1 point = 1 hour), else null. */
+  effort: number | null;
+  effortSource: EffortSource | null;
 }
+
+/** Where an effort comes from: the "Spent Time" custom attribute, or the story's total points (an estimate). */
+export type EffortSource = 'spent' | 'points';
 
 /** The `--json` output of `taigent tickets`. */
 export interface TicketsReport {
@@ -46,6 +52,10 @@ export interface TicketsReport {
   generatedAt: string;
   /** Closed tickets first by `closedAt` (those without one last), then open ones: Overdue, On track, No due date, each by due date. */
   tickets: Ticket[];
+  notes: {
+    /** Tickets with neither Spent Time nor points. */
+    missingEffort: { ref: number; project: string }[];
+  };
 }
 
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -89,6 +99,12 @@ function dueStatus(story: TaigaAssignedStory, today: string): DueStatus | null {
   return story.dueDate < today ? 'Overdue' : 'On track';
 }
 
+function effortOf(spent: unknown, story: TaigaAssignedStory): Pick<Ticket, 'effort' | 'effortSource'> {
+  if (typeof spent === 'number' && Number.isFinite(spent)) return { effort: spent, effortSource: 'spent' };
+  if (story.totalPoints !== null) return { effort: story.totalPoints, effortSource: 'points' };
+  return { effort: null, effortSource: null };
+}
+
 /** Closed in the range, due in the range, or still open. */
 function inPeriod(story: TaigaAssignedStory, range: DayRange): boolean {
   if (!story.isClosed) return true;
@@ -110,19 +126,25 @@ function compareTickets(a: Ticket, b: Ticket): number {
   return OPEN_ORDER[a.dueStatus!]! - OPEN_ORDER[b.dueStatus!]! || (a.dueDate ?? '').localeCompare(b.dueDate ?? '');
 }
 
-/** Reads every story assigned to the user and keeps the Period's tickets, with assignee usernames and due status. */
+/** Reads every story assigned to the user and keeps the Period's tickets, with assignee usernames, due status and effort. */
 export async function readTickets(client: TaigaClient, range: DayRange, project?: { id: number; slug: string }): Promise<TicketsReport> {
   const now = new Date();
   const today = localDay(now);
   const me = await client.getMe();
   const stories = (await client.listAssignedStories(me.id, project?.id)).filter((story) => inPeriod(story, range));
   const usernames = new Map<number, Map<number, string>>();
+  const spentTimeIds = new Map<number, number | undefined>();
   for (const projectId of new Set(stories.map((story) => story.project.id))) {
     const detail = await client.findProject(projectId);
     usernames.set(projectId, new Map(detail?.members.map((member) => [member.id, member.username])));
+    // The user story attribute "Spent Time" (trimmed, any case): its id differs from project to project.
+    spentTimeIds.set(projectId, detail?.customAttributes.story.find((attribute) => attribute.name.trim().toLowerCase() === 'spent time')?.id);
   }
-  const tickets = stories.map(
-    (story): Ticket => ({
+  const tickets: Ticket[] = [];
+  for (const story of stories) {
+    const attributeId = spentTimeIds.get(story.project.id);
+    const spent = attributeId === undefined ? undefined : (await client.getAttributeValues('story', story.id)).values[String(attributeId)];
+    tickets.push({
       id: story.id,
       ref: story.ref,
       subject: story.subject,
@@ -133,8 +155,9 @@ export async function readTickets(client: TaigaClient, range: DayRange, project?
       dueDate: story.dueDate,
       closedAt: story.closedAt,
       dueStatus: dueStatus(story, today),
-    }),
-  );
+      ...effortOf(spent, story),
+    });
+  }
   tickets.sort(compareTickets);
   return {
     user: { id: me.id, username: me.username },
@@ -143,7 +166,16 @@ export async function readTickets(client: TaigaClient, range: DayRange, project?
     today,
     generatedAt: now.toISOString(),
     tickets,
+    notes: {
+      missingEffort: tickets.filter((ticket) => ticket.effort === null).map((ticket) => ({ ref: ticket.ref, project: ticket.project.slug })),
+    },
   };
+}
+
+/** `3.5h`, `5h (estimated from points)`, or `no effort`. */
+function formatEffort(ticket: Ticket): string {
+  if (ticket.effort === null) return 'no effort';
+  return ticket.effortSource === 'points' ? `${ticket.effort}h (estimated from points)` : `${ticket.effort}h`;
 }
 
 /** Text form: the totals by due status, then one block per project (most tickets first) with one line per ticket. */
@@ -159,7 +191,9 @@ export function formatTicketsText(report: TicketsReport): string {
     lines.push('', `${slug} (${group[0]!.project.name}): ${group.length}`);
     for (const ticket of group) {
       const closed = ticket.closedAt === null ? (ticket.isClosed ? 'closed' : 'open') : `closed ${localMinute(ticket.closedAt)}`;
-      lines.push(`  #${ticket.ref}  ${ticket.dueStatus ?? 'unknown'}  ${ticket.status}  due ${ticket.dueDate ?? '-'}  ${closed}  ${ticket.subject}`);
+      lines.push(
+        `  #${ticket.ref}  ${ticket.dueStatus ?? 'unknown'}  ${ticket.status}  due ${ticket.dueDate ?? '-'}  ${closed}  ${formatEffort(ticket)}  ${ticket.subject}`,
+      );
     }
   }
   return `${lines.join('\n')}\n`;

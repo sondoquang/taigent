@@ -350,6 +350,8 @@ export interface TaigaAssignedStory {
   dueDate: string | null;
   /** When Taiga closed it (`finish_date`, ISO 8601), or null: open, or closed without a recorded date. */
   closedAt: string | null;
+  /** Sum of the points of every role (`total_points`), or null when none is estimated. */
+  totalPoints: number | null;
 }
 
 function parseAssignedStory(raw: unknown): TaigaAssignedStory {
@@ -371,6 +373,7 @@ function parseAssignedStory(raw: unknown): TaigaAssignedStory {
     assignedUsers: list(r.assigned_users ?? [], `${what}.assigned_users`).filter((id): id is number => typeof id === 'number'),
     dueDate: typeof r.due_date === 'string' ? r.due_date : null,
     closedAt: typeof r.finish_date === 'string' ? r.finish_date : null,
+    totalPoints: typeof r.total_points === 'number' ? r.total_points : null,
   };
 }
 

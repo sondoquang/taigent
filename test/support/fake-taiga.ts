@@ -151,6 +151,8 @@ export interface FakeUserStory {
   due_date: string | null;
   /** Name of the story's status in list responses; null for the template default (`Done` closed, `New` open). */
   status_name: string | null;
+  /** Sum of the points of every role, null when none is estimated; read-only on Taiga, set it directly. */
+  total_points: number | null;
 }
 
 export interface FakeTask {
@@ -677,6 +679,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       finish_date: null,
       due_date: null,
       status_name: null,
+      total_points: null,
     });
   }
 

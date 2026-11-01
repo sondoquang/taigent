@@ -18,6 +18,8 @@ interface TicketJson {
   dueDate: string | null;
   closedAt: string | null;
   dueStatus: string | null;
+  effort: number | null;
+  effortSource: 'spent' | 'points' | null;
 }
 
 interface TicketsJson {
@@ -27,9 +29,10 @@ interface TicketsJson {
   today: string;
   generatedAt: string;
   tickets: TicketJson[];
+  notes: { missingEffort: { ref: number; project: string }[] };
 }
 
-type StoryFields = Partial<Pick<FakeUserStory, 'is_closed' | 'finish_date' | 'due_date' | 'status_name'>> & { assigned?: number[] };
+type StoryFields = Partial<Pick<FakeUserStory, 'is_closed' | 'finish_date' | 'due_date' | 'status_name' | 'total_points'>> & { assigned?: number[] };
 
 /** Stories of the fake user (and of someone else) in two projects, plus a task and an issue that are not tickets. */
 function seed(fake: FakeTaiga) {
@@ -44,7 +47,7 @@ function seed(fake: FakeTaiga) {
     dueInRangeClosedBefore: story(alpha.id, 'due in range, closed before', { finish_date: '2026-10-20T03:00:00Z', due_date: '2026-10-28' }),
     closedFirstMinuteOnDueDay: story(alpha.id, 'first minute', { finish_date: '2026-10-25T17:00:00Z', due_date: '2026-10-26' }),
     closedWithoutDueDate: story(alpha.id, 'no due date', { finish_date: '2026-10-28T00:00:00Z' }),
-    closedLastMinuteLate: story(beta.id, 'last minute', { finish_date: '2026-11-01T16:59:00Z', due_date: '2026-10-30', assigned: [other, me, stranger] }),
+    closedLastMinuteLate: story(beta.id, 'last minute', { finish_date: '2026-11-01T16:59:00Z', due_date: '2026-10-30', total_points: 3, assigned: [other, me, stranger] }),
     closedWithoutClosingDay: story(beta.id, 'closed, no closing day', { is_closed: true, due_date: '2026-10-29' }),
     openOverdue: story(beta.id, 'overdue', { due_date: '2000-01-03', status_name: 'In progress' }),
     openOnTrack: story(alpha.id, 'on track', { due_date: '2999-12-31', status_name: 'Ready for test' }),
@@ -105,6 +108,8 @@ test("tickets lists the period's tickets with their due status, in local days, w
     dueDate: '2026-10-30',
     closedAt: '2026-11-01T16:59:00Z',
     dueStatus: 'Late',
+    effort: 3,
+    effortSource: 'points',
   });
   assert.deepEqual(report.tickets.find((ticket) => ticket.project.id === alpha.id)!.assignees, ['taigent-bot']);
   assert.deepEqual(
@@ -170,6 +175,68 @@ test('tickets prints a text report: the totals, then each project with one line 
     lines.some((line) => line.includes(`#${tickets.closedLastMinuteLate.ref}`) && line.includes('Late') && line.includes('2026-11-01 23:59') && line.includes('last minute')),
     result.stdout,
   );
+});
+
+test('tickets gives each ticket its effort: Spent Time found by name per project, else total points', async (t) => {
+  const h = await startHarness(t);
+  const me = h.fake.user.id;
+  const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha', members: [me] });
+  const beta = h.fake.addProject({ slug: 'beta', name: 'Beta', members: [me] });
+  const gamma = h.fake.addProject({ slug: 'gamma', name: 'Gamma', members: [me] });
+  const alphaSpent = h.fake.addCustomAttribute({ itemType: 'userstory', project: alpha.id, name: 'Spent Time', type: 'number' });
+  const betaNotes = h.fake.addCustomAttribute({ itemType: 'userstory', project: beta.id, name: 'Notes' });
+  const betaSpent = h.fake.addCustomAttribute({ itemType: 'userstory', project: beta.id, name: ' spent time ', type: 'number' });
+  h.fake.addCustomAttribute({ itemType: 'task', project: gamma.id, name: 'Spent Time', type: 'number' });
+  const story = (project: number, subject: string, fields: StoryFields, values?: Record<string, unknown>) => {
+    const created = Object.assign(h.fake.addUserStory({ project, subject }), { assigned_users: [me], ...fields });
+    if (values) h.fake.editAttributeValues('userstory', created.id, values);
+    return created;
+  };
+  const spent = story(alpha.id, 'spent', { total_points: 8 }, { [alphaSpent.id]: 3.5 });
+  const spentZero = story(alpha.id, 'spent zero', { total_points: 8 }, { [alphaSpent.id]: 0 });
+  const spentEmpty = story(alpha.id, 'spent empty', { total_points: 5 });
+  const missing = story(alpha.id, 'missing', {}, { [alphaSpent.id]: null });
+  // Beta's Spent Time has another id: alpha's id in beta's values is not its Spent Time.
+  const otherId = story(beta.id, 'other id', { total_points: 1 }, { [alphaSpent.id]: 99, [betaNotes.id]: 'n', [betaSpent.id]: 4 });
+  const notANumber = story(beta.id, 'not a number', { total_points: 2.5 }, { [betaSpent.id]: 'two' });
+  // Gamma has no user story attribute "Spent Time" (only a task one).
+  const noAttribute = story(gamma.id, 'no attribute', { total_points: 2 });
+  const noAttributeMissing = story(gamma.id, 'no attribute, no points', {});
+
+  const result = await h.taigent(['tickets', ...RANGE, '--json'], { env: { TZ } });
+
+  assert.equal(result.code, 0, result.stderr);
+  const report = result.json<TicketsJson>();
+  const effort = (id: number) => {
+    const ticket = report.tickets.find((ticket) => ticket.id === id)!;
+    return [ticket.effort, ticket.effortSource];
+  };
+  assert.deepEqual(effort(spent.id), [3.5, 'spent']);
+  assert.deepEqual(effort(spentZero.id), [0, 'spent']);
+  assert.deepEqual(effort(spentEmpty.id), [5, 'points']);
+  assert.deepEqual(effort(missing.id), [null, null]);
+  assert.deepEqual(effort(otherId.id), [4, 'spent']);
+  assert.deepEqual(effort(notANumber.id), [2.5, 'points']);
+  assert.deepEqual(effort(noAttribute.id), [2, 'points']);
+  assert.deepEqual(effort(noAttributeMissing.id), [null, null]);
+  assert.deepEqual(
+    [...report.notes.missingEffort].sort((a, b) => a.ref - b.ref),
+    [
+      { ref: missing.ref, project: 'alpha' },
+      { ref: noAttributeMissing.ref, project: 'gamma' },
+    ].sort((a, b) => a.ref - b.ref),
+  );
+  assert.ok(
+    !h.fake.requests.some((r) => r.path.startsWith('/userstories/custom-attributes-values/') && [noAttribute.id, noAttributeMissing.id].some((id) => r.path.endsWith(`/${id}`))),
+    'no values read where the project has no Spent Time',
+  );
+
+  const text = await h.taigent(['tickets', ...RANGE], { env: { TZ } });
+  assert.equal(text.code, 0, text.stderr);
+  const line = (subject: string) => text.stdout.split('\n').find((l) => l.endsWith(`  ${subject}`))!;
+  assert.match(line('spent'), /  3\.5h  /);
+  assert.match(line('spent empty'), /  5h \(estimated from points\)  /);
+  assert.match(line('missing'), /  no effort  /);
 });
 
 test('tickets without a valid day range is a usage error that never contacts Taiga (exit 2)', async (t) => {
