@@ -25,3 +25,5 @@ Set `TAIGA_API_URL` (e.g. `https://taiga.example.com/api/v1`), `TAIGA_USERNAME`,
 ## Taiga conventions
 
 Before creating or changing anything on Taiga, read `docs/taiga/conventions.md`: project name/slug, template and modules, prefixed tags, item keys, story/task templates, status names, wiki slugs, attachment names, the **banned MCP tools**, and the plan → review → apply workflow. Writes to Taiga go only through the `taigent` CLI (`docs/cli.md`); MCP is read/report/comment only. Run `taigent validate` after editing any manifest under `taiga/`.
+
+The `taiga-*` skills (`taiga-plan-backlog`, `taiga-apply-backlog`) have one source: `.agents/skills/taiga-*`. After editing one there, run `npx taigent skills sync` to refresh the `.claude/skills/` copy; `taigent skills check` (also run by `npm test`) fails while the copies differ.

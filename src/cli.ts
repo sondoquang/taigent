@@ -12,6 +12,7 @@ import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/
 import { WIKI_HOME_SLUG } from './manifest/project.ts';
 import { readSavedProject, type ItemType } from './manifest/state.ts';
 import { ATTRIBUTE_ITEM_TYPE, buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
+import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, TaigaClient, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
 import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError, type UploadPlan, type UploadReport } from './upload.ts';
 
@@ -23,6 +24,8 @@ Commands:
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
+  skills sync   Copy the taiga-* skills from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
+  skills check  Compare them (exit 3 when the copies differ)
 
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/
@@ -39,9 +42,11 @@ Environment:
   TAIGENT_RETRY_UNIT_MS            Milliseconds per second of 429 backoff (default: 1000)
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
-            3 plan has changes, 4 manifest invalid, 5 Taiga/network error`;
+            3 plan/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload'] as const;
+const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'skills'] as const;
+const SKILLS_ACTIONS = ['sync', 'check'] as const;
+type SkillsAction = (typeof SKILLS_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
@@ -51,8 +56,10 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 interface Options {
   command: Command;
-  /** Required by every command except `validate`. */
+  /** Required by every command except `validate` and `skills`. */
   project?: string;
+  /** `skills` subcommand. */
+  skillsAction?: SkillsAction;
   json: boolean;
   yes: boolean;
   dryRun: boolean;
@@ -80,13 +87,26 @@ function parseOptions(argv: string[]): Options | 'help' {
   const [command, ...extra] = positionals;
   if (!command) throw new UsageError('missing command');
   if (!COMMANDS.includes(command as Command)) throw new UsageError(`unknown command "${command}"`);
+  let skillsAction: SkillsAction | undefined;
+  if (command === 'skills') {
+    const action = extra.shift();
+    if (!SKILLS_ACTIONS.includes(action as SkillsAction)) throw new UsageError(`skills needs one of: ${SKILLS_ACTIONS.join(', ')}`);
+    skillsAction = action as SkillsAction;
+  }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
-    if (command !== 'validate') throw new UsageError('--project <slug> is required');
+    if (command !== 'validate' && command !== 'skills') throw new UsageError('--project <slug> is required');
   } else if (!SLUG_PATTERN.test(values.project)) {
     throw new UsageError(`invalid project slug "${values.project}"`);
   }
-  return { command: command as Command, project: values.project, json: values.json, yes: values.yes, dryRun: values['dry-run'] };
+  return {
+    command: command as Command,
+    project: values.project,
+    skillsAction,
+    json: values.json,
+    yes: values.yes,
+    dryRun: values['dry-run'],
+  };
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
@@ -307,10 +327,43 @@ async function runUpload(options: Options, env: NodeJS.ProcessEnv, cwd: string):
   return ExitCode.Ok;
 }
 
+/** `skills sync|check`: keep the Claude copies of the taiga-* skills identical to their source. Offline. */
+async function runSkills(options: Options, cwd: string): Promise<number> {
+  try {
+    if (options.skillsAction === 'sync') {
+      const report = await syncSkills(cwd);
+      const lines = [
+        ...report.synced.map((skill) => `${SKILLS_TARGET}/${skill}: synced`),
+        ...report.removed.map((skill) => `${SKILLS_TARGET}/${skill}: removed`),
+      ];
+      process.stdout.write(
+        options.json
+          ? `${JSON.stringify(report, null, 2)}\n`
+          : `${[...lines, `${report.skills.length} taiga-* skill(s) in sync.`].join('\n')}\n`,
+      );
+      return ExitCode.Ok;
+    }
+    const comparison = await compareSkills(cwd);
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(comparison, null, 2)}\n`);
+    } else if (comparison.inSync) {
+      process.stdout.write(`${comparison.skills.length} taiga-* skill(s) in sync.\n`);
+    } else {
+      const lines = comparison.differences.map(({ skill, file, status }) => `${SKILLS_TARGET}/${skill}/${file}: ${status}`);
+      process.stdout.write(`${lines.join('\n')}\nThe Claude copies differ from ${SKILLS_SOURCE}; run \`taigent skills sync\`.\n`);
+    }
+    return comparison.inSync ? ExitCode.Ok : ExitCode.Changes;
+  } catch (error) {
+    if (error instanceof SkillsSourceMissingError) throw new UsageError(error.message);
+    throw error;
+  }
+}
+
 async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
   if (options.command === 'validate') return runValidate(options, env, cwd);
   if (options.command === 'bootstrap') return runBootstrap(options, env, cwd);
   if (options.command === 'upload') return runUpload(options, env, cwd);
+  if (options.command === 'skills') return runSkills(options, cwd);
   const slug = options.project!;
   const layout = projectLayout(slug, env, cwd);
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
