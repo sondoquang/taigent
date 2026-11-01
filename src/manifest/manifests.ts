@@ -7,11 +7,13 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isFileNotFound } from '../guards.ts';
 import { BACKLOG_FILE, loadBacklog, type Backlog } from './backlog.ts';
+import { DOCS_FILE, loadDocs, type Docs } from './docs.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
 
 /** Validated manifests of one project; a kind is absent when its file does not exist or is invalid. */
 export interface Manifests {
   backlog?: Backlog;
+  docs?: Docs;
 }
 
 export type ManifestKind = keyof Manifests;
@@ -36,6 +38,7 @@ type AnyManifestEntry = { [K in ManifestKind]: ManifestEntry<K> }[ManifestKind];
 
 export const MANIFESTS: readonly AnyManifestEntry[] = [
   { kind: 'backlog', file: BACKLOG_FILE, load: (path) => loadBacklog(path) },
+  { kind: 'docs', file: DOCS_FILE, load: (path, context) => loadDocs(path, context) },
 ];
 
 export interface LoadedProject {
