@@ -14,9 +14,9 @@ Single-context: one root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain
 
 ## Taiga setup
 
-`TAIGA_API_URL`, `TAIGA_USERNAME`, `TAIGA_PASSWORD` (optional `TAIGA_TOKEN`) live in each user's personal environment, never in committed files. To check or fix the variables, the `taigent` CLI or the Taiga MCP server, or to install the skills into another project, use the `taiga-setup` skill.
+`TAIGA_API_URL`, `TAIGA_USERNAME`, `TAIGA_PASSWORD` (optional `TAIGA_TOKEN`) live in each user's personal environment or in a git-ignored `.env` at the project root (read by the `taigent` CLI only), never in committed files. The Taiga MCP server gets them from the agent's MCP configuration: by default `claude mcp add -s user taiga …` in the user's own `~/.claude.json`. To check or fix the variables, the `taigent` CLI or the Taiga MCP server, or to install the skills into another project, use the `taiga-setup` skill.
 
-`.mcp.json` (Claude Code), `.codex/config.toml` (Codex) and `taiga-setup` pin `taiga-mcp-server@1.9.20`; bump all three together (`npm test` fails when they differ).
+`.mcp.json` (Claude Code), `.codex/config.toml` (Codex), `taiga-setup` and `docs/cli.md` pin `taiga-mcp-server@1.9.20`; bump them together (`npm test` fails when `.mcp.json`, `.codex/config.toml` and the entries in `taiga-setup` differ).
 
 ## Taiga conventions
 

@@ -16,6 +16,10 @@ npx taigent plan --project my-project             # same, via the package bin
 
 ## Environment
 
+A variable not set (or empty) in the environment is read from `.env` in the working directory, when there is one
+(`KEY=value` lines, the format of `.env.example`); the environment wins. Keep `.env` out of git. It serves the CLI
+only: the Taiga MCP server takes its values from the agent's MCP configuration (`taiga-setup` skill).
+
 | Variable | Meaning |
 |---|---|
 | `TAIGA_API_URL` | API base URL including `/api/v1`, e.g. `https://taiga.example.com/api/v1` |
@@ -369,7 +373,7 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | Skill | Invocation | Does |
 |---|---|---|
 | `ask-taigent` | User only (as below) | Router: which Taigent skill, workflow step or CLI command fits a situation, the plan → review → apply rules, and how to maintain the skills. Reads only |
-| `taiga-setup` | Model or user | Checks Node.js and the `TAIGA_*` variables (set or missing, never values), `npx --no -- taigent --help`, and the Taiga MCP server (`listProjects`); names each fix, adds the `taiga` MCP entry to `.mcp.json`/`.codex/config.toml` once the user agrees, and installs the skills into another project on request (`npx skills add`) |
+| `taiga-setup` | Model or user | Checks Node.js and the `TAIGA_*` variables (set in the environment, set in `.env`, or missing; never values), `npx --no -- taigent --help`, and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (`claude mcp add -s user taiga …` for Claude Code by default, or the `taiga` entry for `.mcp.json`/`.codex/config.toml` once the user agrees), and installs the skills into another project on request (`npx skills add`) |
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
@@ -401,7 +405,12 @@ npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cit
 types, so `bin/taigent.js` runs `dist/` there and the TypeScript sources everywhere else. Both commands need read
 access to the repository while it is private. The package ships `bin/`, `dist/`, `docs/cli.md` and `docs/taiga/`
 (`files` in `package.json`): the docs the skills cite, read from `node_modules/taigent/`.
-`taiga-status-report` needs only the Taiga MCP server. The `taiga-setup` skill checks all of it and names each fix.
+Neither command registers the Taiga MCP server: for Claude Code the user runs
+`claude mcp add -s user taiga -e TAIGA_API_URL=… -e TAIGA_USERNAME=… -e TAIGA_PASSWORD=… -- npx -y taiga-mcp-server@1.9.20`
+once (values stay in their `~/.claude.json`), or the project commits the `.mcp.json` entry of `taiga-setup` and
+each user sets the variables in their environment and approves the server. The CLI reads the variables from the
+environment or from `.env` at the project root. `taiga-status-report` needs only the Taiga MCP server. The
+`taiga-setup` skill checks all of it and names each fix.
 
 ## Exit codes
 
@@ -409,7 +418,7 @@ access to the repository while it is private. The package ships `bin/`, `dist/`,
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `skills` outside a repository root |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `skills` outside a repository root |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
