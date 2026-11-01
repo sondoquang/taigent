@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga Status Report"
+  short_description: "Read-only progress report by epic and sprint"
+policy:
+  allow_implicit_invocation: true

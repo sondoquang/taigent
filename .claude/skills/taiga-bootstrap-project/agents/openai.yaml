@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga Bootstrap Project"
+  short_description: "Dry-run, confirm, then bootstrap a Taiga project"
+policy:
+  allow_implicit_invocation: false
