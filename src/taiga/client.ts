@@ -6,6 +6,7 @@ import { openAsBlob } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
 import { ITEM_TYPES, type ItemType } from '../items.ts';
+import { Secrets } from '../secrets.ts';
 
 /** Thrown for any Taiga/network failure. Maps to ExitCode.Taiga. Never contains credentials. */
 export class TaigaError extends Error {
@@ -56,6 +57,11 @@ export interface TaigaConnectOptions {
   credentials?: { username: string; password: string };
   /** Milliseconds per second of 429 backoff (default 1000); tests shrink it. */
   retryUnitMs?: number;
+  /**
+   * Where the client registers every secret it holds (password, tokens), redacted from its error messages in case
+   * Taiga echoes one back. The CLI passes its own, so its output redacts tokens the client obtained too.
+   */
+  secrets?: Secrets;
 }
 
 export interface TaigaProject {
@@ -123,7 +129,6 @@ const MAX_ERROR_BODY = 500;
 /** 429 handling: retries per request, and the longest single wait, in backoff units (seconds by default). */
 const MAX_THROTTLE_RETRIES = 5;
 const MAX_BACKOFF_UNITS = 60;
-const REDACTED = '[redacted]';
 
 function field<T>(raw: Record<string, unknown>, name: string, type: 'number' | 'string', what: string): T {
   const value = raw[name];
@@ -378,13 +383,13 @@ export class TaigaClient {
   readonly #retryUnitMs: number;
   #token: string | undefined;
   #refresh: string | undefined;
-  /** Every secret this client has held; redacted from error messages in case Taiga echoes one back. */
-  readonly #secrets = new Set<string>();
+  readonly #secrets: Secrets;
 
   private constructor(options: TaigaConnectOptions) {
     this.apiUrl = options.apiUrl.replace(/\/+$/, '');
     this.#credentials = options.credentials;
     this.#retryUnitMs = options.retryUnitMs ?? 1000;
+    this.#secrets = options.secrets ?? new Secrets();
     if (options.credentials) this.#secrets.add(options.credentials.password);
     if (options.token) this.#setTokens(options.token, undefined);
   }
@@ -687,13 +692,13 @@ export class TaigaClient {
     } catch (error) {
       // fetch() reports the real reason (ECONNREFUSED, DNS failure, ...) as the error's cause.
       const reason = error instanceof Error && error.cause !== undefined ? error.cause : error;
-      throw new TaigaError(this.#redact(`cannot reach Taiga at ${this.apiUrl}: ${errorMessage(reason)}`));
+      throw new TaigaError(this.#secrets.redact(`cannot reach Taiga at ${this.apiUrl}: ${errorMessage(reason)}`));
     }
   }
 
   /** `METHOD /path failed: HTTP <status> <body>`, with any secret Taiga echoed redacted (before truncating). */
   #failure(method: string, path: string, response: RawResponse): string {
-    const text = this.#redact(response.text);
+    const text = this.#secrets.redact(response.text);
     const detail = text.length > MAX_ERROR_BODY ? `${text.slice(0, MAX_ERROR_BODY)}…` : text;
     return `${method} ${path} failed: HTTP ${response.status}${detail ? ` ${detail}` : ''}`;
   }
@@ -708,14 +713,5 @@ export class TaigaClient {
       else if (!Number.isNaN(date)) units = (date - Date.now()) / 1000;
     }
     return Math.min(Math.max(units, 0), MAX_BACKOFF_UNITS) * this.#retryUnitMs;
-  }
-
-  #redact(text: string): string {
-    let result = text;
-    // Longest first, so a secret containing another one is replaced whole.
-    for (const secret of [...this.#secrets].sort((a, b) => b.length - a.length)) {
-      if (secret !== '') result = result.replaceAll(secret, REDACTED);
-    }
-    return result;
   }
 }

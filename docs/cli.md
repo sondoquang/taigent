@@ -33,10 +33,15 @@ Authentication and retries (all in `TaigaClient`, so every command gets them):
 - **429:** up to 5 retries per request, waiting `Retry-After` (seconds or HTTP date) when Taiga sends it,
   else 1, 2, 4, 8, 16 units; one wait is capped at 60 units (unit = `TAIGENT_RETRY_UNIT_MS`).
 - Missing variables are a configuration error (exit 2) naming them, e.g.
-  `missing environment variable(s): TAIGA_PASSWORD (or set TAIGA_TOKEN instead)`.
+  `missing environment variable(s): TAIGA_PASSWORD (or set TAIGA_TOKEN instead)`. So is a `TAIGA_API_URL` with
+  credentials in it (`https://user:password@…`): put them in `TAIGA_USERNAME`/`TAIGA_PASSWORD` instead (the message
+  never repeats the URL).
 
-Credentials and tokens are never printed: Taiga error bodies are included in messages, but any password,
-token or refresh token the client holds is replaced by `[redacted]` first (tested on every output path).
+Credentials and tokens are never printed: Taiga error bodies are included in messages, but `TAIGA_PASSWORD`,
+`TAIGA_TOKEN`, the password of a `user:password@` in `TAIGA_API_URL`, and every access/refresh token the client
+obtains are replaced by `[redacted]` in everything the CLI writes: stdout, stderr, `--json` and the stack trace of
+an internal error (exit 1). One `Secrets` registry (`src/secrets.ts`) is shared by the CLI and the client;
+`test/resilience.test.ts` checks every output path, including internal errors and URL credentials.
 
 ## Manifest layout
 
@@ -366,7 +371,7 @@ execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell ho
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `skills` outside a repository root |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `skills` outside a repository root |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
@@ -378,6 +383,7 @@ execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell ho
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`); one review gate (`reviewGate`) and one text form for every plan and report |
 | Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog`, `loadDocs`, conventions rules (`conventions.ts`), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
 | Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`): the one item vocabulary outside the client |
+| Secrets | `src/secrets.ts` | `Secrets` (`add`, `redact`): what no output may show, shared by the CLI (environment) and the client (tokens) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`), the only place that maps item types to Taiga's endpoint names (`TAIGA_ITEM`), `TaigaError`, `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links and attribute values `buildPlan` needs |

@@ -12,6 +12,7 @@ import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/
 import type { Action, PlanSummary, Result } from './operations.ts';
 import { buildPlan, describePlanOperation, type Plan } from './planner.ts';
 import { readBacklogRemote } from './remote.ts';
+import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
 import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
@@ -65,6 +66,23 @@ interface Options {
   dryRun: boolean;
 }
 
+/** One CLI run: its options, environment, working directory, and the secrets none of its output may show. */
+interface Run {
+  options: Options;
+  env: NodeJS.ProcessEnv;
+  cwd: string;
+  secrets: Secrets;
+}
+
+/** Every write to stdout goes through here (and every write to stderr through `printError`), redacted. */
+function print(run: Run, text: string): void {
+  process.stdout.write(run.secrets.redact(text));
+}
+
+function printError(secrets: Secrets, text: string): void {
+  process.stderr.write(secrets.redact(text));
+}
+
 function parseOptions(argv: string[]): Options | 'help' {
   let parsed;
   try {
@@ -116,18 +134,38 @@ function requireEnv(env: NodeJS.ProcessEnv, names: string[]): string[] {
 }
 
 /**
+ * The secrets of the environment: TAIGA_PASSWORD, TAIGA_TOKEN and the password of a `user:password@` in TAIGA_API_URL
+ * (raw and decoded). The client adds the tokens it obtains.
+ */
+function environmentSecrets(env: NodeJS.ProcessEnv): Secrets {
+  const secrets = new Secrets();
+  secrets.add(env.TAIGA_PASSWORD);
+  secrets.add(env.TAIGA_TOKEN);
+  const url = env.TAIGA_API_URL && URL.canParse(env.TAIGA_API_URL) ? new URL(env.TAIGA_API_URL) : undefined;
+  if (url?.password) {
+    secrets.add(url.password);
+    secrets.add(decodeURIComponent(url.password));
+  }
+  return secrets;
+}
+
+/**
  * Connects to Taiga from the environment: TAIGA_TOKEN when set (username/password, if also set, are
  * the fallback when Taiga rejects it), else a TAIGA_USERNAME/TAIGA_PASSWORD login.
  */
-async function connectTaiga(env: NodeJS.ProcessEnv): Promise<TaigaClient> {
+async function connectTaiga({ env, secrets }: Run): Promise<TaigaClient> {
   const [apiUrl] = requireEnv(env, ['TAIGA_API_URL']);
+  const url = URL.canParse(apiUrl!) ? new URL(apiUrl!) : undefined;
+  if (url?.username || url?.password) {
+    throw new UsageError('TAIGA_API_URL must not contain credentials (user:password@); set TAIGA_USERNAME and TAIGA_PASSWORD (or TAIGA_TOKEN) instead');
+  }
   const token = env.TAIGA_TOKEN || undefined;
   const missing = ['TAIGA_USERNAME', 'TAIGA_PASSWORD'].filter((name) => !env[name]);
   if (!token && missing.length > 0) {
     throw new UsageError(`missing environment variable(s): ${missing.join(', ')} (or set TAIGA_TOKEN instead)`);
   }
   const credentials = missing.length === 0 ? { username: env.TAIGA_USERNAME!, password: env.TAIGA_PASSWORD! } : undefined;
-  return TaigaClient.connect({ apiUrl: apiUrl!, token, credentials, retryUnitMs: retryUnitMs(env) });
+  return TaigaClient.connect({ apiUrl: apiUrl!, token, credentials, retryUnitMs: retryUnitMs(env), secrets });
 }
 
 /** TAIGENT_RETRY_UNIT_MS: milliseconds per second of 429 backoff (default 1000). */
@@ -178,8 +216,8 @@ function formatOrphans(plan: Plan): string[] {
 }
 
 /** Prints `value` as JSON with --json, else `text()`. */
-function emit(options: Options, value: unknown, text: () => string): void {
-  process.stdout.write(options.json ? `${JSON.stringify(value, null, 2)}\n` : text());
+function emit(run: Run, value: unknown, text: () => string): void {
+  print(run, run.options.json ? `${JSON.stringify(value, null, 2)}\n` : text());
 }
 
 /**
@@ -187,17 +225,19 @@ function emit(options: Options, value: unknown, text: () => string): void {
  * for `plan`), it prints the plan and returns the exit code: 0 without changes, 3 for `plan` and `--dry-run`, and a
  * usage error (2) for a writing command without `--yes`. Returns undefined when the run goes on to write.
  */
-function reviewGate(options: Options, plan: { changes: boolean }, text: () => string): number | undefined {
+function reviewGate(run: Run, plan: { changes: boolean }, text: () => string): number | undefined {
+  const { options } = run;
   const review = options.command === 'plan' || options.dryRun;
   if (options.yes && !review) return undefined;
-  emit(options, plan, text);
+  emit(run, plan, text);
   if (!plan.changes) return ExitCode.Ok;
   if (review) return ExitCode.Changes;
   throw new UsageError(`refusing to ${options.command} without --yes; review the operations above, then re-run with --yes`);
 }
 
 /** Validates one project's manifests, or every project under the manifests root. Offline: no env needed. */
-async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
+async function runValidate(run: Run): Promise<number> {
+  const { options, env, cwd } = run;
   const root = manifestsRoot(env, cwd);
   const slugs = options.project ? [options.project] : await listProjectSlugs(root);
   if (slugs.length === 0) {
@@ -216,7 +256,8 @@ async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string
   if (issues.length > 0) throw new ManifestError(issues);
 
   const report = projects.map(({ slug, files }) => ({ slug, files: files.map((file) => relative(cwd, file)) }));
-  process.stdout.write(
+  print(
+    run,
     options.json
       ? `${JSON.stringify({ valid: true, projects: report }, null, 2)}\n`
       : `${report.flatMap(({ files }) => files.map((file) => `${file}: ok`)).join('\n')}\nAll manifests follow the conventions.\n`,
@@ -225,16 +266,16 @@ async function runValidate(options: Options, env: NodeJS.ProcessEnv, cwd: string
 }
 
 /** `bootstrap`: create the project declared in project.yaml, or fill what an existing one lacks. */
-async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  const slug = options.project!;
-  const layout = projectLayout(slug, env, cwd);
+async function runBootstrap(run: Run): Promise<number> {
+  const slug = run.options.project!;
+  const layout = projectLayout(slug, run.env, run.cwd);
   const manifest = (await loadManifests(layout.dir, slug, { require: ['project'] })).manifests.project!;
-  const client = await connectTaiga(env);
+  const client = await connectTaiga(run);
 
   const remote = await readBootstrapRemote(manifest, client, layout.state);
   const plan = planBootstrap(manifest, remote);
 
-  const gate = reviewGate(options, plan, () =>
+  const gate = reviewGate(run, plan, () =>
     formatPlanText(`Bootstrap plan for project ${plan.project.slug} (${plan.project.exists ? `id ${plan.project.id}` : 'new'}):`, plan, describeBootstrapOperation, {
       empty: 'project.yaml declares nothing',
       matches: 'the manifest',
@@ -243,19 +284,19 @@ async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: strin
   if (gate !== undefined) return gate;
 
   const report = await executeBootstrap(plan, remote.project, client, layout.state);
-  emit(options, report, () => formatReportText(`Bootstrapped project ${report.project.slug} (id ${report.project.id}):`, report, describeBootstrapOperation));
+  emit(run, report, () => formatReportText(`Bootstrapped project ${report.project.slug} (id ${report.project.id}):`, report, describeBootstrapOperation));
   return ExitCode.Ok;
 }
 
 /** `upload`: upsert docs.yaml's wiki pages by slug and add its attachments that Taiga lacks. */
-async function runUpload(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  const slug = options.project!;
-  const { manifests } = await loadManifests(projectLayout(slug, env, cwd).dir, slug, { require: ['docs'] });
-  const client = await connectTaiga(env);
+async function runUpload(run: Run): Promise<number> {
+  const slug = run.options.project!;
+  const { manifests } = await loadManifests(projectLayout(slug, run.env, run.cwd).dir, slug, { require: ['docs'] });
+  const client = await connectTaiga(run);
   const remote = await readUploadRemote(manifests.docs!, manifests.backlog, client, slug);
-  const plan = planUpload(manifests.docs!, remote, cwd);
+  const plan = planUpload(manifests.docs!, remote, run.cwd);
 
-  const gate = reviewGate(options, plan, () =>
+  const gate = reviewGate(run, plan, () =>
     formatPlanText(`Upload plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describeUploadOperation, {
       empty: 'docs.yaml declares nothing',
       matches: 'docs.yaml',
@@ -263,15 +304,16 @@ async function runUpload(options: Options, env: NodeJS.ProcessEnv, cwd: string):
   );
   if (gate !== undefined) return gate;
 
-  const report = await executeUpload(plan, client, cwd);
-  emit(options, report, () =>
+  const report = await executeUpload(plan, client, run.cwd);
+  emit(run, report, () =>
     formatReportText(`Uploaded to project ${report.project.slug} (id ${report.project.id}):`, report, (op) => `${describeUploadOperation(op)}  -> id ${op.id}`),
   );
   return ExitCode.Ok;
 }
 
 /** `skills sync|check`: keep the Claude copies of the taiga-* skills identical to their source. Offline. */
-async function runSkills(options: Options, cwd: string): Promise<number> {
+async function runSkills(run: Run): Promise<number> {
+  const { options, cwd } = run;
   try {
     if (options.skillsAction === 'sync') {
       const report = await syncSkills(cwd);
@@ -279,7 +321,8 @@ async function runSkills(options: Options, cwd: string): Promise<number> {
         ...report.synced.map((skill) => `${SKILLS_TARGET}/${skill}: synced`),
         ...report.removed.map((skill) => `${SKILLS_TARGET}/${skill}: removed`),
       ];
-      process.stdout.write(
+      print(
+        run,
         options.json
           ? `${JSON.stringify(report, null, 2)}\n`
           : `${[...lines, `${report.skills.length} taiga-* skill(s) in sync.`].join('\n')}\n`,
@@ -288,12 +331,12 @@ async function runSkills(options: Options, cwd: string): Promise<number> {
     }
     const comparison = await compareSkills(cwd);
     if (options.json) {
-      process.stdout.write(`${JSON.stringify(comparison, null, 2)}\n`);
+      print(run, `${JSON.stringify(comparison, null, 2)}\n`);
     } else if (comparison.inSync) {
-      process.stdout.write(`${comparison.skills.length} taiga-* skill(s) in sync.\n`);
+      print(run, `${comparison.skills.length} taiga-* skill(s) in sync.\n`);
     } else {
       const lines = comparison.differences.map(({ skill, file, status }) => `${SKILLS_TARGET}/${skill}/${file}: ${status}`);
-      process.stdout.write(`${lines.join('\n')}\nThe Claude copies differ from ${SKILLS_SOURCE}; run \`taigent skills sync\`.\n`);
+      print(run, `${lines.join('\n')}\nThe Claude copies differ from ${SKILLS_SOURCE}; run \`taigent skills sync\`.\n`);
     }
     return comparison.inSync ? ExitCode.Ok : ExitCode.Changes;
   } catch (error) {
@@ -303,15 +346,15 @@ async function runSkills(options: Options, cwd: string): Promise<number> {
 }
 
 /** `plan` and `apply`: compare backlog.yaml with Taiga, then (apply --yes) run the plan. */
-async function runPlan(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  const slug = options.project!;
-  const layout = projectLayout(slug, env, cwd);
+async function runPlan(run: Run): Promise<number> {
+  const slug = run.options.project!;
+  const layout = projectLayout(slug, run.env, run.cwd);
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
-  const client = await connectTaiga(env);
+  const client = await connectTaiga(run);
   const remote = await readBacklogRemote(backlog, client, slug);
   const plan = buildPlan(backlog, remote);
 
-  const gate = reviewGate(options, plan, () =>
+  const gate = reviewGate(run, plan, () =>
     formatPlanText(`Plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describePlanOperation, {
       empty: 'manifest has no items',
       matches: 'the manifest',
@@ -321,65 +364,66 @@ async function runPlan(options: Options, env: NodeJS.ProcessEnv, cwd: string): P
   if (gate !== undefined) return gate;
 
   const report = await executePlan(plan, client, layout.state, remote.customAttributes);
-  emit(options, report, () => formatReportText(`Applied to project ${report.project.slug} (id ${report.project.id}):`, report, describeAppliedOperation));
+  emit(run, report, () => formatReportText(`Applied to project ${report.project.slug} (id ${report.project.id}):`, report, describeAppliedOperation));
   return ExitCode.Ok;
 }
 
-function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  switch (options.command) {
+function dispatch(run: Run): Promise<number> {
+  switch (run.options.command) {
     case 'validate':
-      return runValidate(options, env, cwd);
+      return runValidate(run);
     case 'bootstrap':
-      return runBootstrap(options, env, cwd);
+      return runBootstrap(run);
     case 'upload':
-      return runUpload(options, env, cwd);
+      return runUpload(run);
     case 'skills':
-      return runSkills(options, cwd);
+      return runSkills(run);
     case 'plan':
     case 'apply':
-      return runPlan(options, env, cwd);
+      return runPlan(run);
   }
 }
 
-function fail(code: ExitCode, kind: string, error: Error, json: boolean, extra: Record<string, unknown> = {}): number {
-  process.stderr.write(`taigent: ${error.message}\n`);
-  if (json) process.stdout.write(`${JSON.stringify({ error: { kind, message: error.message, ...extra } }, null, 2)}\n`);
+function fail(secrets: Secrets, code: ExitCode, kind: string, error: Error, json: boolean, extra: Record<string, unknown> = {}): number {
+  printError(secrets, `taigent: ${error.message}\n`);
+  if (json) process.stdout.write(secrets.redact(`${JSON.stringify({ error: { kind, message: error.message, ...extra } }, null, 2)}\n`));
   return code;
 }
 
 /** Runs the CLI and returns the process exit code. */
 export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): Promise<number> {
   const json = argv.includes('--json');
+  const secrets = environmentSecrets(env);
   try {
     const options = parseOptions(argv);
     if (options === 'help') {
       process.stdout.write(`${USAGE}\n`);
       return ExitCode.Ok;
     }
-    return await run(options, env, cwd);
+    return await dispatch({ options, env, cwd, secrets });
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(json ? '' : `${USAGE}\n\n`);
-      return fail(ExitCode.Usage, 'usage', error, json);
+      return fail(secrets, ExitCode.Usage, 'usage', error, json);
     }
     if (error instanceof ManifestError) {
       // Report manifest files relative to the working directory, as the user wrote them.
       const relativeError = new ManifestError(error.issues.map((issue) => ({ ...issue, file: relative(cwd, issue.file) })));
-      return fail(ExitCode.Validation, 'validation', relativeError, json, { issues: relativeError.issues });
+      return fail(secrets, ExitCode.Validation, 'validation', relativeError, json, { issues: relativeError.issues });
     }
     if (error instanceof TaigaConflictError) {
-      return fail(ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key ?? null });
+      return fail(secrets, ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key ?? null });
     }
     if (error instanceof UploadTooLargeError) {
-      return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
+      return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
     }
     if (error instanceof TaigaAuthError) {
       const check = error.credential === 'token' ? 'TAIGA_TOKEN' : 'TAIGA_USERNAME and TAIGA_PASSWORD';
       const hinted = new TaigaAuthError(error.credential, `${error.message} (check ${check})`, error.status);
-      return fail(ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
+      return fail(secrets, ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
     }
-    if (error instanceof TaigaError) return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
-    process.stderr.write(`taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);
+    if (error instanceof TaigaError) return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
+    printError(secrets, `taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);
     return ExitCode.Internal;
   }
 }

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import type { ApplyReport } from '../src/executor.ts';
 import { startHarness } from './support/harness.ts';
@@ -138,6 +140,10 @@ test('missing configuration names the variables to set', async (t) => {
   const badUnit = await h.taigent(['plan', '--project', 'demo'], { env: { TAIGENT_RETRY_UNIT_MS: 'soon' } });
   assert.equal(badUnit.code, 2);
   assert.match(badUnit.stderr, /TAIGENT_RETRY_UNIT_MS/);
+
+  const userinfo = await h.taigent(['plan', '--project', 'demo', '--json'], { env: { TAIGA_API_URL: h.fake.url.replace('://', '://bot:pw@') } });
+  assert.equal(userinfo.code, 2);
+  assert.match(userinfo.json<ErrorOutput>().error.message, /TAIGA_API_URL must not contain credentials.*TAIGA_USERNAME and TAIGA_PASSWORD/);
   assert.deepEqual(h.fake.requests, []);
 });
 
@@ -221,7 +227,21 @@ test('stdout, stderr and --json output never contain a password or token, on suc
     h.fake.intercept({ method: 'POST', path: '/epics', status: 500, bodyFrom: (r) => ({ echoed: r.headers.authorization }) }),
   );
 
-  const secrets = [h.fake.user.password, wrongPassword, bogusToken, ...h.fake.issuedTokens];
+  // Credentials embedded in TAIGA_API_URL (user:password@) are a configuration error that never echoes the URL.
+  const urlPassword = 'url-secret-pass';
+  const urlWithUserinfo = h.fake.url.replace('://', `://taigent-bot:${urlPassword}@`);
+  await scenario('URL userinfo', 2, ['plan', '--project', 'demo'], { TAIGA_API_URL: urlWithUserinfo });
+  await scenario('URL userinfo, unreachable', 2, ['plan', '--project', 'demo'], { TAIGA_API_URL: `http://bot:${urlPassword}@127.0.0.1:9/api/v1` });
+
+  // Internal error (exit 1, stack trace printed): a hand-broken state.json whose text ends up in the error message.
+  await h.writeManifest('demo', 'state.json', h.fake.user.password);
+  await scenario('internal error', 1, ['apply', '--project', 'demo', '--yes']);
+  const freshToken = h.fake.issueToken();
+  await scenario('internal error with token', 1, ['apply', '--project', 'demo', '--yes'], { TAIGA_TOKEN: freshToken, ...noCredentials }, () =>
+    writeFileSync(join(h.manifestsDir, 'demo', 'state.json'), freshToken),
+  );
+
+  const secrets = [h.fake.user.password, wrongPassword, bogusToken, urlPassword, ...h.fake.issuedTokens];
   const all = outputs.join('\n');
   for (const secret of secrets) assert.ok(!all.includes(secret), `output leaks ${secret}:\n${all}`);
   assert.match(all, /\[redacted\]/, 'the echoing scenarios must have exercised redaction');
