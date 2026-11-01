@@ -491,7 +491,8 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
 | `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml` (referencing documents where they already are, no copies), `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
-| `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); the tickets you closed in a period through `taigent closed`, the one shell command it runs |
+| `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools only (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); hands questions about your own tickets to `taiga-my-tickets` |
+| `taiga-my-tickets` | Model or user | Read-only report of your tickets in a period (the current week, Monday to Sunday, by default): `taigent tickets --json`, the one shell command it runs, laid out as header, summary, by day, by project, still open, notes, in the user's language |
 
 Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply|bootstrap|upload|closed|tickets` (as `Bash(...)` and, for
 Claude Code's Windows PowerShell tool, `PowerShell(...)` rules) and Taiga MCP read tools; every skill that
@@ -508,7 +509,7 @@ or lists `taigent` as a dependency: otherwise npx would fetch an unrelated `taig
 Another project needs two commands at its root:
 
 ```sh
-npx skills add sondoquang/taigent          # the seven Taigent skills, for the agents it detects
+npx skills add sondoquang/taigent          # the eight Taigent skills, for the agents it detects
 npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite (append #<tag> to pin)
 ```
 
@@ -522,8 +523,8 @@ Neither command registers the Taiga MCP server: for Claude Code the user runs
 `claude mcp add -s user taiga -e TAIGA_API_URL=… -e TAIGA_USERNAME=… -e TAIGA_PASSWORD=… -- npx -y taiga-mcp-server@1.9.20`
 once (values stay in their `~/.claude.json`), or the project commits the `.mcp.json` entry of `taiga-setup` and
 each user sets the variables in their environment and approves the server. The CLI reads the variables from the
-environment or from `.env` at the project root. `taiga-status-report` needs only the Taiga MCP server, except for
-the tickets you closed in a period (`taigent closed`). The `taiga-setup` skill checks all of it and names each fix.
+environment or from `.env` at the project root. `taiga-status-report` needs only the Taiga MCP server;
+`taiga-my-tickets` needs only the CLI (`taigent tickets`). The `taiga-setup` skill checks all of it and names each fix.
 
 ## Exit codes
 

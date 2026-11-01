@@ -22,7 +22,7 @@ Single-context: one root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain
 
 Before creating or changing anything on Taiga, read `docs/taiga/conventions.md`: project name/slug, template and modules, prefixed tags, item keys, story/task templates, status names, wiki slugs, attachment names, the **banned MCP tools**, and the plan → review → apply workflow. Writes to Taiga go only through the `taigent` CLI (`docs/cli.md`); MCP is read/report/comment only. Run `taigent validate` after editing any manifest under `taiga/`.
 
-The Taigent skills (`taiga-setup`, `taiga-plan-backlog`, `taiga-apply-backlog`, `taiga-bootstrap-project`, `taiga-upload-docs`, `taiga-status-report`, and the router `ask-taigent`) have one source: `.agents/skills/`. After editing one there, run `npx taigent skills sync` to refresh the `.claude/skills/` copy; `taigent skills check` (also run by `npm test`) fails while the copies differ. Adding, removing or changing a Taigent skill: update `ask-taigent` in the same change.
+The Taigent skills (`taiga-setup`, `taiga-plan-backlog`, `taiga-apply-backlog`, `taiga-bootstrap-project`, `taiga-upload-docs`, `taiga-status-report`, `taiga-my-tickets`, and the router `ask-taigent`) have one source: `.agents/skills/`. After editing one there, run `npx taigent skills sync` to refresh the `.claude/skills/` copy; `taigent skills check` (also run by `npm test`) fails while the copies differ. Adding, removing or changing a Taigent skill: update `ask-taigent` in the same change.
 
 ## Headless runs
 

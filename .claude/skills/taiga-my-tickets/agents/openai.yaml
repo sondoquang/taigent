@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga My Tickets"
+  short_description: "Read-only report of your tickets in a period, with due status"
+policy:
+  allow_implicit_invocation: true

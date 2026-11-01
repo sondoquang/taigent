@@ -161,7 +161,7 @@ test('skills commands outside a repository root are a usage error (exit 2)', asy
   assert.match(noAction.stderr, /skills needs one of: sync, check/);
 });
 
-const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-upload-docs'];
 
 test('the repository holds exactly the Taigent skills, with Claude copies that match .agents/skills', async () => {
   const result = await skills(['check', '--json'], REPO_ROOT);
@@ -239,7 +239,8 @@ test('each taiga-* skill pre-approves only the taigent commands of its step', as
     'taiga-apply-backlog': shellRules('validate', 'plan', 'apply'),
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),
-    'taiga-status-report': shellRules('closed'),
+    'taiga-my-tickets': shellRules('tickets'),
+    'taiga-status-report': [],
     'taiga-setup': [],
   };
 
@@ -249,7 +250,7 @@ test('each taiga-* skill pre-approves only the taigent commands of its step', as
   }
 });
 
-test('taiga-status-report reads Taiga through MCP read tools and taigent closed, and may be invoked implicitly', async () => {
+test('taiga-status-report reads Taiga through MCP read tools only, and may be invoked implicitly', async () => {
   const { frontmatter, allowedTools, openai } = await readSkill('taiga-status-report');
 
   assert.notEqual(frontmatter['disable-model-invocation'], true);
@@ -257,7 +258,20 @@ test('taiga-status-report reads Taiga through MCP read tools and taigent closed,
   for (const tool of ['listProjects', 'listEpics', 'listUserStories', 'getUserStory', 'listMilestones', 'getMilestone', 'getMilestoneStats', 'advancedSearch']) {
     assert.ok(allowedTools.includes(`mcp__taiga__${tool}`), `allowed-tools has mcp__taiga__${tool}`);
   }
-  assert.ok(allowedTools.every((tool) => MCP_READ_TOOLS.has(tool) || shellRules('closed').includes(tool)), allowedTools.join(' '));
+  assert.ok(allowedTools.every((tool) => MCP_READ_TOOLS.has(tool)), allowedTools.join(' '));
+  const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-status-report/SKILL.md'), 'utf8');
+  assert.doesNotMatch(skill, /\bclosed --|taigent closed/);
+  assert.match(skill, /taiga-my-tickets/);
+});
+
+test('taiga-my-tickets pre-approves only taigent tickets, may be invoked implicitly, and ask-taigent routes to it', async () => {
+  const { frontmatter, allowedTools, openai } = await readSkill('taiga-my-tickets');
+
+  assert.notEqual(frontmatter['disable-model-invocation'], true);
+  assert.equal(openai.policy?.allow_implicit_invocation, true);
+  assert.deepEqual(allowedTools, shellRules('tickets'));
+  const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
+  assert.match(router, /`taiga-my-tickets`/);
 });
 
 test('taiga-setup gives the same Taiga MCP server entries as the repository configs', async () => {

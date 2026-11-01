@@ -10,8 +10,8 @@ Check the three things the `taiga-*` skills stand on, in order, and put the fix 
 
 | Check | Needed by |
 |---|---|
-| 1. Node.js and `TAIGA_*` variables | `taiga-plan-backlog`, `taiga-apply-backlog`, `taiga-bootstrap-project`, `taiga-upload-docs` (through the `taigent` CLI) |
-| 2. `taigent` CLI | the same four |
+| 1. Node.js and `TAIGA_*` variables | `taiga-plan-backlog`, `taiga-apply-backlog`, `taiga-bootstrap-project`, `taiga-upload-docs`, `taiga-my-tickets` (through the `taigent` CLI) |
+| 2. `taigent` CLI | the same five |
 | 3. Taiga MCP server `taiga` | `taiga-status-report`, `taiga-plan-backlog`, `taiga-bootstrap-project` |
 
 For `taiga-status-report` alone, check 3 decides: when it passes, the others do not matter.
@@ -106,7 +106,7 @@ Keep version `1.9.20` in every entry above: the skills' tool notes and the banne
 
 ## Installing the skills into another project
 
-When the user asks for it: `npx skills add sondoquang/taigent` at the project root installs the seven Taigent skills (every `taiga-*` and `ask-taigent`) for the agents it detects, into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code); `npx skills update` refreshes them. It registers no MCP server: run the checks the table above lists for the skills they will use.
+When the user asks for it: `npx skills add sondoquang/taigent` at the project root installs the eight Taigent skills (every `taiga-*` and `ask-taigent`) for the agents it detects, into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code); `npx skills update` refreshes them. It registers no MCP server: run the checks the table above lists for the skills they will use.
 
 ## Report
 
