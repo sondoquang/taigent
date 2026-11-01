@@ -37,7 +37,10 @@ Taiga MCP server and `taigent` with them.
 
 ```
 claude -p "/<skill> <args>" --output-format json --permission-mode acceptEdits --allowedTools <every rule of allowlist.txt>
-codex exec --sandbox workspace-write --json
+codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
+  -c "approvals_reviewer='user'"
+  -c "features.hooks=true"
+  -c "hooks.PreToolUse=[{matcher='^Bash$',hooks=[{type='command',command='node .codex/hooks/taigent-shell-guard.mjs',timeout=30}]}]"
   -c "mcp_servers.taiga.enabled_tools=['listProjects',…]"
   -c "mcp_servers.taiga.default_tools_approval_mode='approve'"
   "$<skill> <args>"
@@ -58,9 +61,11 @@ codex exec --sandbox workspace-write --json
 - **Codex** runs a skill named in the prompt as `$<skill>` (explicit invocation:
   [Build skills](https://learn.chatgpt.com/docs/build-skills); the CLI extracts `$tool-name` mentions from the
   prompt text, `codex-rs/skills/src/mentions.rs`), including skills with `allow_implicit_invocation: false`.
-  `--sandbox workspace-write` lets it edit the workspace only. The two `-c` overrides expose only the allowlist's
-  Taiga MCP read tools (`enabled_tools`; write and banned tools do not exist for the run) and let them run
-  without approval (see below).
+  `--sandbox workspace-write` lets it edit the workspace only. The last two `-c` overrides expose only the
+  allowlist's Taiga MCP read tools (`enabled_tools`; write and banned tools do not exist for the run) and let them
+  run without approval (see [MCP approvals](#codex-exec-and-mcp-approvals-when-unattended)). The hook, the
+  committed `.codex/rules/taigent.rules` and the other flags limit the shell to the allowlist's `npx taigent`
+  commands and give those network access (see [shell commands](#codex-exec-and-shell-commands-when-unattended)).
 
 ## The standard allowlist
 
@@ -75,8 +80,10 @@ codex exec --sandbox workspace-write --json
 
 It never holds an MCP write tool (create, update, link, batch, upload, comment, delete, assign, watch,
 `authenticate`) nor a tool banned in `docs/taiga/conventions.md` §10; `test/headless.test.ts` fails if it does
-(it reads the banned tools from §10). Claude gets every rule; Codex gets the MCP tool names (Codex has no
-equivalent of the shell rules, see below).
+(it reads the banned tools from §10). Claude gets every rule. Codex gets the MCP tool names as `enabled_tools`;
+for the shell, its PreToolUse hook reads the `Bash(…)`/`PowerShell(…)` rules of the file on every command, and
+`.codex/rules/taigent.rules` repeats the five taigent commands in Codex's rule language, which cannot read
+files (`test/headless.test.ts` fails when the two lists differ).
 
 ## Platform notes
 
@@ -111,10 +118,80 @@ nothing below was run. Sources: the official docs and the `openai/codex` source 
    `default_tools_approval_mode = 'approve'` for them. The run cannot hang on a prompt, and write tools are
    not offered at all. `required = true` in `.codex/config.toml` makes `exec` exit with an error when the Taiga MCP
    server does not start. The project `.codex/config.toml` is read only when the project is trusted.
-5. Shell commands: `workspace-write` has no network access by default and escalations are refused under
-   `never`, so `npx taigent validate` works but `plan`/`apply`/`bootstrap`/`upload` cannot reach Taiga in a Codex
-   headless run. Untested options: an execpolicy rule in `.codex/rules/*.rules` such as
-   `prefix_rule(pattern = ["npx", "taigent", ["plan", "apply", "bootstrap", "upload"]], decision = "allow")`
-   (runs matching commands outside the sandbox; [Rules](https://learn.chatgpt.com/docs/agent-configuration/rules)),
-   or `-c sandbox_workspace_write.network_access=true` (network for every command). Verify one on a machine with
-   Codex before relying on Codex for those skills.
+
+## `codex exec` and shell commands when unattended
+
+Spec #1 asks that a headless run allow only MCP read tools and the `taigent` CLI on both agents. Without the
+mechanisms below, `codex exec --sandbox workspace-write` runs **any** shell command (inside the sandbox) and none
+can reach Taiga (no network in `workspace-write`). `[UNVERIFIED]`: Codex CLI is not installed on the machine where
+this was written, so nothing in this section was run; it rests on the official docs and the `openai/codex` source
+(`main` at `67f0994b`, 2026-10-31). The hook script and the rule/allowlist agreement are tested
+(`test/headless.test.ts`); Codex loading and applying them is not.
+
+How Codex decides a shell command under `codex exec`:
+
+1. The approval policy is `never`: exec passes it as a harness override, which wins over `-c approval_policy`
+   (`codex-rs/exec/src/lib.rs`, `ConfigOverrides { approval_policy: Some(AskForApproval::Never) }`;
+   `codex-rs/core/src/config/mod.rs`, `approval_policy_override.or(cfg.approval_policy)`). Only a resolved
+   `approvals_reviewer = "auto_review"` makes exec rebuild the config without that override
+   (`build_exec_config`); the wrapper pins `-c approvals_reviewer='user'` so a personal config cannot switch the run
+   to the reviewer subagent ([Config reference](https://learn.chatgpt.com/docs/config-file/config-reference):
+   `approvals_reviewer`). `approval_policy = "untrusted"` (prompt for every command no rule allows) cannot be set:
+   Codex rejects it ("no longer supported", same reference and `config/mod.rs`).
+2. Execpolicy rules ([Rules](https://learn.chatgpt.com/docs/agent-configuration/rules)): `.rules` files under
+   `rules/` of every active config layer; the project's `.codex/rules/` loads only when the project is trusted
+   (`codex-rs/core/src/exec_policy.rs`, `policy_files`). A matching `decision = "allow"` rule runs the command
+   **outside the sandbox** without prompting (`Decision::Allow` → `ExecApprovalRequirement::Skip { bypass_sandbox:
+   true }`, then `SandboxOverride::BypassSandboxFirstAttempt` in `codex-rs/core/src/tools/sandboxing.rs`), so it has
+   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload …`; its
+   `match`/`not_match` examples are checked by Codex when it loads the file.
+3. A command that **no rule matches** is decided by `render_decision_for_unmatched_command_for_platform`
+   (`exec_policy.rs`): under `never` it is *allowed* inside the sandbox unless flagged dangerous. Rules cannot
+   express "everything else": a `pattern` is a non-empty list of literal tokens or unions of literals, with no
+   wildcard (`codex-rs/execpolicy/src/parser.rs`, `parse_pattern_token`). So rules alone cannot refuse other
+   commands; a `prompt` or `forbidden` rule only covers the prefixes it names.
+4. Hence the PreToolUse hook ([Hooks](https://learn.chatgpt.com/docs/hooks)): Codex runs it before every shell
+   command (tool name `Bash`, also for `exec_command` and on Windows; `tool_input.command` is the command line,
+   `codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs`). `.codex/hooks/taigent-shell-guard.mjs` reads
+   `tools/taiga/allowlist.txt` and exits 0 only for a command that starts with one of its taigent prefixes and holds
+   plain words (none of ``; & | < > $ ` ( ) { } * ?`` nor a line break); otherwise it exits 2 with the reason on stderr,
+   which blocks the call and returns the reason to the model (`codex-rs/hooks/src/events/pre_tool_use.rs`). Like
+   Claude Code, compound commands are refused, so the skills keep running each `npx taigent …` on its own.
+
+The wrapper passes the hook on the command line, so it applies to headless runs only, not to interactive Codex
+sessions in this repository:
+
+- `-c hooks.PreToolUse=[…]`: inline hooks use the `config.toml` `[hooks]` schema (`matcher`, `hooks[].type`,
+  `command`, `timeout`; Config reference: `hooks`, `hooks.<Event>`, `hooks.<Event>[].hooks`;
+  `codex-rs/protocol/src/hooks.rs`), and Codex discovers hooks in the `-c` (session flags) layer too
+  (`codex-rs/hooks/src/engine/discovery.rs`). A `-c` value that is not valid TOML silently becomes a string
+  (`codex-rs/utils/cli/src/config_override.rs`), so the value is kept to TOML single-quoted strings; Codex runs
+  the command with the session shell from the session directory, which the wrapper sets to the repository root
+  (`codex-rs/hooks/src/engine/command_runner.rs`).
+- `--dangerously-bypass-hook-trust`: non-managed hooks run only once trusted through `/hooks`, and a hook from `-c`
+  cannot be trusted that way; the flag runs enabled hooks "without requiring persisted hook trust for that
+  invocation", meant for automation that vets hook sources itself (Hooks guide; `codex-rs/utils/cli/src/shared_options.rs`).
+  Here the only hook source is this repository's reviewed script. The flag also lets the user's own enabled
+  hooks run untrusted in that run.
+- `-c features.hooks=true`: hooks are on by default, but a personal `features.hooks = false` would silently drop
+  the guard (Config reference: `features.hooks`; `codex-rs/features/src/lib.rs`).
+
+Rejected: `-c sandbox_workspace_write.network_access=true` (Config reference) would give every command network,
+and `npx` would stay inside the sandbox, where writes outside the workspace (such as its cache) fail
+`[INFERENCE]`; `--ignore-rules` ([Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode))
+would drop the project rule.
+
+Limits, by the sources above:
+
+- Everything under `.codex/` (MCP server, rules) needs a trusted project; untrusted, the hook still blocks
+  non-taigent commands, but taigent runs inside the sandbox and cannot reach Taiga.
+- Hooks fail open: a hook that cannot start, times out (30 s) or exits with another code than 0 or 2 is reported
+  as failed and the command goes on (`pre_tool_use.rs`); the Hooks guide calls tool hooks "a useful guardrail, not
+  a complete enforcement boundary". The script turns its own errors into exit 2, and an unmatched command that
+  slips through still runs inside the sandbox without network.
+- User-level rules still apply (stricter ones win; an `allow` rule only matters for commands the hook let through).
+- `[UNVERIFIED]` live behaviour: that Codex loads `.codex/rules/taigent.rules` and the `-c` hook as described, that
+  allowed `npx taigent` commands reach Taiga (including through the Windows sandbox and PowerShell lowering,
+  `codex-rs/shell-command/src/powershell.rs`), and the exact message the model gets for a blocked command. Check
+  on a machine with Codex: `codex execpolicy check --rules .codex/rules/taigent.rules -- npx taigent plan --project
+  x` should print `"decision":"allow"`, and a headless run whose skill asks for `npm test` should report it blocked.

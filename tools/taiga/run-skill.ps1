@@ -55,10 +55,16 @@ if ($Agent -ceq 'claude') {
   $Command = @('claude', '-p', "/$Request", '--output-format', $Format, '--permission-mode', 'acceptEdits', '--allowedTools') + $Rules
 }
 else {
+  # Shell parity with Claude (docs/headless.md): the PreToolUse hook blocks every shell command but the allowlist's
+  # taigent commands, which .codex/rules/taigent.rules runs outside the sandbox (network to reach Taiga).
   $Tools = @($Rules | Where-Object { $_.StartsWith('mcp__taiga__') } | ForEach-Object { "'$($_.Substring('mcp__taiga__'.Length))'" }) -join ','
-  $Command = @('codex', 'exec', '--sandbox', 'workspace-write')
+  $Command = @('codex', 'exec', '--sandbox', 'workspace-write', '--dangerously-bypass-hook-trust')
   if ($Format -ceq 'json') { $Command += '--json' }
-  $Command += @('-c', "mcp_servers.taiga.enabled_tools=[$Tools]", '-c', "mcp_servers.taiga.default_tools_approval_mode='approve'", "`$$Request")
+  $Command += @(
+    '-c', "approvals_reviewer='user'", '-c', 'features.hooks=true',
+    '-c', "hooks.PreToolUse=[{matcher='^Bash`$',hooks=[{type='command',command='node .codex/hooks/taigent-shell-guard.mjs',timeout=30}]}]",
+    '-c', "mcp_servers.taiga.enabled_tools=[$Tools]", '-c', "mcp_servers.taiga.default_tools_approval_mode='approve'", "`$$Request"
+  )
 }
 
 if ($DryRun) {

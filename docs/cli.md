@@ -356,7 +356,9 @@ Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply|bootstra
 Claude Code's Windows PowerShell tool, `PowerShell(...)` rules) and Taiga MCP read tools; every skill that
 pre-approves a writing command (`apply`, `bootstrap`, `upload`) is user-only on both agents (`test/skills.test.ts`
 enforces both rules). They grant, not restrict: the gate before `--yes` is the skill's explicit confirmation step.
-Codex's skill docs do not document `allowed-tools`; there, approvals come from `.codex/config.toml` and the sandbox.
+Codex's skill docs do not document `allowed-tools`; there, approvals come from `.codex/config.toml`, the sandbox, the
+execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell hook `.codex/hooks/taigent-shell-guard.mjs`
+(`docs/headless.md`).
 
 ## Exit codes
 
