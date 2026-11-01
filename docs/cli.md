@@ -380,11 +380,15 @@ execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell ho
 | Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`): the one item vocabulary outside the client |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`), the only place that maps item types to Taiga's endpoint names (`TAIGA_ITEM`), `TaigaError`, `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `describePlanOperation`, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
-| Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
-| Upload | `src/upload.ts` | `planUpload(docs, backlog, project, client, cwd)` (reads Taiga, hashes files), `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
+| Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
+| Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: `.agents/skills/taiga-*` → `.claude/skills/taiga-*` |
+
+Every plan/execute command has the same three steps: a reader (`read*Remote`, all I/O), a pure planner, an executor.
+The CLI only wires them (`runPlan`, `runBootstrap`, `runUpload`) and prints.
 
 Adding a manifest kind: write `load<Kind>(path, context)` that reads with `readManifestYaml`, reports every
 problem through an `issue(path, rule, message)` sink (reusing the `check*` functions of `conventions.ts`) and

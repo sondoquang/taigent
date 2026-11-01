@@ -1,12 +1,12 @@
-// Bootstrap: brings a Taiga project to the state declared in project.yaml. `planBootstrap` is pure: from
-// the manifest and what Taiga reports it derives an ordered list of operations that only fill gaps
-// (create the project, enable modules, create/color tags, create custom attributes, invite members, create
+// Bootstrap: brings a Taiga project to the state declared in project.yaml. `readBootstrapRemote` reads what Taiga
+// has; `planBootstrap` is pure: from the manifest and that state it derives an ordered list of operations that only
+// fill gaps (create the project, enable modules, create/color tags, create custom attributes, invite members, create
 // the wiki home). It never disables, renames or deletes anything. `executeBootstrap` runs that plan.
 
 import { ITEM_TYPES, type ItemType } from './items.ts';
 import { WIKI_HOME_SLUG, type ProjectModule } from './manifest/conventions.ts';
 import type { CustomAttributeSpec, ProjectManifest } from './manifest/project.ts';
-import { readState, writeState } from './manifest/state.ts';
+import { readSavedProject, readState, writeState } from './manifest/state.ts';
 import { FILL_ACTIONS, RESULT, summarize, tally, type FillAction, type FillResult, type PlanSummary } from './operations.ts';
 import {
   TaigaError,
@@ -19,7 +19,7 @@ import {
   type TaigaUser,
 } from './taiga/client.ts';
 
-/** What Taiga currently has, as read by the CLI before planning. */
+/** What Taiga currently has, as read by `readBootstrapRemote` before planning. */
 export interface BootstrapRemote {
   me: TaigaUser;
   /** The existing project matched by slug, if any. */
@@ -57,13 +57,37 @@ export interface BootstrapReport {
 const moduleFlag = (module: ProjectModule) => `is_${module}_activated` as ModuleFlag;
 
 /** Finds the template the manifest names (`scrum`, `kanban`) among Taiga's, by slug or name. */
-export function findTemplate(templates: TaigaProjectTemplate[], name: string): TaigaProjectTemplate {
+function findTemplate(templates: TaigaProjectTemplate[], name: string): TaigaProjectTemplate {
   const wanted = name.toLowerCase();
   const template = templates.find((t) => t.slug === wanted || t.name.toLowerCase() === wanted);
   if (!template) {
     throw new TaigaError(`project template "${name}" not found on Taiga; available: ${templates.map((t) => t.slug).join(', ') || '(none)'}`);
   }
   return template;
+}
+
+/**
+ * Reads what bootstrap compares project.yaml with. Refuses (before any write) when no project has the manifest's
+ * slug but `statePath` records a project a previous run created under another slug: never create twice.
+ */
+export async function readBootstrapRemote(manifest: ProjectManifest, client: TaigaClient, statePath: string): Promise<BootstrapRemote> {
+  const me = await client.getMe();
+  const project = await client.findProjectBySlug(manifest.slug);
+  if (!project) {
+    const saved = await readSavedProject(statePath);
+    const recorded = saved && (await client.findProject(saved.id));
+    if (recorded) {
+      throw new TaigaError(
+        `state.json already points to project id ${recorded.id} (slug "${recorded.slug}"), but no project has slug "${manifest.slug}"; ` +
+          `refusing to create another one. Have a Taiga admin set its slug to "${manifest.slug}", or remove "project" from state.json ` +
+          'if that project is unrelated.',
+      );
+    }
+  }
+  const template = project ? undefined : findTemplate(await client.listProjectTemplates(), manifest.template);
+  const memberships = project ? await client.listMemberships(project.id) : [];
+  const wikiHomeExists = project !== undefined && manifest.wikiHome !== undefined && (await client.findWikiPage(project.id, WIKI_HOME_SLUG)) !== undefined;
+  return { me, project, template, memberships, wikiHomeExists };
 }
 
 export function planBootstrap(manifest: ProjectManifest, remote: BootstrapRemote): BootstrapPlan {

@@ -1,19 +1,45 @@
-// Upload: brings Taiga's wiki pages and attachments to what docs.yaml declares. `planUpload` reads Taiga
-// and the local files (hashing attachments as a stream) and derives the operations; `executeUpload` runs
-// them. Wiki pages are upserted by slug. Attachments are only ever added: one with the same name, size and
-// sha1 already on the target is skipped; a changed file is uploaded again and the old attachment stays.
+// Upload: brings Taiga's wiki pages and attachments to what docs.yaml declares. `readUploadRemote` reads Taiga and
+// the local files (hashing attachments as a stream); `planUpload` is pure and derives the operations;
+// `executeUpload` runs them. Wiki pages are upserted by slug. Attachments are only ever added: one with the same
+// name, size and sha1 already on the target is skipped; a changed file is uploaded again and the old attachment stays.
 
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
+import type { ItemType } from './items.ts';
 import type { Backlog } from './manifest/backlog.ts';
 import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
-import { WIKI_TARGET_PREFIX, type AttachmentSpec, type Docs } from './manifest/docs.ts';
-import type { ItemType } from './items.ts';
+import { WIKI_TARGET_PREFIX, type AttachmentSpec, type Docs, type WikiPageSpec } from './manifest/docs.ts';
 import { FILL_ACTIONS, RESULT, summarize, tally, type FillAction, type FillResult, type PlanSummary } from './operations.ts';
 import { srcTag, type PlanProject } from './planner.ts';
-import { TaigaConflictError, TaigaError, type AttachmentTargetType, type TaigaClient, type TaigaItem } from './taiga/client.ts';
+import {
+  TaigaConflictError,
+  TaigaError,
+  type AttachmentTargetType,
+  type TaigaAttachment,
+  type TaigaClient,
+  type TaigaItem,
+  type TaigaWikiPage,
+} from './taiga/client.ts';
+
+/** The resolved target of an attachment: what it hangs off on Taiga. */
+interface ResolvedTarget {
+  type: AttachmentTargetType;
+  /** As written in docs.yaml: an item key or `wiki:<slug>`. */
+  target: string;
+  /** Null for a wiki page this upload creates. */
+  objectId: number | null;
+}
+
+/** What `planUpload` compares docs.yaml with, read by `readUploadRemote`. */
+export interface UploadRemote {
+  project: PlanProject;
+  /** Each docs.yaml page: its local Markdown and the page on Taiga (undefined when missing). */
+  pages: ReadonlyMap<WikiPageSpec, { content: string; page: TaigaWikiPage | undefined }>;
+  /** Each docs.yaml attachment: its target, its file's size/sha1 and the same-name attachments already there. */
+  attachments: ReadonlyMap<AttachmentSpec, ResolvedTarget & { size: number; sha1: string; existing: TaigaAttachment[] }>;
+}
 
 /** Attachment already on Taiga with the name of a changed local file; it is left in place. */
 export interface PreviousAttachment {
@@ -98,12 +124,12 @@ async function resolveTargets(
   project: PlanProject,
   client: TaigaClient,
   wikiIds: Map<string, number | null>,
-): Promise<Map<AttachmentSpec, { type: AttachmentTargetType; target: string; objectId: number | null }>> {
+): Promise<Map<AttachmentSpec, ResolvedTarget>> {
   const types = backlogTypes(backlog);
   const lists: Partial<Record<ItemType, Promise<TaigaItem[]>>> = {};
   const listItems = (type: ItemType) => (lists[type] ??= client.listItems(type, project.id));
 
-  const resolved = new Map<AttachmentSpec, { type: AttachmentTargetType; target: string; objectId: number | null }>();
+  const resolved = new Map<AttachmentSpec, ResolvedTarget>();
   for (const spec of attachments) {
     if (spec.target.kind === 'wiki') {
       const { slug } = spec.target;
@@ -136,37 +162,59 @@ async function resolveTargets(
   return resolved;
 }
 
-/**
- * Reads Taiga and the local files and lists the operations that bring Taiga to docs.yaml. File paths in
- * the plan are relative to `cwd`.
- */
-export async function planUpload(docs: Docs, backlog: Backlog | undefined, project: PlanProject, client: TaigaClient, cwd: string): Promise<UploadPlan> {
-  const operations: UploadOperation[] = [];
+/** Reads the project, docs.yaml's pages on Taiga, the attachment targets and what they hold, and the local files. */
+export async function readUploadRemote(docs: Docs, backlog: Backlog | undefined, client: TaigaClient, slug: string): Promise<UploadRemote> {
+  const detail = await client.getProjectBySlug(slug);
+  const project = { id: detail.id, slug: detail.slug };
+  const pages = new Map<WikiPageSpec, { content: string; page: TaigaWikiPage | undefined }>();
   /** Wiki page id by slug; null when this upload creates the page. */
   const wikiIds = new Map<string, number | null>();
-
-  for (const page of docs.wiki) {
-    const file = relative(cwd, page.file);
-    const [content, remote] = await Promise.all([readFile(page.file, 'utf8'), client.findWikiPage(project.id, page.slug)]);
-    wikiIds.set(page.slug, remote?.id ?? null);
-    if (!remote) operations.push({ action: 'create', type: 'wiki', slug: page.slug, file });
-    else if (remote.content !== content) operations.push({ action: 'update', type: 'wiki', slug: page.slug, file, id: remote.id, version: remote.version });
-    else operations.push({ action: 'skip', type: 'wiki', slug: page.slug, file, id: remote.id });
+  for (const spec of docs.wiki) {
+    const [content, page] = await Promise.all([readFile(spec.file, 'utf8'), client.findWikiPage(project.id, spec.slug)]);
+    pages.set(spec, { content, page });
+    wikiIds.set(spec.slug, page?.id ?? null);
   }
 
   const targets = await resolveTargets(docs.attachments, backlog, project, client, wikiIds);
+  const attachments = new Map<AttachmentSpec, ResolvedTarget & { size: number; sha1: string; existing: TaigaAttachment[] }>();
   for (const spec of docs.attachments) {
-    const { type, target, objectId } = targets.get(spec)!;
+    const target = targets.get(spec)!;
     const name = basename(spec.file);
-    const { size, sha1 } = await fileDigest(spec.file);
-    const fields: AttachmentFields = { target, targetType: type, objectId, name, file: relative(cwd, spec.file), size, sha1, description: spec.description };
-    const existing = objectId === null ? [] : (await client.listAttachments(type, project.id, objectId)).filter((a) => a.name === name);
+    const existing = target.objectId === null ? [] : await client.listAttachments(target.type, project.id, target.objectId);
+    attachments.set(spec, { ...target, ...(await fileDigest(spec.file)), existing: existing.filter((a) => a.name === name) });
+  }
+  return { project, pages, attachments };
+}
+
+/** Lists the operations that bring Taiga to docs.yaml. File paths in the plan are relative to `cwd`. */
+export function planUpload(docs: Docs, remote: UploadRemote, cwd: string): UploadPlan {
+  const operations: UploadOperation[] = [];
+  for (const spec of docs.wiki) {
+    const file = relative(cwd, spec.file);
+    const { content, page } = remote.pages.get(spec)!;
+    if (!page) operations.push({ action: 'create', type: 'wiki', slug: spec.slug, file });
+    else if (page.content !== content) operations.push({ action: 'update', type: 'wiki', slug: spec.slug, file, id: page.id, version: page.version });
+    else operations.push({ action: 'skip', type: 'wiki', slug: spec.slug, file, id: page.id });
+  }
+
+  for (const spec of docs.attachments) {
+    const { type, target, objectId, size, sha1, existing } = remote.attachments.get(spec)!;
+    const fields: AttachmentFields = {
+      target,
+      targetType: type,
+      objectId,
+      name: basename(spec.file),
+      file: relative(cwd, spec.file),
+      size,
+      sha1,
+      description: spec.description,
+    };
     const same = existing.find((a) => a.size === size && a.sha1 === sha1);
     if (same) operations.push({ action: 'skip', type: 'attachment', id: same.id, ...fields });
     else operations.push({ action: 'create', type: 'attachment', previous: existing.map(({ id, size, sha1 }) => ({ id, size, sha1 })), ...fields });
   }
 
-  return { project, ...summarize(FILL_ACTIONS, operations), operations };
+  return { project: remote.project, ...summarize(FILL_ACTIONS, operations), operations };
 }
 
 /** Human-readable description of one operation, shared by the plan and the report. */

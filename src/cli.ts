@@ -2,21 +2,19 @@
 
 import { relative } from 'node:path';
 import { parseArgs } from 'node:util';
-import { describeBootstrapOperation, executeBootstrap, findTemplate, planBootstrap } from './bootstrap.ts';
+import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
-import type { ItemType } from './items.ts';
-import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
-import { readSavedProject } from './manifest/state.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
-import { buildPlan, describePlanOperation, srcTag, type Plan } from './planner.ts';
+import { buildPlan, describePlanOperation, type Plan } from './planner.ts';
+import { readBacklogRemote } from './remote.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
-import { TaigaAuthError, TaigaClient, TaigaConflictError, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
-import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError } from './upload.ts';
+import { TaigaAuthError, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
+import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
@@ -233,24 +231,8 @@ async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: strin
   const manifest = (await loadManifests(layout.dir, slug, { require: ['project'] })).manifests.project!;
   const client = await connectTaiga(env);
 
-  const me = await client.getMe();
-  const project = await client.findProjectBySlug(manifest.slug);
-  if (!project) {
-    // A previous run may have created the project under another slug (see executeBootstrap): never create twice.
-    const saved = await readSavedProject(layout.state);
-    const recorded = saved && (await client.findProject(saved.id));
-    if (recorded) {
-      throw new TaigaError(
-        `state.json already points to project id ${recorded.id} (slug "${recorded.slug}"), but no project has slug "${manifest.slug}"; ` +
-          `refusing to create another one. Have a Taiga admin set its slug to "${manifest.slug}", or remove "project" from state.json ` +
-          'if that project is unrelated.',
-      );
-    }
-  }
-  const template = project ? undefined : findTemplate(await client.listProjectTemplates(), manifest.template);
-  const memberships = project ? await client.listMemberships(project.id) : [];
-  const wikiHomeExists = project !== undefined && manifest.wikiHome !== undefined && (await client.findWikiPage(project.id, WIKI_HOME_SLUG)) !== undefined;
-  const plan = planBootstrap(manifest, { me, project, template, memberships, wikiHomeExists });
+  const remote = await readBootstrapRemote(manifest, client, layout.state);
+  const plan = planBootstrap(manifest, remote);
 
   const gate = reviewGate(options, plan, () =>
     formatPlanText(`Bootstrap plan for project ${plan.project.slug} (${plan.project.exists ? `id ${plan.project.id}` : 'new'}):`, plan, describeBootstrapOperation, {
@@ -260,7 +242,7 @@ async function runBootstrap(options: Options, env: NodeJS.ProcessEnv, cwd: strin
   );
   if (gate !== undefined) return gate;
 
-  const report = await executeBootstrap(plan, project, client, layout.state);
+  const report = await executeBootstrap(plan, remote.project, client, layout.state);
   emit(options, report, () => formatReportText(`Bootstrapped project ${report.project.slug} (id ${report.project.id}):`, report, describeBootstrapOperation));
   return ExitCode.Ok;
 }
@@ -270,8 +252,8 @@ async function runUpload(options: Options, env: NodeJS.ProcessEnv, cwd: string):
   const slug = options.project!;
   const { manifests } = await loadManifests(projectLayout(slug, env, cwd).dir, slug, { require: ['docs'] });
   const client = await connectTaiga(env);
-  const project = await client.getProjectBySlug(slug);
-  const plan = await planUpload(manifests.docs!, manifests.backlog, { id: project.id, slug: project.slug }, client, cwd);
+  const remote = await readUploadRemote(manifests.docs!, manifests.backlog, client, slug);
+  const plan = planUpload(manifests.docs!, remote, cwd);
 
   const gate = reviewGate(options, plan, () =>
     formatPlanText(`Upload plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describeUploadOperation, {
@@ -320,49 +302,14 @@ async function runSkills(options: Options, cwd: string): Promise<number> {
   }
 }
 
-async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
-  if (options.command === 'validate') return runValidate(options, env, cwd);
-  if (options.command === 'bootstrap') return runBootstrap(options, env, cwd);
-  if (options.command === 'upload') return runUpload(options, env, cwd);
-  if (options.command === 'skills') return runSkills(options, cwd);
+/** `plan` and `apply`: compare backlog.yaml with Taiga, then (apply --yes) run the plan. */
+async function runPlan(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
   const slug = options.project!;
   const layout = projectLayout(slug, env, cwd);
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
   const client = await connectTaiga(env);
-  const project = await client.getProjectBySlug(slug);
-  const [epics, stories, tasks] = await Promise.all([
-    client.listItems('epic', project.id),
-    client.listItems('story', project.id),
-    client.listItems('task', project.id),
-  ]);
-  // Existing links only matter for manifest epics that have stories.
-  const epicTagsWithStories = new Set(backlog.epics.filter((epic) => epic.stories.length > 0).map((epic) => srcTag(epic.key)));
-  const epicStories = new Map<number, number[]>();
-  for (const epic of epics) {
-    if (epic.tags.some((tag) => epicTagsWithStories.has(tag))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
-  }
-  // Current custom attribute values, only for existing items that declare some in the manifest.
-  const attributeValues: Record<ItemType, Map<number, TaigaAttributeValues>> = { epic: new Map(), story: new Map(), task: new Map() };
-  const declaringTags = new Set<string>();
-  for (const epic of backlog.epics) {
-    for (const item of [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]) {
-      if (Object.keys(item.customAttributes).length > 0) declaringTags.add(srcTag(item.key));
-    }
-  }
-  for (const [type, items] of [['epic', epics], ['story', stories], ['task', tasks]] as const) {
-    for (const item of items) {
-      if (item.tags.some((tag) => declaringTags.has(tag))) attributeValues[type].set(item.id, await client.getAttributeValues(type, item.id));
-    }
-  }
-  const plan = buildPlan(backlog, {
-    project: { id: project.id, slug: project.slug },
-    epics,
-    stories,
-    tasks,
-    epicStories,
-    customAttributes: project.customAttributes,
-    attributeValues,
-  });
+  const remote = await readBacklogRemote(backlog, client, slug);
+  const plan = buildPlan(backlog, remote);
 
   const gate = reviewGate(options, plan, () =>
     formatPlanText(`Plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describePlanOperation, {
@@ -373,9 +320,25 @@ async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promi
   );
   if (gate !== undefined) return gate;
 
-  const report = await executePlan(plan, client, layout.state, project.customAttributes);
+  const report = await executePlan(plan, client, layout.state, remote.customAttributes);
   emit(options, report, () => formatReportText(`Applied to project ${report.project.slug} (id ${report.project.id}):`, report, describeAppliedOperation));
   return ExitCode.Ok;
+}
+
+function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
+  switch (options.command) {
+    case 'validate':
+      return runValidate(options, env, cwd);
+    case 'bootstrap':
+      return runBootstrap(options, env, cwd);
+    case 'upload':
+      return runUpload(options, env, cwd);
+    case 'skills':
+      return runSkills(options, cwd);
+    case 'plan':
+    case 'apply':
+      return runPlan(options, env, cwd);
+  }
 }
 
 function fail(code: ExitCode, kind: string, error: Error, json: boolean, extra: Record<string, unknown> = {}): number {

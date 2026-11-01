@@ -1,0 +1,49 @@
+// Remote reader of `plan`/`apply`: reads back from Taiga what the pure planner (`buildPlan`) compares the backlog
+// with: the project's items, the epic links and the custom attribute values that matter for this backlog.
+
+import { ITEM_TYPES, type ItemType } from './items.ts';
+import type { Backlog } from './manifest/backlog.ts';
+import { srcTag, type RemoteState } from './planner.ts';
+import type { TaigaAttributeValues, TaigaClient } from './taiga/client.ts';
+
+export async function readBacklogRemote(backlog: Backlog, client: TaigaClient, slug: string): Promise<RemoteState> {
+  const project = await client.getProjectBySlug(slug);
+  const [epics, stories, tasks] = await Promise.all([
+    client.listItems('epic', project.id),
+    client.listItems('story', project.id),
+    client.listItems('task', project.id),
+  ]);
+
+  // Existing links only matter for manifest epics that have stories.
+  const epicTagsWithStories = new Set(backlog.epics.filter((epic) => epic.stories.length > 0).map((epic) => srcTag(epic.key)));
+  const epicStories = new Map<number, number[]>();
+  for (const epic of epics) {
+    if (epic.tags.some((tag) => epicTagsWithStories.has(tag))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
+  }
+
+  // Current custom attribute values, only for existing items that declare some in the manifest.
+  const declaringTags = new Set<string>();
+  for (const epic of backlog.epics) {
+    for (const item of [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]) {
+      if (Object.keys(item.customAttributes).length > 0) declaringTags.add(srcTag(item.key));
+    }
+  }
+  const items = { epic: epics, story: stories, task: tasks };
+  const attributeValues = {} as Record<ItemType, Map<number, TaigaAttributeValues>>;
+  for (const type of ITEM_TYPES) {
+    attributeValues[type] = new Map();
+    for (const item of items[type]) {
+      if (item.tags.some((tag) => declaringTags.has(tag))) attributeValues[type].set(item.id, await client.getAttributeValues(type, item.id));
+    }
+  }
+
+  return {
+    project: { id: project.id, slug: project.slug },
+    epics,
+    stories,
+    tasks,
+    epicStories,
+    customAttributes: project.customAttributes,
+    attributeValues,
+  };
+}
