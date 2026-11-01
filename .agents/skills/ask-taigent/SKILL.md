@@ -31,7 +31,7 @@ Beside the main flow:
 
 Starting situations, and where each merges onto the flow.
 
-- **New machine, or a project that should use these skills** → `taiga-setup`. In another project it names how to install the CLI there and, on request, copies the Taigent skills over (`docs/cli.md` §Using the skills in another project).
+- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npx skills add sondoquang/taigent` for the skills, `npm install -D github:sondoquang/taigent` for the CLI; `taiga-setup` checks both and names each fix (`docs/cli.md` §Using the skills in another project).
 - **Brand-new Taiga project** → `taiga-bootstrap-project`, then `taiga-plan-backlog` and `taiga-upload-docs`.
 - **Project already on Taiga, no manifest yet** → `taiga-plan-backlog`. Hand-made items carry no `src:` tag; it lists them and asks before adding the same work. `taiga-bootstrap-project` completes the existing project when you are its admin.
 - **New or changed requirement** → `taiga-plan-backlog` with the request as the spec, then review and `taiga-apply-backlog`.

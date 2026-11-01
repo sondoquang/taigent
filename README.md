@@ -12,7 +12,14 @@ npm test && npm run typecheck
 
 See [docs/cli.md](docs/cli.md) for environment variables, manifest layout, JSON output and exit codes.
 
-To use the Taigent agent skills (`taiga-*` and the `ask-taigent` router) in another project, or to check the
+To use the Taigent agent skills (`taiga-*` and the `ask-taigent` router) in another project, run at its root:
+
+```sh
+npx skills add sondoquang/taigent
+npm install -D github:sondoquang/taigent
+```
+
+Then, to check the
 `TAIGA_*` variables, the CLI and the Taiga MCP server, run the `taiga-setup` skill (`/taiga-setup` in Claude Code,
 `$taiga-setup` in Codex); details in
 [docs/cli.md § Using the skills in another project](docs/cli.md#using-the-skills-in-another-project). Not sure

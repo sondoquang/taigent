@@ -5,7 +5,8 @@ through the shell; it is the only path for writes to Taiga (MCP stays read-only)
 
 ## Running
 
-Requires Node.js 24+ (runs the TypeScript sources directly, no build step).
+Requires Node.js 24+. In the repository it runs the TypeScript sources directly; installed as a package it runs
+the build in `dist/` (`npm run build`, run by `prepare` on install; see [Using the skills in another project](#using-the-skills-in-another-project)).
 
 ```sh
 npm install
@@ -368,7 +369,7 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | Skill | Invocation | Does |
 |---|---|---|
 | `ask-taigent` | User only (as below) | Router: which Taigent skill, workflow step or CLI command fits a situation, the plan → review → apply rules, and how to maintain the skills. Reads only |
-| `taiga-setup` | Model or user | Checks Node.js and the `TAIGA_*` variables (set or missing, never values), `npx --no -- taigent --help`, and the Taiga MCP server (`listProjects`); names each fix, adds the `taiga` MCP entry to `.mcp.json`/`.codex/config.toml` once the user agrees, and copies the skills into another project on request |
+| `taiga-setup` | Model or user | Checks Node.js and the `TAIGA_*` variables (set or missing, never values), `npx --no -- taigent --help`, and the Taiga MCP server (`listProjects`); names each fix, adds the `taiga` MCP entry to `.mcp.json`/`.codex/config.toml` once the user agrees, and installs the skills into another project on request (`npx skills add`) |
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
@@ -387,11 +388,20 @@ execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell ho
 
 The CLI skills run `npx taigent` from the **project root** and first check that its `package.json` is taigent's own
 or lists `taigent` as a dependency: otherwise npx would fetch an unrelated `taigent` package from the npm registry.
-In another project, install the CLI as a link to a clone: `npm install` in the clone, then
-`npm install -D <path to the clone>` in the project. Installed from git or a tarball it fails with
-`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` (Node runs no TypeScript under `node_modules`). The docs the skills
-cite are then read from `node_modules/taigent/`. `taiga-status-report` needs only the Taiga MCP server. The
-`taiga-setup` skill walks through all of it, including copying the skills into the project.
+Another project needs two commands at its root:
+
+```sh
+npx skills add sondoquang/taigent          # the seven Taigent skills, for the agents it detects
+npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite (append #<tag> to pin)
+```
+
+`skills add` finds only the Taigent skills (the vendored mattpocock ones are not offered) and writes them to
+`.agents/skills/` and `.claude/skills/`; `npx skills update` refreshes them. `npm install` from git runs the
+`prepare` script, which compiles `src/` to `dist/` (`tsconfig.build.json`): under `node_modules` Node strips no
+types, so `bin/taigent.js` runs `dist/` there and the TypeScript sources everywhere else. Both commands need read
+access to the repository while it is private. The package ships `bin/`, `dist/`, `docs/cli.md` and `docs/taiga/`
+(`files` in `package.json`): the docs the skills cite, read from `node_modules/taigent/`.
+`taiga-status-report` needs only the Taiga MCP server. The `taiga-setup` skill checks all of it and names each fix.
 
 ## Exit codes
 
