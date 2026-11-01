@@ -41,8 +41,8 @@ Passes when it prints taigent's usage. The **taigent root**, holding the docs th
 
 Fix, by where the user works:
 
-- **A clone of the taigent repository** (`github.com/sondoquang/taigent`, private): `npm install` in the clone.
-- **Another project**: clone the taigent repository, `npm install` in the clone, then `npm install -D <path to the clone>` in the project. Only a folder link works: installed from git or a tarball, taigent fails with `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`, because Node runs no TypeScript under `node_modules`.
+- **A clone of the taigent repository** (`github.com/sondoquang/taigent`): `npm install` in the clone.
+- **Another project**: `npm install -D github:sondoquang/taigent` at the project root (creates `package.json` when there is none). npm builds the CLI on install; it needs read access to the repository. Append `#<tag>` to pin a release.
 
 ## 3. Taiga MCP server
 
@@ -84,7 +84,7 @@ Keep version `1.9.20`: the skills' tool notes and the banned-tool list of `docs/
 
 ## Installing the skills into another project
 
-When the user asks for it: copy every `taiga-*` directory and the `ask-taigent` directory of `<taigent root>/.agents/skills/` into the project's `.agents/skills/` (Codex reads it) and `.claude/skills/` (Claude Code reads it), then run the checks the table above lists for the skills they will use.
+When the user asks for it: `npx skills add sondoquang/taigent` at the project root installs the seven Taigent skills (every `taiga-*` and `ask-taigent`) for the agents it detects, into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code); `npx skills update` refreshes them. Then run the checks the table above lists for the skills they will use.
 
 ## Report
 
