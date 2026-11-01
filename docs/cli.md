@@ -345,11 +345,15 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 |---|---|---|
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`) | Spec/PRD → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
+| `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
+| `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml`, `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
+| `taiga-status-report` | Model or user | Read-only report by sprint and by epic through Taiga MCP read tools (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); runs no shell command |
 
-Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply` (as `Bash(...)` and, for Claude Code's
-Windows PowerShell tool, `PowerShell(...)` rules) and Taiga MCP read tools. They grant, not restrict: the gate
-before `apply --yes` is the skill's explicit confirmation step. Codex's skill docs do not document
-`allowed-tools`; there, approvals come from `.codex/config.toml` and the sandbox.
+Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply|bootstrap|upload` (as `Bash(...)` and, for
+Claude Code's Windows PowerShell tool, `PowerShell(...)` rules) and Taiga MCP read tools; every skill that
+pre-approves a writing command (`apply`, `bootstrap`, `upload`) is user-only on both agents (`test/skills.test.ts`
+enforces both rules). They grant, not restrict: the gate before `--yes` is the skill's explicit confirmation step.
+Codex's skill docs do not document `allowed-tools`; there, approvals come from `.codex/config.toml` and the sandbox.
 
 ## Exit codes
 

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga Upload Docs"
+  short_description: "Dry-run, confirm, then upload wiki pages and attachments"
+policy:
+  allow_implicit_invocation: false
