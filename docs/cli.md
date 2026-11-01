@@ -366,11 +366,12 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 
 | Skill | Invocation | Does |
 |---|---|---|
+| `taiga-setup` | Model or user | Checks Node.js and the `TAIGA_*` variables (set or missing, never values), `npx --no -- taigent --help`, and the Taiga MCP server (`listProjects`); names each fix, adds the `taiga` MCP entry to `.mcp.json`/`.codex/config.toml` once the user agrees, and copies the skills into another project on request |
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
 | `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml` (referencing documents where they already are, no copies), `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
-| `taiga-status-report` | Model or user | Read-only report by sprint and by epic through Taiga MCP read tools (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); runs no shell command |
+| `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); runs no shell command, so it works in any project where the Taiga MCP server runs |
 
 Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply|bootstrap|upload` (as `Bash(...)` and, for
 Claude Code's Windows PowerShell tool, `PowerShell(...)` rules) and Taiga MCP read tools; every skill that
@@ -379,6 +380,16 @@ enforces both rules). They grant, not restrict: the gate before `--yes` is the s
 Codex's skill docs do not document `allowed-tools`; there, approvals come from `.codex/config.toml`, the sandbox, the
 execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell hook `.codex/hooks/taigent-shell-guard.mjs`
 (`docs/headless.md`).
+
+### Using the skills in another project
+
+The CLI skills run `npx taigent` from the **project root** and first check that its `package.json` is taigent's own
+or lists `taigent` as a dependency: otherwise npx would fetch an unrelated `taigent` package from the npm registry.
+In another project, install the CLI as a link to a clone: `npm install` in the clone, then
+`npm install -D <path to the clone>` in the project. Installed from git or a tarball it fails with
+`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` (Node runs no TypeScript under `node_modules`). The docs the skills
+cite are then read from `node_modules/taigent/`. `taiga-status-report` needs only the Taiga MCP server. The
+`taiga-setup` skill walks through all of it, including copying the skills into the project.
 
 ## Exit codes
 

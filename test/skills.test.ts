@@ -177,7 +177,7 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
 const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
-const TAIGA_SKILLS = ['taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-plan-backlog', 'taiga-status-report', 'taiga-upload-docs'];
+const TAIGA_SKILLS = ['taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-upload-docs'];
 
 test('taiga-* skills follow Agent Skills and pre-approve only taigent commands and Taiga MCP read tools', async () => {
   const names = (await readdir(join(REPO_ROOT, '.agents/skills'))).filter((name) => name.startsWith('taiga-')).sort();
@@ -217,6 +217,7 @@ test('each taiga-* skill pre-approves only the taigent commands of its step', as
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),
     'taiga-status-report': [],
+    'taiga-setup': [],
   };
 
   for (const [name, rules] of Object.entries(expected)) {
@@ -234,4 +235,13 @@ test('taiga-status-report reads Taiga through MCP only and may be invoked implic
     assert.ok(allowedTools.includes(`mcp__taiga__${tool}`), `allowed-tools has mcp__taiga__${tool}`);
   }
   assert.ok(allowedTools.every((tool) => MCP_READ_TOOLS.has(tool)), allowedTools.join(' '));
+});
+
+test('taiga-setup gives the same Taiga MCP server entries as the repository configs', async () => {
+  const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8');
+  const block = (lang: string) => new RegExp(`^\`\`\`${lang}\\r?\\n([\\s\\S]*?)^\`\`\``, 'm').exec(skill)?.[1] ?? '';
+  const lines = (text: string) => text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+
+  assert.deepEqual(JSON.parse(block('json')), JSON.parse(await readFile(join(REPO_ROOT, '.mcp.json'), 'utf8')));
+  assert.deepEqual(lines(block('toml')), lines(await readFile(join(REPO_ROOT, '.codex/config.toml'), 'utf8')));
 });

@@ -9,7 +9,11 @@ allowed-tools: Bash(npx taigent validate *) Bash(npx taigent upload *) PowerShel
 
 Bring a project's Taiga wiki pages and attachments to what `taiga/<slug>/docs.yaml` declares, in four moves: **manifest**, **dry run**, **confirm**, **upload**. The `taigent` CLI makes every write. It upserts wiki pages by slug, skips attachments already on Taiga with the same name and content, and never deletes, renames or edits an existing attachment.
 
-Run each `npx taigent …` command exactly as written, alone in its own shell call from the repository root, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
+## 0. Check the setup
+
+Run every command from the **project root**, the directory holding `package.json` and the manifests root `taiga/`. Its `package.json` has `taigent` as `name` (the taigent repository) or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The **taigent root**, holding the docs cited below, is the project root when `name` is `taigent`, else `node_modules/taigent/`.
+
+Run each `npx taigent …` command exactly as written, alone in its own shell call, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
 
 ## 1. Pick the project
 
@@ -19,7 +23,7 @@ The slug the user named. With exactly one directory under `taiga/`, use it; othe
 
 Read `docs/cli.md` sections "Manifest layout" (the `docs.yaml` schema) and "Upload", and `docs/taiga/conventions.md` §8–§9 (wiki slugs, attachment names and targets). Then edit `taiga/<slug>/docs.yaml` in place, or create it, for the documents the user named. Keep every existing entry; removing one does not remove it from Taiga.
 
-- **`file` paths** are relative to the directory of `docs.yaml` and may point anywhere in the repository, so list each document where it already lives (e.g. `../../docs/specs/auth.md`). `taigent` hashes and streams attachments from disk: leave binary files closed.
+- **`file` paths** are relative to the directory of `docs.yaml` and may point anywhere in the project, so list each document where it already lives (e.g. `../../docs/specs/auth.md`). `taigent` hashes and streams attachments from disk: leave binary files closed.
 - **Wiki page**: `{ slug, file }`, where `file` is a Markdown (`.md`) file. The file is the page: edit the file, not Taiga. Write a new page under `taiga/<slug>/pages/`.
 - **Attachment**: `{ target, file, description }`. The file's name is the attachment name on Taiga. When an existing file's name breaks the `attachment-name` rule, ask the user to copy it under a conforming name (by convention into `taiga/<slug>/files/`) and list the copy; a file already uploaded keeps its name.
 
@@ -32,8 +36,8 @@ Run `npx taigent upload --project <slug> --dry-run`.
 - **Exit 3**: there are changes. Go to step 4.
 - **Exit 0**: Taiga already has every page and attachment. Say so and stop.
 - **Exit 4**: fix the manifest (step 2).
-- **Exit 5, `no <type> tagged src:<key> on Taiga yet`**: an attachment targets an item that `taigent apply` has not created yet. Suggest `/taiga-apply-backlog` (Codex: `$taiga-apply-backlog`) first, and stop. `wiki page "home" does not exist`: suggest `/taiga-bootstrap-project` with `wiki_home`.
-- **Exit 2 or other exit 5**: show the error (missing variable, login refused, unknown project, Taiga unreachable) and stop.
+- **Exit 5, `no <type> tagged src:<key> on Taiga yet`**: an attachment targets an item that `taigent apply` has not created yet. Suggest `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`) first, and stop. `wiki page "home" does not exist`: suggest `taiga-bootstrap-project` with `wiki_home`.
+- **Exit 2 or other exit 5**: show the error (missing variable, login refused, unknown project, Taiga unreachable) and stop. For a missing `TAIGA_*` variable or a refused login, name `taiga-setup` as the fix.
 
 ## 4. Show the dry run and ask
 

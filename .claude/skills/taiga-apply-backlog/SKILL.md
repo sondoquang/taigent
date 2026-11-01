@@ -9,11 +9,15 @@ allowed-tools: Bash(npx taigent validate *) Bash(npx taigent plan *) Bash(npx ta
 
 Push `taiga/<slug>/backlog.yaml` to Taiga in four moves: **plan**, show it, **confirm**, **apply**. The `taigent` CLI makes every write. It matches items by their `src:<key>` tag (re-running is safe), never deletes anything, and leaves status, assignee, sprint and points to the people doing the work.
 
-Run each `npx taigent …` command exactly as written, alone in its own shell call from the repository root, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
+## 0. Check the setup
+
+Run every command from the **project root**, the directory holding `package.json` and the manifests root `taiga/`. Its `package.json` has `taigent` as `name` (the taigent repository) or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The **taigent root**, holding `docs/cli.md`, is the project root when `name` is `taigent`, else `node_modules/taigent/`.
+
+Run each `npx taigent …` command exactly as written, alone in its own shell call, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
 
 ## 1. Pick the project
 
-The slug the user named. With exactly one directory under `taiga/`, use it; otherwise ask.
+The slug the user named. With exactly one directory under `taiga/`, use it; otherwise ask. No `taiga/<slug>/backlog.yaml` yet: there is nothing to apply; suggest `taiga-plan-backlog` and stop.
 
 ## 2. Plan
 
@@ -21,8 +25,8 @@ Run `npx taigent plan --project <slug>`.
 
 - **Exit 3**: there are changes. Go to step 3.
 - **Exit 0**: Taiga already matches the manifest. Say so and stop.
-- **Exit 4**: the manifest breaks a convention. Show the problems, suggest `/taiga-plan-backlog` (Codex: `$taiga-plan-backlog`) to fix them, and stop.
-- **Exit 2 or 5**: show the error (missing variable, login refused, unknown project, Taiga unreachable) and stop.
+- **Exit 4**: the manifest breaks a convention. Show the problems, suggest `taiga-plan-backlog` (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`) to fix them, and stop.
+- **Exit 2 or 5**: show the error (missing variable, login refused, unknown project, Taiga unreachable) and stop. For a missing `TAIGA_*` variable or a refused login, name `taiga-setup` as the fix; for an unknown project, `taiga-bootstrap-project`.
 
 ## 3. Show the plan and ask
 

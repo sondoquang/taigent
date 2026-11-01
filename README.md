@@ -11,3 +11,7 @@ npm test && npm run typecheck
 ```
 
 See [docs/cli.md](docs/cli.md) for environment variables, manifest layout, JSON output and exit codes.
+
+To use the `taiga-*` agent skills in another project, or to check the `TAIGA_*` variables, the CLI and the Taiga
+MCP server, run the `taiga-setup` skill (`/taiga-setup` in Claude Code, `$taiga-setup` in Codex); details in
+[docs/cli.md § Using the skills in another project](docs/cli.md#using-the-skills-in-another-project).

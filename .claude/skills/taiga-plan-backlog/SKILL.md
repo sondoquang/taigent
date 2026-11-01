@@ -1,23 +1,32 @@
 ---
 name: taiga-plan-backlog
-description: Plan a Taiga backlog from a spec or PRD into taiga/[slug]/backlog.yaml (epics, stories, tasks), updating the existing manifest in place per the Taiga conventions. Use when the user asks to plan, draft or update Taiga epics, stories or tasks. Writes files only; taiga-apply-backlog pushes them.
-allowed-tools: Bash(npx taigent validate *) Bash(npx taigent plan *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory
+description: "Taiga backlog planning into the backlog manifest (epics, stories, tasks), files only. Use when turning a spec or PRD into a Taiga backlog, or adding or changing epics, stories or tasks of an existing manifest."
+allowed-tools: Bash(npx taigent validate *) Bash(npx taigent plan *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) mcp__taiga__listProjects mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory
 ---
 
 # Taiga plan backlog
 
-Turn a spec into the **backlog manifest** `taiga/<slug>/backlog.yaml`. This skill writes repository files only. Taiga changes later, through `/taiga-apply-backlog` (Codex: `$taiga-apply-backlog`), after a human has reviewed the manifest diff.
+Turn a spec into the **backlog manifest** `taiga/<slug>/backlog.yaml`. This skill writes repository files only. Taiga changes later, through `taiga-apply-backlog` (Claude Code `/taiga-apply-backlog`, Codex `$taiga-apply-backlog`), after a human has reviewed the manifest diff.
+
+## 0. Check the setup
+
+Run every command from the **project root**, the directory holding `package.json` and the manifests root `taiga/`. Its `package.json` has `taigent` as `name` (the taigent repository) or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The **taigent root** is the project root when `name` is `taigent`, else `node_modules/taigent/`.
+
+Taiga MCP tool names below are those of the `taiga` server; your agent prefixes them (Claude Code: `mcp__taiga__listEpics`). Without them, run `taiga-setup` too.
 
 ## Reference
 
+In the taigent root:
+
 - `docs/taiga/conventions.md`: plan → review → apply (§1), tags (§4), keys (§5), epic/story/task templates (§6), banned MCP tools (§10). Read §1 and §4–§6 before editing.
 - `docs/cli.md`, section "Manifest layout": the `backlog.yaml` schema. Fields it does not list are rejected. Section "Commands": the `plan --json` output.
-- Run each `npx taigent …` command exactly as written, alone in its own shell call from the repository root, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
+
+Run each `npx taigent …` command exactly as written, alone in its own shell call from the project root, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
 
 ## 1. Gather the inputs
 
-- **Spec**: the path, URL or text the user gave. Read all of it.
-- **Slug**: the project the user named. With exactly one directory under `taiga/`, use it; otherwise ask.
+- **Spec**: the path, URL or text the user gave; a one-line request such as "add a password-reset story under AUTH" is a spec too. Read all of it.
+- **Slug**: the project the user named. With exactly one directory under `taiga/`, use it; otherwise ask. A slug without a `taiga/<slug>/` directory: check with `listProjects` that the project exists on Taiga; when it does not, plan anyway, skip the Taiga reads of step 2, and name `taiga-bootstrap-project` as the step before apply in your report.
 
 Done when you have read the spec and know the slug.
 
@@ -27,8 +36,8 @@ Done when you have read the spec and know the slug.
 2. With a baseline, run `npx taigent plan --project <slug> --json`. It only reads Taiga.
    - **Exit 0 or 3**: operations with action `skip` or `update` are manifest items already on Taiga, with their `id` and `ref`; `orphans` are `src:`-tagged items whose key has left the manifest.
    - **Exit 4**: the baseline breaks a convention. Run `npx taigent validate --project <slug>`, fix every problem it lists, and run plan again.
-   - **Exit 2 or 5**: Taiga cannot be read (missing variable, login refused, Taiga unreachable). `taiga/<slug>/state.json` lists the keys last applied; carry on from it and the baseline, skip 3, and name this gap in your report.
-3. Hand-made work carries no `src:` tag, so the plan never lists it. List the project's epics with `mcp__taiga__listEpics` (`project`: the numeric id, `project.id` in the plan) and its stories with `mcp__taiga__listUserStories` (`projectIdentifier: "<slug>"`; it returns at most the first 30 stories). An epic id or story `#ref` found in neither the plan's operations nor its orphans was made by hand; read it with `mcp__taiga__getEpic` or `mcp__taiga__getUserStory` when its subject overlaps the spec, and ask the user before adding a manifest item for the same work.
+   - **Exit 2 or 5**: Taiga cannot be read. `taiga/<slug>/state.json` lists the keys last applied; carry on from it and the baseline, skip 3, and name this gap in your report, with `taiga-setup` as the fix when the message names a missing `TAIGA_*` variable or a refused login.
+3. Hand-made work carries no `src:` tag, so the plan never lists it. List the project's epics with `listEpics` (`project`: the numeric id, `project.id` in the plan) and its stories with `listUserStories` (`projectIdentifier: "<slug>"`; it returns at most the first 30 stories). An epic id or story `#ref` found in neither the plan's operations nor its orphans was made by hand; read it with `getEpic` or `getUserStory` when its subject overlaps the spec, and ask the user before adding a manifest item for the same work.
 
 Done when every epic and story read from Taiga is known as a manifest item, an orphan or hand-made work, or Taiga could not be read and your report will say so.
 
@@ -57,6 +66,6 @@ Tell the user:
 - keys added, and keys changed with the fields that changed;
 - items the spec no longer covers;
 - hand-made Taiga work that overlaps the spec, and any part of Taiga that could not be read;
-- next step: review `git diff taiga/<slug>/`, then run `/taiga-apply-backlog` (Codex: `$taiga-apply-backlog`).
+- next step: review `git diff taiga/<slug>/`, then run `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`).
 
-Taiga stays read-only in this skill: read it only through `npx taigent plan` and the MCP read tools above (conventions §10).
+Taiga stays read-only in this skill: read it only through `npx taigent plan` and the MCP read tools of `allowed-tools` (conventions §10).

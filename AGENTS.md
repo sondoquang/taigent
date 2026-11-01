@@ -14,19 +14,15 @@ Single-context: one root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain
 
 ## Taiga setup
 
-Set `TAIGA_API_URL` (e.g. `https://taiga.example.com/api/v1`), `TAIGA_USERNAME`, `TAIGA_PASSWORD` (optional `TAIGA_TOKEN`) in your personal environment; see `.env.example`. Never put values in committed files.
+`TAIGA_API_URL`, `TAIGA_USERNAME`, `TAIGA_PASSWORD` (optional `TAIGA_TOKEN`) live in each user's personal environment, never in committed files. To check or fix the variables, the `taigent` CLI or the Taiga MCP server, or to install the skills into another project, use the `taiga-setup` skill.
 
-- PowerShell: `[Environment]::SetEnvironmentVariable("TAIGA_USERNAME", "<you>", "User")` (repeat per variable, then restart the terminal).
-- POSIX shell: `export TAIGA_USERNAME=<you>` in your shell profile.
-- Claude Code reads `.mcp.json` (`${TAIGA_*}` placeholders). Check with `claude mcp list`.
-- Codex reads `.codex/config.toml` (`env_vars`, `required = true`) once the project is trusted.
-- Both pin `taiga-mcp-server@1.9.20`; bump the version in both files together.
+`.mcp.json` (Claude Code), `.codex/config.toml` (Codex) and `taiga-setup` pin `taiga-mcp-server@1.9.20`; bump all three together (`npm test` fails when they differ).
 
 ## Taiga conventions
 
 Before creating or changing anything on Taiga, read `docs/taiga/conventions.md`: project name/slug, template and modules, prefixed tags, item keys, story/task templates, status names, wiki slugs, attachment names, the **banned MCP tools**, and the plan → review → apply workflow. Writes to Taiga go only through the `taigent` CLI (`docs/cli.md`); MCP is read/report/comment only. Run `taigent validate` after editing any manifest under `taiga/`.
 
-The `taiga-*` skills (`taiga-plan-backlog`, `taiga-apply-backlog`, `taiga-bootstrap-project`, `taiga-upload-docs`, `taiga-status-report`) have one source: `.agents/skills/taiga-*`. After editing one there, run `npx taigent skills sync` to refresh the `.claude/skills/` copy; `taigent skills check` (also run by `npm test`) fails while the copies differ.
+The `taiga-*` skills (`taiga-setup`, `taiga-plan-backlog`, `taiga-apply-backlog`, `taiga-bootstrap-project`, `taiga-upload-docs`, `taiga-status-report`) have one source: `.agents/skills/taiga-*`. After editing one there, run `npx taigent skills sync` to refresh the `.claude/skills/` copy; `taigent skills check` (also run by `npm test`) fails while the copies differ.
 
 ## Headless runs
 
