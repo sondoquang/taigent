@@ -9,7 +9,7 @@ import { loadBacklog } from './manifest/backlog.ts';
 import { ManifestError } from './manifest/errors.ts';
 import { projectLayout } from './manifest/layout.ts';
 import { buildPlan, type Plan } from './planner.ts';
-import { TaigaClient, TaigaError } from './taiga/client.ts';
+import { TaigaAuthError, TaigaClient, TaigaError } from './taiga/client.ts';
 
 const USAGE = `Usage: taigent <command> --project <slug> [options]
 
@@ -24,8 +24,11 @@ Options:
   -h, --help        Show this help
 
 Environment:
-  TAIGA_API_URL, TAIGA_USERNAME, TAIGA_PASSWORD   Taiga connection (URL includes /api/v1)
-  TAIGENT_MANIFESTS_DIR                           Manifests root (default: ./taiga)
+  TAIGA_API_URL                    Taiga API base URL (includes /api/v1)
+  TAIGA_USERNAME, TAIGA_PASSWORD   Login; also the fallback when TAIGA_TOKEN is rejected
+  TAIGA_TOKEN                      Access token used instead of username/password
+  TAIGENT_MANIFESTS_DIR            Manifests root (default: ./taiga)
+  TAIGENT_RETRY_UNIT_MS            Milliseconds per second of 429 backoff (default: 1000)
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
             3 plan has changes, 4 manifest invalid, 5 Taiga/network error`;
@@ -176,6 +179,11 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       // Report manifest files relative to the working directory, as the user wrote them.
       const relativeError = new ManifestError(error.issues.map((issue) => ({ ...issue, file: relative(cwd, issue.file) })));
       return fail(ExitCode.Validation, 'validation', relativeError, json, { issues: relativeError.issues });
+    }
+    if (error instanceof TaigaAuthError) {
+      const check = error.credential === 'token' ? 'TAIGA_TOKEN' : 'TAIGA_USERNAME and TAIGA_PASSWORD';
+      const hinted = new TaigaAuthError(error.credential, `${error.message} (check ${check})`, error.status);
+      return fail(ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
     }
     if (error instanceof TaigaError) return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
     process.stderr.write(`taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);
