@@ -146,6 +146,45 @@ attachments:
   });
 });
 
+test('docs.yaml attachments may target story and task keys; story and task tags follow the conventions', async (t) => {
+  const h = await startHarness(t);
+  const tree = (storyTags: string) => `epics:
+  - key: AUTH
+    subject: Authentication
+    stories:
+      - key: AUTH-LOGIN
+        subject: User can log in
+        tags: ${storyTags}
+        tasks:
+          - key: AUTH-LOGIN-API
+            subject: Login endpoint
+            tags: [type:feature]
+`;
+  await h.writeManifest('demo', 'backlog.yaml', tree('[type:feature]'));
+  await writeProjectFile(h, 'demo', 'files/auth-login-flow.pdf');
+  await h.writeManifest(
+    'demo',
+    'docs.yaml',
+    `attachments:
+  - target: AUTH-LOGIN
+    file: files/auth-login-flow.pdf
+  - target: AUTH-LOGIN-API
+    file: files/auth-login-flow.pdf
+`,
+  );
+
+  const valid = await h.taigent(['validate', '--project', 'demo'], { env: OFFLINE });
+  assert.equal(valid.code, 0, valid.stderr);
+
+  await h.writeManifest('demo', 'backlog.yaml', tree('[feature]'));
+  const invalid = await h.taigent(['validate', '--project', 'demo', '--json'], { env: OFFLINE });
+  assert.equal(invalid.code, 4, invalid.stderr);
+  assert.deepEqual(
+    invalid.json<ErrorOutput>().error.issues?.map((i) => [i.file.replaceAll('\\', '/'), i.path, i.rule]),
+    [['taiga/demo/backlog.yaml', 'epics[0].stories[0].tags[0]', 'tag-prefix']],
+  );
+});
+
 test('validate without --project checks every project directory and reports key errors per file', async (t) => {
   const h = await startHarness(t);
   await h.writeManifest('alpha', 'backlog.yaml', VALID_BACKLOG);
