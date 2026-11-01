@@ -9,7 +9,7 @@ import { loadBacklog } from './manifest/backlog.ts';
 import { ManifestError } from './manifest/errors.ts';
 import { projectLayout } from './manifest/layout.ts';
 import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
-import { TaigaClient, TaigaError } from './taiga/client.ts';
+import { TaigaAuthError, TaigaClient, TaigaError } from './taiga/client.ts';
 
 const USAGE = `Usage: taigent <command> --project <slug> [options]
 
@@ -24,8 +24,11 @@ Options:
   -h, --help        Show this help
 
 Environment:
-  TAIGA_API_URL, TAIGA_USERNAME, TAIGA_PASSWORD   Taiga connection (URL includes /api/v1)
-  TAIGENT_MANIFESTS_DIR                           Manifests root (default: ./taiga)
+  TAIGA_API_URL                    Taiga API base URL (includes /api/v1)
+  TAIGA_USERNAME, TAIGA_PASSWORD   Login; also the fallback when TAIGA_TOKEN is rejected
+  TAIGA_TOKEN                      Access token used instead of username/password
+  TAIGENT_MANIFESTS_DIR            Manifests root (default: ./taiga)
+  TAIGENT_RETRY_UNIT_MS            Milliseconds per second of 429 backoff (default: 1000)
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error,
             3 plan has changes, 4 manifest invalid, 5 Taiga/network error`;
@@ -91,6 +94,32 @@ function formatOperation(op: Operation): string {
   }
 }
 
+/**
+ * Connects to Taiga from the environment: TAIGA_TOKEN when set (username/password, if also set, are
+ * the fallback when Taiga rejects it), else a TAIGA_USERNAME/TAIGA_PASSWORD login.
+ */
+async function connectTaiga(env: NodeJS.ProcessEnv): Promise<TaigaClient> {
+  const [apiUrl] = requireEnv(env, ['TAIGA_API_URL']);
+  const token = env.TAIGA_TOKEN || undefined;
+  const missing = ['TAIGA_USERNAME', 'TAIGA_PASSWORD'].filter((name) => !env[name]);
+  if (!token && missing.length > 0) {
+    throw new UsageError(`missing environment variable(s): ${missing.join(', ')} (or set TAIGA_TOKEN instead)`);
+  }
+  const credentials = missing.length === 0 ? { username: env.TAIGA_USERNAME!, password: env.TAIGA_PASSWORD! } : undefined;
+  return TaigaClient.connect({ apiUrl: apiUrl!, token, credentials, retryUnitMs: retryUnitMs(env) });
+}
+
+/** TAIGENT_RETRY_UNIT_MS: milliseconds per second of 429 backoff (default 1000). */
+function retryUnitMs(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.TAIGENT_RETRY_UNIT_MS;
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new UsageError(`TAIGENT_RETRY_UNIT_MS must be a non-negative integer (milliseconds), got "${raw}"`);
+  }
+  return value;
+}
+
 function formatPlan(plan: Plan): string {
   const lines = [`Plan for project ${plan.project.slug} (id ${plan.project.id}):`];
   lines.push(...plan.operations.map(formatOperation));
@@ -125,8 +154,7 @@ function formatReport(report: ApplyReport): string {
 async function run(options: Options, env: NodeJS.ProcessEnv, cwd: string): Promise<number> {
   const layout = projectLayout(options.project, env, cwd);
   const backlog = await loadBacklog(layout.backlog);
-  const [apiUrl, username, password] = requireEnv(env, ['TAIGA_API_URL', 'TAIGA_USERNAME', 'TAIGA_PASSWORD']);
-  const client = await TaigaClient.login({ apiUrl: apiUrl!, username: username!, password: password! });
+  const client = await connectTaiga(env);
   const project = await client.getProjectBySlug(options.project);
   const [epics, stories, tasks] = await Promise.all([
     client.listEpics(project.id),
@@ -181,6 +209,11 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
     }
     if (error instanceof ApplyConflictError) {
       return fail(ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key });
+    }
+    if (error instanceof TaigaAuthError) {
+      const check = error.credential === 'token' ? 'TAIGA_TOKEN' : 'TAIGA_USERNAME and TAIGA_PASSWORD';
+      const hinted = new TaigaAuthError(error.credential, `${error.message} (check ${check})`, error.status);
+      return fail(ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
     }
     if (error instanceof TaigaError) return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
     process.stderr.write(`taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);
