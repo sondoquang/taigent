@@ -26,16 +26,6 @@ export interface ApplyReport {
   summary: Record<OperationResult, number>;
 }
 
-/** An update refused by Taiga's OCC check: the item changed on Taiga after the plan read it. */
-export class ApplyConflictError extends TaigaConflictError {
-  readonly key: string;
-
-  constructor(key: string, message: string) {
-    super(message);
-    this.key = key;
-  }
-}
-
 /** Id of an item recorded earlier in this run (parents always precede their children in a plan). */
 function recordedId(state: StateFile, key: string): number {
   const entry = state.items[key];
@@ -108,7 +98,7 @@ export async function executePlan(plan: Plan, client: TaigaClient, statePath: st
         await writeState(statePath, state);
         const what = op.action === 'link' ? `link story ${op.key} to epic ${op.epic}` : `${op.action} ${op.type} ${op.key}`;
         if (error instanceof TaigaConflictError) {
-          throw new ApplyConflictError(op.key, `${what}: version conflict, ${op.key} was changed on Taiga by someone else after it was read; nothing was overwritten. Re-run plan to review.`);
+          throw new TaigaConflictError(`${what}: version conflict, ${op.key} was changed on Taiga by someone else after it was read; nothing was overwritten. Re-run plan to review.`, op.key);
         }
         throw new TaigaError(`${what} failed: ${error.message}`, error.status);
       }

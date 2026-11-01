@@ -18,11 +18,18 @@ export class TaigaError extends Error {
   }
 }
 
-/** A PATCH was refused because the item changed on Taiga since its `version` was read (OCC). */
+/**
+ * A PATCH was refused because the object changed on Taiga since its `version` was read (OCC). The client throws it
+ * without a key; the command that planned the write rethrows it with `key` naming what conflicted (an item key, or
+ * `wiki:<slug>`), which the CLI reports.
+ */
 export class TaigaConflictError extends TaigaError {
-  constructor(message: string) {
+  readonly key: string | undefined;
+
+  constructor(message: string, key?: string) {
     super(message, 400);
     this.name = 'TaigaConflictError';
+    this.key = key;
   }
 }
 

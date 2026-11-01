@@ -7,7 +7,6 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
-import { ApplyConflictError } from './executor.ts';
 import type { Backlog } from './manifest/backlog.ts';
 import { WIKI_HOME_SLUG } from './manifest/conventions.ts';
 import { WIKI_TARGET_PREFIX, type AttachmentSpec, type Docs } from './manifest/docs.ts';
@@ -215,9 +214,9 @@ export async function executeUpload(plan: UploadPlan, client: TaigaClient, cwd: 
       if (!(error instanceof TaigaError)) throw error;
       const what = describeUploadOperation(op);
       if (error instanceof TaigaConflictError && op.type === 'wiki') {
-        throw new ApplyConflictError(
-          `${WIKI_TARGET_PREFIX}${op.slug}`,
+        throw new TaigaConflictError(
           `${what}: version conflict, wiki page ${op.slug} was changed on Taiga by someone else after it was read; nothing was overwritten. Re-run upload --dry-run to review.`,
+          `${WIKI_TARGET_PREFIX}${op.slug}`,
         );
       }
       if (error.status === 413 && op.type === 'attachment') {

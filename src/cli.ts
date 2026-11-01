@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { ExitCode } from './exit-codes.ts';
 import { errorMessage } from './guards.ts';
 import { describeOperation, executeBootstrap, findTemplate, planBootstrap, type BootstrapPlan, type BootstrapReport } from './bootstrap.ts';
-import { ApplyConflictError, executePlan, type ApplyReport } from './executor.ts';
+import { executePlan, type ApplyReport } from './executor.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
@@ -14,7 +14,7 @@ import type { ItemType } from './items.ts';
 import { readSavedProject } from './manifest/state.ts';
 import { buildPlan, srcTag, type Operation, type Plan } from './planner.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
-import { TaigaAuthError, TaigaClient, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
+import { TaigaAuthError, TaigaClient, TaigaConflictError, TaigaError, type TaigaAttributeValues } from './taiga/client.ts';
 import { describeUploadOperation, executeUpload, planUpload, UploadTooLargeError, type UploadPlan, type UploadReport } from './upload.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
@@ -442,8 +442,8 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv = process.env,
       const relativeError = new ManifestError(error.issues.map((issue) => ({ ...issue, file: relative(cwd, issue.file) })));
       return fail(ExitCode.Validation, 'validation', relativeError, json, { issues: relativeError.issues });
     }
-    if (error instanceof ApplyConflictError) {
-      return fail(ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key });
+    if (error instanceof TaigaConflictError) {
+      return fail(ExitCode.Taiga, 'conflict', error, json, { status: error.status ?? null, key: error.key ?? null });
     }
     if (error instanceof UploadTooLargeError) {
       return fail(ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
