@@ -2,6 +2,7 @@
 // Knows Taiga endpoints only, never manifests. Every request disables pagination, renews the access
 // token once on 401 (`/auth/refresh`, else a new login) and backs off on 429.
 
+import { openAsBlob } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
 
@@ -99,6 +100,8 @@ export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tag
 interface RequestOptions {
   query?: Record<string, string | number>;
   body?: unknown;
+  /** Multipart body (attachments); used instead of `body`. */
+  form?: FormData;
   /** On 401, renew the token and retry once (default true; off for the auth endpoints themselves). */
   reauthenticate?: boolean;
 }
@@ -228,6 +231,36 @@ export interface NewMembership {
   username: string;
 }
 
+export interface TaigaWikiPage {
+  id: number;
+  slug: string;
+  /** Markdown. */
+  content: string;
+  version: number;
+}
+
+/** URL segment of the objects attachments hang off (`/{type}/attachments`). */
+export type AttachmentObjectType = 'epics' | 'userstories' | 'tasks' | 'wiki';
+
+export interface TaigaAttachment {
+  id: number;
+  /** Id of the epic, user story, task or wiki page. */
+  objectId: number;
+  name: string;
+  size: number;
+  sha1: string;
+}
+
+export interface NewAttachment {
+  project: number;
+  object_id: number;
+  /** Local path of the file to upload. */
+  file: string;
+  /** File name sent with the upload; Taiga names the attachment after it. */
+  name: string;
+  description: string;
+}
+
 function record(raw: unknown, what: string): Record<string, unknown> {
   if (!isRecord(raw)) throw new TaigaError(`unexpected Taiga response: ${what} is not an object`);
   return raw;
@@ -299,6 +332,27 @@ function parseMembership(raw: unknown): TaigaMembership {
     user: typeof r.user === 'number' ? r.user : null,
     email: typeof r.email === 'string' ? r.email : null,
     userEmail: typeof r.user_email === 'string' ? r.user_email : null,
+  };
+}
+
+function parseWikiPage(raw: unknown): TaigaWikiPage {
+  const page = record(raw, 'wiki page');
+  return {
+    id: field(page, 'id', 'number', 'wiki page'),
+    slug: field(page, 'slug', 'string', 'wiki page'),
+    content: field(page, 'content', 'string', 'wiki page'),
+    version: field(page, 'version', 'number', 'wiki page'),
+  };
+}
+
+function parseAttachment(raw: unknown): TaigaAttachment {
+  const attachment = record(raw, 'attachment');
+  return {
+    id: field(attachment, 'id', 'number', 'attachment'),
+    objectId: field(attachment, 'object_id', 'number', 'attachment'),
+    name: field(attachment, 'name', 'string', 'attachment'),
+    size: field(attachment, 'size', 'number', 'attachment'),
+    sha1: field(attachment, 'sha1', 'string', 'attachment'),
   };
 }
 
@@ -542,14 +596,40 @@ export class TaigaClient {
     return parseMembership(await this.#request('POST', '/memberships', { body: membership }));
   }
 
-  /** Wiki page id by slug, or undefined when the page does not exist. */
-  async findWikiPage(projectId: number, slug: string): Promise<{ id: number } | undefined> {
+  /** Wiki page by slug, or undefined when the page does not exist. */
+  async findWikiPage(projectId: number, slug: string): Promise<TaigaWikiPage | undefined> {
     const raw = await this.#find('GET', '/wiki/by_slug', { query: { slug, project: projectId } });
-    return raw === undefined ? undefined : { id: field(record(raw, 'wiki page'), 'id', 'number', 'wiki page') };
+    return raw === undefined ? undefined : parseWikiPage(raw);
   }
 
   async createWikiPage(page: { project: number; slug: string; content: string }): Promise<{ id: number }> {
     return { id: field(record(await this.#request('POST', '/wiki', { body: page }), 'wiki page'), 'id', 'number', 'wiki page') };
+  }
+
+  /** Replaces a wiki page's Markdown (`PATCH /wiki/{id}` with its `version`, OCC like items). */
+  async updateWikiPage(id: number, content: string, version: number): Promise<TaigaWikiPage> {
+    return parseWikiPage(await this.#patch(`/wiki/${id}`, { content }, version));
+  }
+
+  // ---- Attachments (multipart) -----------------------------------------------------------------------
+
+  /** Attachments of one object (`GET /{type}/attachments?object_id=&project=`). */
+  async listAttachments(type: AttachmentObjectType, projectId: number, objectId: number): Promise<TaigaAttachment[]> {
+    const raw = await this.#request('GET', `/${type}/attachments`, { query: { object_id: objectId, project: projectId } });
+    return parseList(raw, 'attachment', parseAttachment);
+  }
+
+  /**
+   * Uploads `attachment.file` as multipart (`POST /{type}/attachments`). The file is streamed from disk
+   * (a file-backed Blob): it is never read into memory as a whole, and a retry (401, 429) reads it again.
+   */
+  async uploadAttachment(type: AttachmentObjectType, attachment: NewAttachment): Promise<TaigaAttachment> {
+    const form = new FormData();
+    form.set('object_id', String(attachment.object_id));
+    form.set('project', String(attachment.project));
+    form.set('description', attachment.description);
+    form.set('attached_file', await openAsBlob(attachment.file), attachment.name);
+    return parseAttachment(await this.#request('POST', `/${type}/attachments`, { form }));
   }
 
   /** Like #request, but a 404 means "absent" and returns undefined. */
@@ -606,7 +686,8 @@ export class TaigaClient {
       const response = await fetch(url, {
         method,
         headers,
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        // FormData (multipart, fetch sets the boundary) streams its file-backed Blobs from disk.
+        body: options.form ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
       });
       const text = await response.text();
       return { status: response.status, ok: response.ok, retryAfter: response.headers.get('retry-after'), text };

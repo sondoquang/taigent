@@ -19,6 +19,7 @@
 //   created, like taiga-back's post_save signal. Its `attributes_values` keys are attribute ids as strings, a
 //   PATCH replaces the whole object, and it has its own OCC `version`.
 
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -165,6 +166,43 @@ export interface FakeEpicRelatedUserStory {
 
 export type FakeItem = FakeEpic | FakeUserStory | FakeTask;
 
+/** URL segment of the attachment endpoints (`/{type}/attachments`), one per content type. */
+export type FakeAttachmentObjectType = 'epics' | 'userstories' | 'tasks' | 'wiki';
+
+/** An attachment ("attachment detail" in the Taiga API docs) plus its stored bytes. */
+export interface FakeAttachment {
+  id: number;
+  project: number;
+  objectType: FakeAttachmentObjectType;
+  object_id: number;
+  /** Base name of the uploaded file name, like taiga-back's pre_save. */
+  name: string;
+  size: number;
+  /** Hex sha1 of the bytes, like taiga-back's Attachment._generate_sha1. */
+  sha1: string;
+  description: string;
+  is_deprecated: boolean;
+  from_comment: boolean;
+  content: Buffer;
+}
+
+/** A file part of a multipart request. */
+export interface FakeUploadedFile {
+  filename: string;
+  content: Buffer;
+}
+
+/** Parsed `multipart/form-data` request body (the recorded `body` of such requests). */
+export class MultipartForm {
+  readonly fields: Record<string, string>;
+  readonly files: Record<string, FakeUploadedFile>;
+
+  constructor(fields: Record<string, string>, files: Record<string, FakeUploadedFile>) {
+    this.fields = fields;
+    this.files = files;
+  }
+}
+
 export interface FakeState {
   users: FakeUser[];
   projects: FakeProject[];
@@ -178,6 +216,7 @@ export interface FakeState {
   customAttributeValues: FakeCustomAttributeValues[];
   memberships: FakeMembership[];
   wikiPages: FakeWikiPage[];
+  attachments: FakeAttachment[];
 }
 
 export interface RecordedRequest {
@@ -223,8 +262,14 @@ export interface FakeTaiga {
   requests: RecordedRequest[];
   /** Default credentials accepted by POST /auth. */
   user: FakeUser;
-  /** Instance settings. `projectSlugPrefix` mirrors taiga-back's DEFAULT_PROJECT_SLUG_PREFIX (slug = owner-name). */
-  settings: { projectSlugPrefix: boolean };
+  /**
+   * Instance settings. `projectSlugPrefix` mirrors taiga-back's DEFAULT_PROJECT_SLUG_PREFIX (slug = owner-name).
+   * `maxBodyBytes` mimics the reverse proxy's limit (nginx `client_max_body_size`): a larger request body
+   * gets nginx's HTML 413 page before reaching Taiga.
+   */
+  settings: { projectSlugPrefix: boolean; maxBodyBytes?: number };
+  /** Seeds an attachment as if uploaded through `POST /{objectType}/attachments`. */
+  addAttachment(input: { project: number; objectType: FakeAttachmentObjectType; object_id: number; name: string; content: Buffer | string; description?: string }): FakeAttachment;
   addProject(input: {
     slug: string;
     name?: string;
@@ -244,6 +289,8 @@ export interface FakeTaiga {
   /** Adds a membership; an existing user (by id) also becomes a project member. */
   addMembership(input: { project: number; role: string; user?: number; email?: string }): FakeMembership;
   addWikiPage(input: { project: number; slug: string; content: string }): FakeWikiPage;
+  /** Edits a wiki page like a Taiga user would: bumps `version`, recorded for OCC checks. */
+  editWikiPage(page: FakeWikiPage, changes: Partial<Pick<FakeWikiPage, 'content' | 'slug'>>): void;
   /** Answer the next matching request(s) with a canned response instead of handling it. */
   intercept(rule: InterceptRule): void;
   addUserStory(input: { project: number; subject: string; description?: string; tags?: string[] }): FakeUserStory;
@@ -357,6 +404,39 @@ function requireObject(body: unknown): Json {
   return body as Json;
 }
 
+/** Writable fields of taiga-back's AttachmentValidator (multipart form fields and files). */
+const ATTACHMENT_FIELDS: Record<string, true> = {
+  object_id: true,
+  project: true,
+  attached_file: true,
+  description: true,
+  is_deprecated: true,
+  from_comment: true,
+  order: true,
+};
+
+/** nginx's default 413 page (Taiga's reverse proxy answers before the request reaches taiga-back). */
+const NGINX_413 =
+  '<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n<body>\r\n' +
+  '<center><h1>413 Request Entity Too Large</h1></center>\r\n<hr><center>nginx</center>\r\n</body>\r\n</html>\r\n';
+
+/** Parses a `multipart/form-data` body with the platform's own parser (undici's `Response#formData`). */
+async function parseMultipart(bytes: Buffer, contentType: string): Promise<MultipartForm | string> {
+  let form: FormData;
+  try {
+    form = await new Response(bytes, { headers: { 'content-type': contentType } }).formData();
+  } catch {
+    return 'malformed multipart body';
+  }
+  const fields: Record<string, string> = {};
+  const files: Record<string, FakeUploadedFile> = {};
+  for (const [name, value] of form) {
+    if (typeof value === 'string') fields[name] = value;
+    else files[name] = { filename: value.name, content: Buffer.from(await value.arrayBuffer()) };
+  }
+  return new MultipartForm(fields, files);
+}
+
 export async function startFakeTaiga(): Promise<FakeTaiga> {
   const user: FakeUser = { id: 1, username: 'taigent-bot', password: 'fake-password-123', email: 'taigent-bot@example.test' };
   const state: FakeState = {
@@ -387,8 +467,9 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     customAttributeValues: [],
     memberships: [],
     wikiPages: [],
+    attachments: [],
   };
-  const settings = { projectSlugPrefix: false };
+  const settings: FakeTaiga['settings'] = { projectSlugPrefix: false };
   const requests: RecordedRequest[] = [];
   const intercepts: InterceptRule[] = [];
   const hooks: RequestHook[] = [];
@@ -783,6 +864,8 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       return { status: 200, body: { ...page } };
     }
     if (method === 'POST' && path === '/wiki') return createWikiPage(body, userId);
+    const wikiPage = /^\/wiki\/(\d+)$/.exec(path);
+    if (wikiPage && method === 'PATCH') return patchWikiPage(Number(wikiPage[1]), body, userId);
     return undefined;
   }
 
@@ -833,7 +916,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   // --- User stories, tasks, epic ↔ story links, PATCH with OCC (ticket #4) ---
 
   /** Fields changed by each edit, per item: entry i = fields modified going from version i+1 to i+2. */
-  const editHistory = new WeakMap<FakeItem, string[][]>();
+  const editHistory = new WeakMap<FakeItem | FakeWikiPage, string[][]>();
 
   function addUserStory(input: { project: number; subject: string; description?: string; tags?: string[] }): FakeUserStory {
     const project = state.projects.find((p) => p.id === input.project);
@@ -950,7 +1033,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   /** Applies changes, records the fields that really changed and bumps the version, like a Taiga save. */
-  function saveEdit(item: FakeItem, changes: Json): void {
+  function saveEdit(item: FakeItem | FakeWikiPage, changes: Json): void {
     const target = item as unknown as Json;
     const modified: string[] = [];
     for (const [field, value] of Object.entries(changes)) {
@@ -964,6 +1047,26 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
 
   function editItem<T extends FakeItem>(item: T, changes: Partial<Omit<T, 'id' | 'ref' | 'version' | 'project'>>): void {
     saveEdit(item, changes as Json);
+  }
+
+  function editWikiPage(page: FakeWikiPage, changes: Partial<Pick<FakeWikiPage, 'content' | 'slug'>>): void {
+    saveEdit(page, changes as Json);
+  }
+
+  /** PATCH /wiki/{id} (docs §32.4): `content`/`slug`/`watchers`, OCC `version` like items. */
+  function patchWikiPage(id: number, body: unknown, userId: number): Reply {
+    const page = state.wikiPages.find((p) => p.id === id && visibleProject(p.project, userId));
+    if (!page) throw notFound();
+    const data = requireObject(body);
+    const errors: Record<string, string[]> = {};
+    unknownFields(data, { content: true, slug: true, watchers: true, version: true }, errors);
+    if (data.content !== undefined && typeof data.content !== 'string') errors.content = ['Not a valid string.'];
+    if (data.slug !== undefined && (typeof data.slug !== 'string' || data.slug === '')) errors.slug = ['This field is required.'];
+    if (Object.keys(errors).length > 0) throw fieldErrors(errors);
+    checkVersion(page, data);
+    const { version: _version, watchers: _watchers, ...changes } = data;
+    saveEdit(page, changes);
+    return { status: 200, body: { ...page } };
   }
 
   /**
@@ -1015,7 +1118,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   /** Taiga OCC (docs §1.2, taiga-back OCCResourceMixin): stale versions only fail when the same fields changed. */
-  function checkVersion(item: FakeItem, data: Json): void {
+  function checkVersion(item: FakeItem | FakeWikiPage, data: Json): void {
     const raw = data.version;
     if (raw !== undefined && raw !== null && !Number.isInteger(raw)) {
       throw new HttpError(400, { version: 'The version must be an integer' });
@@ -1213,9 +1316,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       if (method === 'POST') return createEpic(body, userId);
     }
 
+    const attachmentReply = routeAttachments(req, method, path, query, body, userId);
+    if (attachmentReply) return attachmentReply;
     const valuesReply = routeAttributeValues(method, path, body, userId);
     if (valuesReply) return valuesReply;
-
     const reply = routeStoriesAndTasks(req, method, path, query, body, userId);
     if (reply) return reply;
     throw notFound();
@@ -1245,18 +1349,110 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     }
   }
 
+  // --- Attachments (ticket #9): multipart upload, sha1/size computed from the bytes like taiga-back ---
+
+  function addAttachment(input: Parameters<FakeTaiga['addAttachment']>[0]): FakeAttachment {
+    const content = typeof input.content === 'string' ? Buffer.from(input.content) : input.content;
+    const attachment: FakeAttachment = {
+      id: ++nextId,
+      project: input.project,
+      objectType: input.objectType,
+      object_id: input.object_id,
+      name: input.name,
+      size: content.length,
+      sha1: createHash('sha1').update(content).digest('hex'),
+      description: input.description ?? '',
+      is_deprecated: false,
+      from_comment: false,
+      content,
+    };
+    state.attachments.push(attachment);
+    return attachment;
+  }
+
+  /** Attachment detail object (docs §64), without the stored bytes. */
+  function attachmentJson(attachment: FakeAttachment): Json {
+    const { content: _content, objectType: _objectType, ...rest } = attachment;
+    const file = `attachments/${attachment.id}/${attachment.name}`;
+    return { ...rest, attached_file: file, url: `http://fake/media/${file}`, order: 0, thumbnail_card_url: null };
+  }
+
+  /** The epic, user story, task or wiki page an attachment hangs off. */
+  function attachmentObject(type: FakeAttachmentObjectType, id: number): { project: number } | undefined {
+    const objects: { id: number; project: number }[] =
+      type === 'epics' ? state.epics : type === 'userstories' ? state.userStories : type === 'tasks' ? state.tasks : state.wikiPages;
+    return objects.find((o) => o.id === id);
+  }
+
+  /** POST /{type}/attachments: taiga-back's AttachmentValidator + BaseAttachmentViewSet.pre_save. */
+  function createAttachment(type: FakeAttachmentObjectType, body: unknown, userId: number): Reply {
+    if (!(body instanceof MultipartForm)) throw fieldErrors({ attached_file: ['No file was submitted.'] });
+    const errors: Record<string, string[]> = {};
+    unknownFields({ ...body.fields, ...body.files }, ATTACHMENT_FIELDS, errors);
+    const file = body.files.attached_file;
+    if (!file) errors.attached_file = ['No file was submitted.'];
+    const projectId = Number(body.fields.project);
+    const objectId = Number(body.fields.object_id);
+    if (body.fields.project === undefined) errors.project = ['This field is required.'];
+    else if (!Number.isInteger(projectId) || !visibleProject(projectId, userId)) errors.project = [`Invalid pk "${body.fields.project}" - object does not exist.`];
+    if (body.fields.object_id === undefined) errors.object_id = ['This field is required.'];
+    else if (!Number.isInteger(objectId) || objectId < 0) errors.object_id = ['A valid integer is required.'];
+    if (Object.keys(errors).length > 0) throw fieldErrors(errors);
+    const object = attachmentObject(type, objectId);
+    if (!object) throw new HttpError(400, { _error_message: "Object id issue doesn't exist", _error_type: 'taiga.base.exceptions.WrongArguments' });
+    if (object.project !== projectId) {
+      throw new HttpError(400, { _error_message: 'Project ID does not match between object and project', _error_type: 'taiga.base.exceptions.WrongArguments' });
+    }
+    const name = file!.filename.split(/[\\/]/).pop()!;
+    const attachment = addAttachment({ project: projectId, objectType: type, object_id: objectId, name, content: file!.content, description: body.fields.description });
+    attachment.is_deprecated = body.fields.is_deprecated?.toLowerCase() === 'true';
+    attachment.from_comment = body.fields.from_comment?.toLowerCase() === 'true';
+    return { status: 201, body: attachmentJson(attachment) };
+  }
+
+  function routeAttachments(req: IncomingMessage, method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
+    const match = /^\/(epics|userstories|tasks|wiki)\/attachments$/.exec(path);
+    if (!match) return undefined;
+    const type = match[1] as FakeAttachmentObjectType;
+    if (method === 'POST') return createAttachment(type, body, userId);
+    if (method !== 'GET') return undefined;
+    const projectId = queryNumber(query, 'project');
+    const objectId = queryNumber(query, 'object_id');
+    const list = state.attachments.filter(
+      (a) =>
+        a.objectType === type &&
+        visibleProject(a.project, userId) &&
+        (projectId === undefined || a.project === projectId) &&
+        (objectId === undefined || a.object_id === objectId),
+    );
+    return paginate(req, query, list.map(attachmentJson));
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const at = performance.now();
     const url = new URL(req.url ?? '/', 'http://fake');
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
-    const raw = Buffer.concat(chunks).toString('utf8');
+    const bytes = Buffer.concat(chunks);
+    const contentType = req.headers['content-type'] ?? '';
     let reply: Reply;
     let body: unknown;
-    try {
-      body = raw === '' ? undefined : JSON.parse(raw);
-    } catch {
-      body = raw;
+    if (settings.maxBodyBytes !== undefined && bytes.length > settings.maxBodyBytes) {
+      // The reverse proxy refuses the request before Taiga sees it, with its own HTML page.
+      requests.push({ method: req.method ?? 'GET', path: url.pathname.replace(/^\/api\/v1(?=\/)/, ''), query: url.searchParams, headers: req.headers, body: undefined, at });
+      res.writeHead(413, { 'content-type': 'text/html' });
+      res.end(NGINX_413);
+      return;
+    }
+    if (/^multipart\/form-data\s*;/i.test(contentType)) {
+      body = await parseMultipart(bytes, contentType);
+    } else {
+      const raw = bytes.toString('utf8');
+      try {
+        body = raw === '' ? undefined : JSON.parse(raw);
+      } catch {
+        body = raw;
+      }
     }
     const path = url.pathname.startsWith('/api/v1/') ? url.pathname.slice('/api/v1'.length) : undefined;
     const method = req.method ?? 'GET';
@@ -1300,11 +1496,13 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     editAttributeValues,
     addMembership,
     addWikiPage,
+    addAttachment,
     intercept: (rule) => void intercepts.push({ ...rule }),
     addUserStory,
     addTask,
     addEpicRelatedUserStory,
     editItem,
+    editWikiPage,
     onRequest: (hook) => void hooks.push({ ...hook }),
     issuedTokens,
     issueToken: () => issueTokens(user.id).auth_token,
