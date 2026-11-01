@@ -376,3 +376,7 @@ Custom attribute values: every epic/story/task gets an empty values object (vers
 `/{epics,userstories,tasks}/custom-attributes-values/{id}` (keys must be ids of the project's attributes of that type,
 PATCH replaces the object and needs its own `version`); `fake.editAttributeValues(itemType, itemId, values)` sets them
 like a user would; assert on `fake.state.customAttributeValues` (`{ itemType, item, version, attributes_values }`).
+
+Live smoke test: `npm run test:live` runs `test/live/*.live.ts` against a real Taiga project. It is opt-in
+(`TAIGENT_LIVE_SMOKE=1`, target `TAIGENT_SMOKE_PROJECT`), never part of `npm test`, and only run by a person:
+see `docs/live-smoke.md`. `test/live-smoke.test.ts` runs it against the fake in `npm test`.
