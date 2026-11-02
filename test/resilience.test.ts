@@ -30,7 +30,7 @@ test('an access token that expires mid-apply is refreshed via /auth/refresh and 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.json<ApplyReport>().summary.created, 3);
   assert.deepEqual(h.fake.state.epics.map((e) => e.subject), ['Authentication', 'Billing', 'Search']);
-  // Documented contract (docs/cli.md §Environment): a 401 renews the token with POST /auth/refresh, no new login.
+  // Documented contract (docs/cli.md §Credentials and environment): a 401 renews the token with POST /auth/refresh, no new login.
   assert.deepEqual(authPaths(h), ['/auth', '/auth/refresh']);
 });
 
@@ -121,7 +121,7 @@ test('429 retries are bounded: a Taiga that keeps throttling fails with exit 5',
 
   assert.equal(result.code, 5);
   assert.match(result.stderr, /GET \/epics failed: HTTP 429 .*throttled/);
-  // Documented contract (docs/cli.md §Environment): up to 5 retries per request.
+  // Documented contract (docs/cli.md §Credentials and environment): up to 5 retries per request.
   assert.equal(h.fake.requests.filter((r) => r.path === '/epics').length, 6, 'one attempt + 5 retries');
 });
 
@@ -135,7 +135,7 @@ test('missing configuration names the variables to set', async (t) => {
 
   const noAuth = await h.taigent(['plan', '--project', 'demo'], { env: { TAIGA_USERNAME: undefined, TAIGA_PASSWORD: undefined } });
   assert.equal(noAuth.code, 2);
-  assert.match(noAuth.stderr, /TAIGA_USERNAME, TAIGA_PASSWORD \(or set TAIGA_TOKEN/);
+  assert.match(noAuth.stderr, /not logged in to Taiga: run `npx taigent login`.*TAIGA_USERNAME and TAIGA_PASSWORD \(or TAIGA_TOKEN\)/);
 
   const badUnit = await h.taigent(['plan', '--project', 'demo'], { env: { TAIGENT_RETRY_UNIT_MS: 'soon' } });
   assert.equal(badUnit.code, 2);

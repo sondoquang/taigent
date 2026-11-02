@@ -30,8 +30,9 @@ tools/taiga/run-skill.sh --output-format text codex taiga-plan-backlog docs/spec
 Options go before the agent. The agent starts in the repository root (where `.mcp.json`, `.codex/config.toml`
 and the skills live) and the wrapper exits with the agent's exit code. Wrapper errors (unknown option, output
 format, agent or skill; missing arguments; agent not on `PATH`) print `run-skill: <reason>` to stderr and exit 2.
-Set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` first (the `taiga-setup` skill checks them): both agents
-start the Taiga MCP server and `taigent` with them.
+Log in first with `npx taigent login` in your own terminal, on the machine that runs the wrapper (or, on a machine
+without an OS credential store, set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD`); the `taiga-setup` skill
+checks it. Both agents start the Taiga MCP server through `taigent mcp`, and `taigent` itself, with that login.
 
 ## Commands built
 

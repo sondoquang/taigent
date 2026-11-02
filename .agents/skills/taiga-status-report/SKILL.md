@@ -10,6 +10,7 @@ Answer from Taiga's own data, **by sprint** and **by epic**, through the Taiga M
 
 Tool names below are those of the `taiga` MCP server (taiga-mcp-server@1.9.20); your agent prefixes them with the server name (Claude Code: `mcp__taiga__listProjects`). When they are missing from your tools, or `listProjects` returns an error, stop and run the `taiga-setup` skill.
 
+
 ## 1. Pick the project
 
 The project the user named (name, slug or id). Call `listProjects` and take its **id** and **slug** from the line `<name> (ID: <id>, Slug: <slug>)`. Ask when the name matches several projects or none.

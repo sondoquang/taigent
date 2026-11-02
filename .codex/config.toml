@@ -1,7 +1,8 @@
 # Project-scoped Codex config (loaded only when this project is trusted).
-# Secrets are never stored here: env_vars forwards them from your environment.
+# No secrets here: `taigent mcp` uses the login stored by `npx taigent login`. env_vars only forwards variables
+# you set yourself (TAIGA_* on a CI machine; where the stored login lives; Linux's Secret Service session bus).
 [mcp_servers.taiga]
-command = "npx"
-args = ["-y", "taiga-mcp-server@1.9.20"]
-env_vars = ["TAIGA_API_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD"]
+command = "node"
+args = ["bin/taigent.js", "mcp"]
+env_vars = ["TAIGA_API_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD", "TAIGA_TOKEN", "TAIGENT_CONFIG_DIR", "TAIGENT_CREDENTIAL_STORE", "XDG_CONFIG_HOME", "DBUS_SESSION_BUS_ADDRESS"]
 required = true
