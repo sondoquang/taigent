@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { type BacklogItem, type EditResult, readManifestFile, removeItem, saveItem } from '../src/edit.ts';
+import { type BacklogItem, type EditResult, readManifestFile, readWikiPages, removeItem, saveItem, saveWikiPage } from '../src/edit.ts';
 import { suggestKey } from '../src/manifest/conventions.ts';
 import { buildPreview, REVIEW_FILE, saveReview, setVerdict } from '../src/review.ts';
 
@@ -306,4 +306,125 @@ test('suggestKey follows the naming advice and skips taken keys', () => {
   assert.equal(suggestKey('Đăng nhập bằng Google', 'AUTH', new Set(['AUTH-DANG-NHAP'])), 'AUTH-DANG-NHAP-2');
   assert.equal(suggestKey('Login API', 'AUTH-LOGIN', new Set()), 'AUTH-LOGIN-LOGIN-API');
   assert.equal(suggestKey('!!!', undefined, new Set()), '');
+});
+
+// ---- wiki pages (docs.yaml + pages/) ------------------------------------------------------------------------------
+
+const DOCS = `# Documents of the demo project.
+wiki:
+  - slug: spec-auth # the login spec
+    file: pages/spec-auth.md
+attachments:
+  - target: wiki:spec-auth
+    file: files/login-flow.pdf
+`;
+
+const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+
+async function docsProject(t: TestContext, docs: string | null = DOCS): Promise<string> {
+  const dir = await project(t);
+  await mkdir(join(dir, 'pages'));
+  await mkdir(join(dir, 'files'));
+  await writeFile(join(dir, 'pages', 'spec-auth.md'), '# Login\n');
+  await writeFile(join(dir, 'files', 'login-flow.pdf'), 'pdf');
+  if (docs !== null) await writeFile(join(dir, 'docs.yaml'), docs);
+  return dir;
+}
+
+const docsText = (dir: string) => readFile(join(dir, 'docs.yaml'), 'utf8');
+
+test('saveWikiPage adds a page under pages/ with its docs.yaml entry, keeping the other entries and comments', async (t) => {
+  const dir = await docsProject(t);
+  const base = await readManifestFile(dir, 'docs');
+  const page = saved(await saveWikiPage(dir, { baseDigest: base.digest, page: { slug: 'adr-0001-use-rest', content: '# Use REST\n\nWe call Taiga over REST.\n' } }));
+  assert.equal(page.path, 'wiki[1]');
+  assert.deepEqual(page.page, { file: join(dir, 'pages', 'adr-0001-use-rest.md'), text: '# Use REST\n\nWe call Taiga over REST.\n', digest: sha('# Use REST\n\nWe call Taiga over REST.\n') });
+  assert.equal(await readFile(join(dir, 'pages', 'adr-0001-use-rest.md'), 'utf8'), '# Use REST\n\nWe call Taiga over REST.\n');
+  assert.equal(await docsText(dir), DOCS.replace('attachments:', '  - slug: adr-0001-use-rest\n    file: pages/adr-0001-use-rest.md\nattachments:'));
+  assert.equal(page.digest, sha(await docsText(dir)));
+
+  const wiki = await readWikiPages(dir);
+  assert.equal(wiki.docs.digest, page.digest);
+  assert.deepEqual(
+    wiki.pages.map(({ slug, file, page: { text } }) => ({ slug, file, text })),
+    [
+      { slug: 'spec-auth', file: 'pages/spec-auth.md', text: '# Login\n' },
+      { slug: 'adr-0001-use-rest', file: 'pages/adr-0001-use-rest.md', text: '# Use REST\n\nWe call Taiga over REST.\n' },
+    ],
+  );
+});
+
+test('saveWikiPage edits the file an entry names, wherever it is, keeping CRLF; docs.yaml stays as it is', async (t) => {
+  const docs = DOCS.replace('attachments:', '  - slug: spec-billing\n    file: ../shared/billing.md\nattachments:');
+  const dir = await docsProject(t, docs);
+  await mkdir(join(dir, '..', 'shared'), { recursive: true });
+  const billing = join(dir, '..', 'shared', 'billing.md');
+  t.after(() => rm(join(dir, '..', 'shared'), { recursive: true, force: true }));
+  await writeFile(billing, '# Billing\r\n\r\nOld.\r\n');
+  const wiki = await readWikiPages(dir);
+  const opened = wiki.pages.find((page) => page.slug === 'spec-billing')!;
+  assert.equal(opened.page.text, '# Billing\r\n\r\nOld.\r\n');
+
+  const edited = saved(await saveWikiPage(dir, { baseDigest: wiki.docs.digest, pageDigest: opened.page.digest, page: { slug: 'spec-billing', content: '# Billing\n\nNew.\n' } }));
+  assert.equal(edited.path, 'wiki[1]');
+  assert.equal(edited.digest, wiki.docs.digest);
+  assert.equal(await readFile(billing, 'utf8'), '# Billing\r\n\r\nNew.\r\n');
+  assert.equal(edited.page.digest, sha('# Billing\r\n\r\nNew.\r\n'));
+  assert.equal(await docsText(dir), docs);
+});
+
+test('a wiki save on a stale docs.yaml or page digest is a conflict and writes nothing', async (t) => {
+  const dir = await docsProject(t);
+  const wiki = await readWikiPages(dir);
+  const spec = wiki.pages[0]!;
+  await writeFile(join(dir, 'pages', 'spec-auth.md'), '# Login (agent)\n');
+  const pageConflict = await saveWikiPage(dir, { baseDigest: wiki.docs.digest, pageDigest: spec.page.digest, page: { slug: 'spec-auth', content: '# Mine\n' } });
+  assert.deepEqual(pageConflict, { status: 'conflict', current: { file: join(dir, 'pages', 'spec-auth.md'), text: '# Login (agent)\n', digest: sha('# Login (agent)\n') } });
+  assert.equal(await readFile(join(dir, 'pages', 'spec-auth.md'), 'utf8'), '# Login (agent)\n');
+
+  // A new page whose file already exists (not in docs.yaml) is not overwritten either.
+  await writeFile(join(dir, 'pages', 'notes.md'), 'by hand\n');
+  assert.equal((await saveWikiPage(dir, { baseDigest: wiki.docs.digest, page: { slug: 'notes', content: '# Notes\n' } })).status, 'conflict');
+  assert.equal(await readFile(join(dir, 'pages', 'notes.md'), 'utf8'), 'by hand\n');
+
+  const byAgent = `${DOCS}  - target: AUTH-LOGIN\n    file: files/login-flow.pdf\n`;
+  await writeFile(join(dir, 'docs.yaml'), byAgent);
+  const docsConflict = await saveWikiPage(dir, { baseDigest: wiki.docs.digest, page: { slug: 'faq', content: '# FAQ\n' } });
+  assert.equal(docsConflict.status, 'conflict');
+  assert.equal(docsConflict.status === 'conflict' && docsConflict.current.text, byAgent);
+  assert.equal(await docsText(dir), byAgent);
+  await assert.rejects(readFile(join(dir, 'pages', 'faq.md')), { code: 'ENOENT' });
+});
+
+test('wiki slugs follow the loader rules; issues elsewhere in docs.yaml do not block a save', async (t) => {
+  // An attachment with a bad name is not under the edited entry.
+  const docs = `${DOCS}  - target: wiki:spec-auth\n    file: files/Login Flow.pdf\n`;
+  const dir = await docsProject(t, docs);
+  await writeFile(join(dir, 'files', 'Login Flow.pdf'), 'pdf');
+  const base = await readManifestFile(dir, 'docs');
+  const attempts: [string, { path: string; rule: string }[]][] = [
+    ['Spec Billing', [{ path: 'wiki[1].slug', rule: 'wiki-slug' }]],
+    ['../escape', [{ path: 'wiki[1].slug', rule: 'wiki-slug' }]],
+    ['spec-auth', [{ path: 'wiki[1].slug', rule: 'wiki-slug-unique' }]],
+  ];
+  for (const [slug, issues] of attempts) {
+    assert.deepEqual(issuesOf(await saveWikiPage(dir, { baseDigest: base.digest, page: { slug, content: '# Page\n' } })), issues, slug);
+  }
+  assert.deepEqual(
+    issuesOf(await saveWikiPage(dir, { baseDigest: base.digest, pageDigest: sha(''), page: { slug: 'missing', content: '# Page\n' } })),
+    [{ path: '', rule: 'wiki-reference' }],
+  );
+  assert.equal(await docsText(dir), docs, 'nothing is written');
+  await assert.rejects(readFile(join(dir, 'escape.md')), { code: 'ENOENT' });
+
+  saved(await saveWikiPage(dir, { baseDigest: base.digest, page: { slug: 'spec-billing', content: '# Billing\n' } }));
+  assert.equal(await readFile(join(dir, 'pages', 'spec-billing.md'), 'utf8'), '# Billing\n');
+});
+
+test('the first wiki page of a project without docs.yaml creates the file', async (t) => {
+  const dir = await docsProject(t, null);
+  const empty = await readWikiPages(dir);
+  assert.deepEqual([empty.docs.text, empty.pages], ['', []]);
+  saved(await saveWikiPage(dir, { baseDigest: empty.docs.digest, page: { slug: 'home-notes', content: '# Notes\n' } }));
+  assert.equal(await docsText(dir), 'wiki:\n  - slug: home-notes\n    file: pages/home-notes.md\n');
 });
