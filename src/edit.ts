@@ -1,28 +1,32 @@
-// Manifest edit API: adds, edits, re-parents and removes backlog items in `taiga/<slug>/backlog.yaml`, the library
-// behind Taigent Desktop's forms. Every write names the digest of the file it started from and is refused when the
-// file changed since (an agent edited it). Edits go through yaml's Document API, so comments, order and the style of
-// the nodes they do not touch stay as written. Before writing, the result goes through the loader `validate` runs;
-// only issues under the edited item block it. Offline, and it never touches review.yaml: an edited item's verdict
-// turns stale through its digest.
+// Manifest edit API: adds, edits, re-parents and removes backlog items in `taiga/<slug>/backlog.yaml`, and adds or
+// edits wiki pages (an entry in `docs.yaml` + its Markdown file, new ones under `pages/`): the library behind Taigent
+// Desktop's forms. Every write names the digest of the file it started from and is refused when the file changed
+// since (an agent edited it). Edits go through yaml's Document API, so comments, order and the style of the nodes
+// they do not touch stay as written. Before writing, the result goes through the loader `validate` runs; only issues
+// under the edited item or entry block it. Offline, and it never touches review.yaml: an edited item's verdict turns
+// stale through its digest (wiki pages are not reviewed).
 //
-// Item kinds live in `KINDS` (where the item sits, its canonical field order) and files in `EDITABLE_FILES`: wiki
-// entries (docs.yaml) plug in there.
+// Item kinds live in `KINDS` (where the item sits, its canonical field order) and files in `EDITABLE_FILES`.
 
 import { createHash } from 'node:crypto';
-import { readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { type Document, isCollection, isMap, isNode, isScalar, isSeq, parse, parseDocument, visit, type YAMLMap, type YAMLSeq } from 'yaml';
-import { isFileNotFound } from './guards.ts';
+import { errorMessage, isFileNotFound, isRecord } from './guards.ts';
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type ItemType } from './items.ts';
 import { type AttributeValue, BACKLOG_FILE, checkBacklog, type Scenario, type UseCase } from './manifest/backlog.ts';
 import { KEY_PATTERN } from './manifest/conventions.ts';
+import { checkDocs, DOCS_FILE } from './manifest/docs.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { readState, STATE_FILE } from './manifest/state.ts';
 
 /** The manifest files the edit API writes, by name. */
-export const EDITABLE_FILES = { backlog: BACKLOG_FILE } as const;
+export const EDITABLE_FILES = { backlog: BACKLOG_FILE, docs: DOCS_FILE } as const;
 export type EditableManifest = keyof typeof EDITABLE_FILES;
+
+/** Where a new wiki page's Markdown file goes, relative to docs.yaml: `pages/<page slug>.md`. */
+export const WIKI_PAGES_DIR = 'pages';
 
 /** A manifest file as read: absolute path, content (empty when the file does not exist) and SHA-256 (hex) of it. */
 export interface ManifestFile {
@@ -82,6 +86,30 @@ export interface RemoveItemRequest {
   key: string;
 }
 
+/** A wiki page of docs.yaml as a form opens it. */
+export interface WikiPageFile {
+  slug: string;
+  /** The page's file as docs.yaml names it (relative to docs.yaml). */
+  file: string;
+  /** The Markdown file (empty text when it does not exist yet); its digest guards a save. */
+  page: ManifestFile;
+}
+
+export interface WikiSnapshot {
+  docs: ManifestFile;
+  /** Entries of docs.yaml's `wiki` list that name a slug and a file, in order. */
+  pages: WikiPageFile[];
+}
+
+export interface SaveWikiPageRequest {
+  /** `digest` of docs.yaml the form was opened on. */
+  baseDigest: string;
+  /** `digest` of the page's file the form was opened on; absent to add a new page. */
+  pageDigest?: string;
+  /** The page after the edit: an existing slug edits that page's file, a new one adds an entry and `pages/<slug>.md`. */
+  page: { slug: string; content: string };
+}
+
 /**
  * Outcome of a write. `conflict`: the file is no longer the one `baseDigest` names, `current` is what it holds now;
  * `invalid`: the edit breaks a rule under the edited item (or names a missing item, `key-reference`, or renames an
@@ -113,8 +141,15 @@ const KINDS: Record<ItemType, ItemKind> = {
   issue: { list: 'issues', order: ['key', 'subject', 'description', 'type', 'severity', 'priority', 'tags', 'custom_attributes'] },
 };
 
-/** Top-level fields of backlog.yaml, in order. */
+/** Top-level fields of backlog.yaml and of docs.yaml, in order. */
 const ROOT_ORDER = ['epics', 'issues'];
+const DOCS_ORDER = ['wiki', 'attachments'];
+
+/** What `open` says when a manifest is not a mapping, as its loader does. */
+const NOT_A_MAPPING: Record<EditableManifest, string> = {
+  backlog: 'backlog must be a mapping with an `epics` list and optional `issues` list',
+  docs: 'docs must be a mapping with `wiki` and/or `attachments` lists',
+};
 
 /** Manifest field name of each input field. */
 const FIELD_NAMES: Record<string, string> = {
@@ -135,9 +170,8 @@ function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
-/** Reads one editable manifest of the project directory `dir`, with the digest a later write is checked against. */
-export async function readManifestFile(dir: string, manifest: EditableManifest): Promise<ManifestFile> {
-  const file = join(dir, EDITABLE_FILES[manifest]);
+/** Reads `file` (empty when it does not exist) with its digest. */
+async function readFileState(file: string): Promise<ManifestFile> {
   let text = '';
   try {
     text = await readFile(file, 'utf8');
@@ -145,6 +179,26 @@ export async function readManifestFile(dir: string, manifest: EditableManifest):
     if (!isFileNotFound(error)) throw error;
   }
   return { file, text, digest: sha256(text) };
+}
+
+/** Reads one editable manifest of the project directory `dir`, with the digest a later write is checked against. */
+export async function readManifestFile(dir: string, manifest: EditableManifest): Promise<ManifestFile> {
+  return readFileState(join(dir, EDITABLE_FILES[manifest]));
+}
+
+/** Reads docs.yaml of the project directory `dir` and the Markdown file of each of its wiki pages, for the wiki form. */
+export async function readWikiPages(dir: string): Promise<WikiSnapshot> {
+  const docs = await readManifestFile(dir, 'docs');
+  let parsed: unknown;
+  try {
+    parsed = parse(docs.text);
+  } catch (error) {
+    throw new ManifestError([{ file: docs.file, path: '', rule: 'yaml-syntax', message: errorMessage(error) }]);
+  }
+  const entries = isRecord(parsed) && Array.isArray(parsed.wiki) ? (parsed.wiki as unknown[]) : [];
+  const named = entries.filter((entry): entry is { slug: string; file: string } => isRecord(entry) && typeof entry.slug === 'string' && typeof entry.file === 'string' && entry.file !== '');
+  const pages = await Promise.all(named.map(async ({ slug, file }) => ({ slug, file, page: await readFileState(resolve(dir, file)) })));
+  return { docs, pages };
 }
 
 // ---- Document -----------------------------------------------------------------------------------
@@ -371,7 +425,7 @@ async function open(dir: string, manifest: EditableManifest, baseDigest: string)
   const invalid = (rule: string, message: string): Opened => ({ ok: false, result: { status: 'invalid', issues: [{ file: current.file, path: '', rule, message }] } });
   if (doc.errors.length > 0) return invalid('yaml-syntax', doc.errors.map((error) => error.message).join('\n'));
   if (doc.contents === null) doc.contents = doc.createNode({});
-  if (!isMap(doc.contents)) return invalid('type', 'backlog must be a mapping with an `epics` list and optional `issues` list');
+  if (!isMap(doc.contents)) return invalid('type', NOT_A_MAPPING[manifest]);
   recordPadding(doc, current.text);
   return { ok: true, manifest: current, doc, root: doc.contents };
 }
@@ -474,4 +528,52 @@ export async function removeItem(dir: string, request: RemoveItemRequest): Promi
   const orphaned = gone.filter((entry) => state.items[String(entry.key)]?.type === entry.type).map((entry) => String(entry.key));
   detach(target);
   return write(manifest, render(doc, manifest.text), { removed, orphaned });
+}
+
+/**
+ * Adds a wiki page (no `pageDigest`: an entry `{ slug, file: pages/<slug>.md }` at the end of docs.yaml's `wiki` list,
+ * and the file) or edits one (the file its entry names, wherever it is; docs.yaml stays as it is) in the project
+ * directory `dir`. `path` is the entry in docs.yaml, `page` the file as written. The page file is checked against
+ * `pageDigest` (a new page's file must not exist yet) and written before docs.yaml; CRLF in an existing file stays.
+ * Slugs follow the loader's rules (`wiki-slug`, `wiki-slug-unique`); an edit names an existing slug (`wiki-reference`).
+ */
+export async function saveWikiPage(dir: string, request: SaveWikiPageRequest): Promise<EditResult<{ path: string; page: ManifestFile }>> {
+  const { slug, content } = request.page;
+  const opened = await open(dir, 'docs', request.baseDigest);
+  if (!opened.ok) return opened.result;
+  const { manifest, doc, root } = opened;
+  const wiki = root.get('wiki', true);
+  if (wiki !== undefined && !isSeq(wiki)) return { status: 'invalid', issues: [{ file: manifest.file, path: 'wiki', rule: 'type', message: 'must be a list' }] };
+  const adding = request.pageDigest === undefined;
+  const index = adding ? (wiki?.items.length ?? 0) : (wiki?.items.findIndex((node) => isMap(node) && node.get('slug') === slug) ?? -1);
+  if (index === -1) {
+    return { status: 'invalid', issues: [{ file: manifest.file, path: '', rule: 'wiki-reference', message: `no wiki page with slug ${slug} in ${DOCS_FILE}` }] };
+  }
+  let file: unknown = `${WIKI_PAGES_DIR}/${slug}.md`;
+  if (!adding) file = (wiki!.items[index] as YAMLMap).get('file');
+  else if (wiki) wiki.items.push(doc.createNode({ slug, file }));
+  else insertField(doc, root, DOCS_ORDER, 'wiki', doc.createNode([{ slug, file }]));
+
+  const path = `wiki[${index}]`;
+  const text = adding ? render(doc, manifest.text) : manifest.text;
+  const pageFile = typeof file === 'string' && file !== '' ? resolve(dirname(manifest.file), file) : undefined;
+  const issues: ManifestIssue[] = [];
+  try {
+    // Attachment targets are not under the entry: no need for the backlog's keys.
+    await checkDocs(parse(text), manifest.file, { loaded: {}, invalid: new Set(['backlog']) }, new Set(pageFile === undefined ? [] : [pageFile]));
+  } catch (error) {
+    if (!(error instanceof ManifestError)) throw error;
+    issues.push(...error.issues.filter((issue) => issue.path === path || issue.path.startsWith(`${path}.`)));
+  }
+  if (issues.length > 0 || pageFile === undefined) return { status: 'invalid', issues };
+
+  const current = await readFileState(pageFile);
+  if (current.digest !== (request.pageDigest ?? sha256(''))) return { status: 'conflict', current };
+  const body = current.text.includes('\r\n') ? content.replace(/\r?\n/g, '\r\n') : content;
+  await mkdir(dirname(pageFile), { recursive: true });
+  const written = await write(current, body, {});
+  if (written.status !== 'saved') return written;
+  const page = { file: pageFile, text: body, digest: written.digest };
+  if (!adding) return { status: 'saved', digest: manifest.digest, path, page };
+  return write(manifest, text, { path, page });
 }

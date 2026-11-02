@@ -50,7 +50,15 @@ async function isFile(path: string): Promise<boolean> {
 
 /** Reads and validates docs.yaml at `path`; attachment targets are checked against the loaded backlog. */
 export async function loadDocs(path: string, context: Pick<LoadContext, 'loaded' | 'invalid'>): Promise<Docs> {
-  const doc = await readManifestYaml(path);
+  return checkDocs(await readManifestYaml(path), path, context);
+}
+
+/**
+ * Validates `doc`, the parsed content of docs.yaml at `path`; throws ManifestError listing every issue. `pending`
+ * names files (absolute paths) about to be written, which count as existing: the manifest edit API checks a new
+ * wiki page's entry before it writes the page.
+ */
+export async function checkDocs(doc: unknown, path: string, context: Pick<LoadContext, 'loaded' | 'invalid'>, pending: ReadonlySet<string> = new Set()): Promise<Docs> {
   const dir = dirname(path);
   const issues: ManifestIssue[] = [];
   const issue = (at: string, rule: string, message: string) => issues.push({ file: path, path: at, rule, message });
@@ -75,7 +83,7 @@ export async function loadDocs(path: string, context: Pick<LoadContext, 'loaded'
       return '';
     }
     const absolute = resolve(dir, file);
-    if (!(await isFile(absolute))) issue(at, 'file-exists', `file not found: ${file}`);
+    if (!pending.has(absolute) && !(await isFile(absolute))) issue(at, 'file-exists', `file not found: ${file}`);
     return absolute;
   };
 

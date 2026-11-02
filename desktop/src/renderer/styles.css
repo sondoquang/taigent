@@ -1155,6 +1155,46 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* Wiki section (wiki.ts) */
+.wiki-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.wiki-page {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.wiki-page-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.wiki-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.wiki-editor textarea {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.wiki-preview {
+  max-height: 52vh;
+  overflow: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
 /* Taiga > Project (taiga-projects.ts). */
 .taiga-project-head {
   display: flex;

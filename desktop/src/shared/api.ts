@@ -1,16 +1,19 @@
 // The contract between the main process and the renderer: what `window.taigent` (preload) exposes. Review
-// shapes and the manifest edit shapes come from taigent's core (`src/review.ts`, `src/edit.ts`, compiled to `dist/`), as types only.
+// shapes, the manifest edit shapes and the upload plan come from taigent's core (`src/review.ts`, `src/edit.ts`,
+// `src/upload.ts`, compiled to `dist/`), as types only.
 
-import type { BacklogItem, EditResult, ManifestFile, RemoveItemRequest, SaveItemRequest } from '../../../src/edit.ts';
+import type { BacklogItem, EditResult, ManifestFile, RemoveItemRequest, SaveItemRequest, SaveWikiPageRequest, WikiPageFile, WikiSnapshot } from '../../../src/edit.ts';
 import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
 import type { ProjectDetailReport } from '../../../src/projects.ts';
 import type { ProjectReport } from '../../../src/report.ts';
 import type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
+import type { UploadOperation, UploadPlan, UploadReport } from '../../../src/upload.ts';
 
 export type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict };
 export type { BacklogItem, CustomAttributeSpec, EditResult, ItemType, ManifestFile, RemoveItemRequest, SaveItemRequest };
+export type { SaveWikiPageRequest, UploadOperation, UploadPlan, UploadReport, WikiPageFile, WikiSnapshot };
 export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult };
 export type { ProjectReport };
 
@@ -208,6 +211,12 @@ export interface ItemRef {
 export type SaveOutcome = EditResult<{ path: string; view: Result<ProjectView> }>;
 export type RemoveOutcome = EditResult<{ removed: string[]; orphaned: string[]; view: Result<ProjectView> }>;
 
+/** A wiki page save (`src/edit.ts`); once saved, `wiki` is docs.yaml and its pages read again. */
+export type WikiSaveOutcome = EditResult<{ path: string; page: ManifestFile; wiki: Result<WikiSnapshot> }>;
+
+/** "Đẩy wiki lên Taiga": the dry run found nothing to do, the user cancelled the confirm dialog, or the upload ran. */
+export type WikiUploadOutcome = { status: 'no-changes'; plan: UploadPlan } | { status: 'cancelled'; plan: UploadPlan } | { status: 'uploaded'; report: UploadReport };
+
 /** One row of Taiga > Project: a Taiga project the user is a member of, or a manifest directory not on Taiga yet. */
 export interface TaigaProjectRow {
   slug: string;
@@ -278,6 +287,12 @@ export interface TaigentApi {
   saveItem(slug: string, request: SaveItemRequest): Promise<Result<SaveOutcome>>;
   /** Removes an item with its children (a story's tasks); items on Taiga stay there as orphans. */
   removeItem(slug: string, request: RemoveItemRequest): Promise<Result<RemoveOutcome>>;
+  /** Reads docs.yaml and its wiki pages' Markdown for the Wiki section. */
+  readWiki(slug: string): Promise<Result<WikiSnapshot>>;
+  /** Adds or edits a wiki page; refused (`conflict`) when docs.yaml or the page file changed since the form opened. */
+  saveWikiPage(slug: string, request: SaveWikiPageRequest): Promise<Result<WikiSaveOutcome>>;
+  /** `upload --dry-run`, a confirm dialog listing create/update/skip, then `upload --yes` once confirmed. */
+  uploadWiki(slug: string): Promise<Result<WikiUploadOutcome>>;
   /** Taiga > Project: the user's Taiga projects (`taigent projects --json`) and the repository's manifest directories. */
   listTaigaProjects(): Promise<Result<TaigaProjectsOverview>>;
   readTaigaProject(slug: string): Promise<Result<TaigaProjectDetail>>;
@@ -322,6 +337,9 @@ export const CHANNELS = {
   readBacklog: 'taigent:read-backlog',
   saveItem: 'taigent:save-item',
   removeItem: 'taigent:remove-item',
+  readWiki: 'taigent:read-wiki',
+  saveWikiPage: 'taigent:save-wiki-page',
+  uploadWiki: 'taigent:upload-wiki',
   listTaigaProjects: 'taigent:list-taiga-projects',
   readTaigaProject: 'taigent:read-taiga-project',
   saveProjectSettings: 'taigent:save-project-settings',
