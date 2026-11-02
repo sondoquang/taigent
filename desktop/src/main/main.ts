@@ -28,6 +28,7 @@ import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
+import { readTaigaReport } from './taiga-report.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
 import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
 
@@ -291,6 +292,7 @@ function registerIpc(): void {
   handle(CHANNELS.readTaigaProject, async (slug: string) => readTaigaProject(requireRepo(), slug));
   handle(CHANNELS.saveProjectSettings, async (input: ProjectSettingsInput) => saveProjectFile(requireRepo(), input));
   handle(CHANNELS.bootstrapProject, async (slug: string) => bootstrapProject(requireRepo(), slug, window!));
+  handle(CHANNELS.readTaigaReport, async (slug: string) => readTaigaReport(requireRepo(), slug));
   handle(CHANNELS.gitStatus, async () => gitStatus(requireRepo()));
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));

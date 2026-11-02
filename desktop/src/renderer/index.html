@@ -110,10 +110,16 @@
             <div id="tickets-result" aria-live="polite"></div>
             <div id="tickets-list"></div>
           </div>
-          <p class="muted">
-            Báo cáo chưa có trong ứng dụng. Trong terminal: <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code>
-            in tổng kết ticket của bạn theo ngày.
-          </p>
+          <div class="taiga-report" id="taiga-report">
+            <div class="taiga-project-head">
+              <h2>Báo cáo</h2>
+              <div class="spacer"></div>
+              <select id="taiga-report-project" aria-label="Project của báo cáo"></select>
+              <button id="taiga-report-run" class="btn" type="button" disabled>Xem báo cáo</button>
+            </div>
+            <p class="muted" id="taiga-report-status">Chọn project khi mục Project ở trên đã đọc xong danh sách.</p>
+            <div id="taiga-report-body"></div>
+          </div>
         </div>
       </section>
 
