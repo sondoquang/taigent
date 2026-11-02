@@ -5,11 +5,12 @@
 // sau khi duyệt" through its digest.
 
 import { ISSUE_VALUE_FIELDS, type IssueValueField } from '../../../src/items.ts';
-import { suggestKey } from '../../../src/manifest/conventions.ts';
+import { issueKeyPrefix, suggestKey } from '../../../src/manifest/conventions.ts';
 import type {
   BacklogSnapshot,
   CustomAttributeSpec,
   Failure,
+  ItemType,
   ManifestFile,
   ManifestIssue,
   PreviewItem,
@@ -33,10 +34,8 @@ export interface FormsHost {
   failureBlock(failure: Failure): HTMLElement;
 }
 
-type FormType = 'epic' | 'story' | 'task' | 'issue';
-
 interface OpenForm {
-  type: FormType;
+  type: ItemType;
   slug: string;
   /** The item being edited; absent for a new item. */
   original?: PreviewItem;
@@ -47,13 +46,22 @@ interface OpenForm {
   story?: StoryEditor;
 }
 
-const TYPE_LABEL: Record<FormType, string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
+const TYPE_LABEL: Record<ItemType, string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
 
-const KEY_HINT: Record<FormType, string> = {
+const KEY_HINT: Record<ItemType, string> = {
   epic: 'Gợi ý theo quy ước: tên mảng việc, ví dụ AUTH.',
   story: 'Gợi ý theo quy ước: <EPIC>-<việc>, ví dụ AUTH-LOGIN.',
   task: 'Gợi ý theo quy ước: <STORY>-<bước>, ví dụ AUTH-LOGIN-API.',
-  issue: 'Gợi ý theo quy ước: tên ngắn của triệu chứng, ví dụ LOGIN-500.',
+  issue: 'Gợi ý theo quy ước: BUG-, ASK- (Question) hoặc ENH- (Enhancement) rồi tên ngắn, ví dụ BUG-LOGIN-500.',
+};
+
+const DESCRIPTION_ROWS: Record<ItemType, string> = { epic: '5', story: '3', task: '4', issue: '10' };
+
+const DESCRIPTION_LABEL: Record<ItemType, string> = {
+  epic: 'Mô tả (Markdown)',
+  story: 'Mô tả thêm (Markdown, tuỳ chọn)',
+  task: 'Định nghĩa done',
+  issue: 'Mô tả (Markdown: bước tái hiện, mong đợi, thực tế)',
 };
 
 /** The description a new issue starts from: the template of conventions §6.4 (labels stay in English). */
@@ -185,7 +193,7 @@ function parentLabel(view: ProjectView, key: string): string {
   return key;
 }
 
-async function openForm(type: FormType, original?: PreviewItem, parent?: string): Promise<void> {
+async function openForm(type: ItemType, original?: PreviewItem, parent?: string): Promise<void> {
   const { api, view: currentView, toast } = requireHost();
   const view = currentView();
   if (!view) {
@@ -220,7 +228,7 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   );
   const subject = h('input', { id: 'form-subject', type: 'text', autocomplete: 'off' });
   subject.value = original?.subject ?? '';
-  const description = h('textarea', { id: 'form-description', rows: type === 'epic' ? '5' : type === 'story' ? '3' : type === 'issue' ? '10' : '4' });
+  const description = h('textarea', { id: 'form-description', rows: DESCRIPTION_ROWS[type] });
   description.value = (stored ?? storedIssue)?.description ?? original?.description ?? (type === 'task' ? 'Done khi: ' : type === 'issue' ? ISSUE_TEMPLATE : '');
   const tags = h('input', { id: 'form-tags', type: 'text', autocomplete: 'off', placeholder: 'type:feature, area:auth' });
   tags.value = (original?.tags ?? []).join(', ');
@@ -259,10 +267,11 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
     });
   const attributes = type === 'task' ? [] : [...declared, ...undeclared];
 
-  const issuePreview = type === 'issue' ? markdownPreview() : undefined;
+  // The story preview composes the whole description (story-form.ts); epics, tasks and issues show their description.
+  const descriptionPreview = type === 'story' ? undefined : markdownPreview();
   const refreshPreview = () => {
     form?.story?.refresh({ description: description.value.trim(), spec: specInput ? specInput.value.trim() : '' });
-    issuePreview?.refresh(description.value.trim());
+    descriptionPreview?.refresh(description.value.trim());
   };
   const story =
     type === 'story'
@@ -273,11 +282,16 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
       : undefined;
   if (story) form.story = story;
 
-  // Issues share the key space with epics, stories and tasks.
+  // Issues share the key space with epics, stories and tasks; an issue's key starts with the prefix of its type.
   const taken = new Set([...allItems(view), ...view.preview.issues].map((item) => item.key).filter((itemKey) => itemKey !== original?.key));
+  const keyParent = (): string | undefined => {
+    if (parentSelect) return parentSelect.value;
+    if (type === 'issue') return issueKeyPrefix(document.querySelector<HTMLInputElement | HTMLSelectElement>('#item-form [data-issue-value="type"]')?.value ?? '');
+    return undefined;
+  };
   const refreshKey = () => {
     if (!form || locked) return;
-    if (!form.keyTouched) key.value = suggestKey(subject.value, parentSelect ? parentSelect.value : type === 'task' || type === 'story' ? parentKey : undefined, taken);
+    if (!form.keyTouched) key.value = suggestKey(subject.value, keyParent(), taken);
     const duplicate = taken.has(key.value.trim());
     keyHint.classList.toggle('error', duplicate);
     keyHint.textContent = duplicate ? `Key ${key.value.trim()} đã có trong backlog: chọn key khác.` : KEY_HINT[type];
@@ -290,7 +304,6 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   if (parentSelect) parentSelect.addEventListener('change', refreshKey);
 
   const body = byId<HTMLFormElement>('item-form-body');
-  body.classList.toggle('with-preview', story !== undefined || issuePreview !== undefined);
   body.replaceChildren(
     h(
       'div',
@@ -301,11 +314,7 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
       field('subject', 'Tiêu đề', subject),
       field('key', 'Key', key, keyHint),
       story?.element,
-      field(
-        'description',
-        type === 'task' ? 'Định nghĩa done' : type === 'story' ? 'Mô tả thêm (Markdown, tuỳ chọn)' : type === 'issue' ? 'Mô tả (Markdown: bước tái hiện, mong đợi, thực tế)' : 'Mô tả (Markdown)',
-        description,
-      ),
+      field('description', DESCRIPTION_LABEL[type], description),
       ...issueValues,
       valuesHint,
       specInput && field('spec', 'Spec (đường dẫn hoặc link, tuỳ chọn)', specInput),
@@ -330,13 +339,17 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
         h('button', { type: 'submit', class: 'btn primary', id: 'form-save' }, 'Lưu vào backlog.yaml'),
       ),
     ),
-    ...(story ? [story.preview] : issuePreview ? [issuePreview.element] : []),
+    story ? story.preview : descriptionPreview!.element,
   );
   body.onsubmit = (event) => {
     event.preventDefault();
     void submitForm();
   };
-  body.oninput = refreshPreview;
+  // The issue type, typed or picked once loadIssueValues turns it into a dropdown, picks the key prefix.
+  body.oninput = (event) => {
+    refreshPreview();
+    if (type === 'issue' && (event.target as HTMLElement).dataset.issueValue === 'type') refreshKey();
+  };
   byId<HTMLDialogElement>('item-form').showModal();
   refreshKey();
   refreshPreview();
@@ -344,7 +357,7 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   if (type === 'issue') void loadIssueValues(view.slug);
 }
 
-/** A Markdown preview of the issue description, rendered like the review screen (markdown.ts). */
+/** A Markdown preview of an epic, task or issue description, rendered like the review screen (markdown.ts). */
 function markdownPreview(): { element: HTMLElement; refresh(text: string): void } {
   const body = h('div', { class: 'markdown', id: 'form-preview-body' });
   const element = h(
@@ -528,8 +541,6 @@ export function showConflict(base: ManifestFile, current: ManifestFile, reapply:
 
 // ---- removal --------------------------------------------------------------------------------------------------
 
-const KIND_LABEL: Record<PreviewItem['type'], string> = { epic: 'epic', story: 'story', task: 'task', issue: 'issue' };
-
 async function confirmRemove(item: PreviewItem): Promise<void> {
   const { api, view: currentView, toast } = requireHost();
   const view = currentView();
@@ -546,7 +557,7 @@ async function confirmRemove(item: PreviewItem): Promise<void> {
     h(
       'div',
       {},
-      h('h2', {}, `Xoá ${KIND_LABEL[item.type]} ${item.key}?`),
+      h('h2', {}, `Xoá ${item.type} ${item.key}?`),
       h('p', {}, `“${item.subject}” sẽ bị xoá khỏi backlog.yaml.`),
       children.length > 0 &&
         h('p', {}, `Kèm theo ${children.length} mục bên dưới: `, h('code', {}, children.map((child) => child.key).join(', ')), '.'),

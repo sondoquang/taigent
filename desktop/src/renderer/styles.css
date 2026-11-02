@@ -1396,13 +1396,13 @@ textarea:focus {
   color: var(--green);
 }
 
-/* ---- story form (src/renderer/story-form.ts) ---- */
+/* ---- item forms (src/renderer/forms.ts, story-form.ts): fields left, live description preview right ---- */
 
-.modal.wide:has(.with-preview) {
+.modal.wide.item-form {
   width: 1180px;
 }
 
-.item-form form.with-preview {
+.item-form form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 20px;

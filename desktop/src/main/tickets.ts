@@ -8,12 +8,11 @@ import type { CommentAdded, StatusChange } from '../../../src/ticket.ts';
 import type { TicketsReport } from '../../../src/tickets.ts';
 import type { Failure, MyTickets, Result, TicketCommentRequest, TicketStatusRequest, TicketWriteOutcome } from '../shared/api.ts';
 import { failure } from './project.ts';
+import { slugFailure } from './ipc.ts';
+import { networkFix, taigaFailure } from './taiga-errors.ts';
 import { type CliError, parseCliJson, runCli } from './taigent.ts';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const SLUG = /^[a-z0-9][a-z0-9_-]*$/;
-
-const LOGIN_FIX = 'Cách sửa: bấm “Đăng nhập” ở thanh trên cùng (hoặc chạy npx taigent login trong terminal), rồi bấm Làm mới.';
 
 /**
  * The CLI's error as the screen says it, in Vietnamese with how to fix it. `write` names the ticket of a failed write;
@@ -23,7 +22,6 @@ function ticketFailure(error: CliError | undefined, write?: { slug: string; ref:
   const detail = error?.message;
   const nothing = write ? ' Chưa ghi gì lên Taiga.' : '';
   const ticket = write ? `#${write.ref} (${write.slug})` : '';
-  if (error?.kind === 'login') return failure(`Chưa đăng nhập Taiga.${nothing} ${LOGIN_FIX}`, { detail });
   if (error?.kind === 'conflict') {
     return failure(
       `Ticket ${ticket} vừa được đổi trên Taiga (người khác, hoặc bạn ở nơi khác) sau khi taigent đọc nó.${nothing} ` +
@@ -41,20 +39,10 @@ function ticketFailure(error: CliError | undefined, write?: { slug: string; ref:
   if (error?.kind === 'usage' && detail && /unknown user story status/.test(detail)) {
     return failure(`Project ${write?.slug} không còn status này.${nothing} Cách sửa: danh sách status đã được tải lại; chọn lại status.`, { detail });
   }
-  if (error?.kind === 'taiga' && (error.status === 401 || (detail !== undefined && /taigent login|TAIGA_TOKEN|TAIGA_USERNAME/.test(detail)))) {
-    return failure(
-      `Đăng nhập Taiga đã hết hạn hoặc bị từ chối.${nothing} Cách sửa: bấm tên của bạn → Đăng xuất, rồi Đăng nhập lại ` +
-        '(đăng nhập hết hạn sau 8 ngày không dùng); nếu repo đặt TAIGA_TOKEN hoặc TAIGA_USERNAME/TAIGA_PASSWORD (.env) thì sửa các biến đó.',
-      { detail },
-    );
-  }
-  if (write) {
-    return failure(
-      `Không ghi được lên ticket ${ticket}. Cách sửa: kiểm tra mạng và URL API Taiga, rồi bấm Làm mới để xem ticket trên Taiga trước khi thử lại.`,
-      { detail },
-    );
-  }
-  return failure('Không đọc được ticket của bạn trên Taiga. Cách sửa: kiểm tra mạng và URL API Taiga, rồi bấm Làm mới.', { detail });
+  const failed = write
+    ? `Không ghi được lên ticket ${ticket}. Cách sửa: kiểm tra mạng và URL API Taiga, rồi bấm Làm mới để xem ticket trên Taiga trước khi thử lại.`
+    : `Không đọc được ticket của bạn trên Taiga. ${networkFix()}`;
+  return taigaFailure(error, { failed, nothing });
 }
 
 /** The Period's tickets from `from` to `to`, and the user story statuses of every project holding one. */
@@ -77,9 +65,7 @@ export async function readMyTickets(root: string, from: string, to: string): Pro
 }
 
 function validWrite(slug: string, ref: number): Failure | undefined {
-  if (!SLUG.test(slug)) return failure(`"${slug}" không phải slug project.`);
-  if (!Number.isInteger(ref) || ref <= 0) return failure(`"${ref}" không phải ref ticket.`);
-  return undefined;
+  return slugFailure(slug) ?? (!Number.isInteger(ref) || ref <= 0 ? failure(`"${ref}" không phải ref ticket.`) : undefined);
 }
 
 async function confirm(window: BrowserWindow, title: string, message: string, detail: string, button: string): Promise<boolean> {

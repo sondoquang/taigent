@@ -555,6 +555,7 @@ function planTable(plan: Plan): HTMLElement {
       {},
       `Tạo mới ${plan.summary.create} · Cập nhật ${plan.summary.update} · Gắn epic ${plan.summary.link} · Không đổi ${plan.summary.skip}`,
     ),
+    operations.length === 0 && h('p', {}, 'Không có thay đổi nào cần đẩy.'),
     operations.length > 0 &&
       h(
         'table',
@@ -592,6 +593,20 @@ function planTable(plan: Plan): HTMLElement {
           ...plan.orphans.map((orphan) => h('li', {}, `${TYPE_LABEL[orphan.type as PreviewItem['type']] ?? orphan.type} #${orphan.ref} ${orphan.key} – ${orphan.subject}`)),
         ),
       ),
+    plan.staleLinks.length > 0 &&
+      h(
+        'div',
+        { class: 'warn-box', id: 'plan-stale-links' },
+        h('strong', {}, `${plan.staleLinks.length} liên kết cũ (stale link): story trên Taiga còn gắn với epic mà backlog không còn đặt nó vào.`),
+        h('p', {}, 'Apply không bao giờ gỡ liên kết này. Nếu không cần nữa, gỡ tay trên Taiga.'),
+        h(
+          'ul',
+          {},
+          ...plan.staleLinks.map((link) =>
+            h('li', {}, 'Story #', String(link.ref), ' ', h('code', {}, link.key), ' → epic #', String(link.epicRef), ' ', h('code', {}, link.epic)),
+          ),
+        ),
+      ),
   );
 }
 
@@ -604,7 +619,7 @@ async function showPlan(): Promise<void> {
   showChangesResult(
     slug,
     result.value.changes ? 'Thay đổi sẽ ghi lên Taiga' : 'Taiga đã khớp với backlog',
-    result.value.changes ? planTable(result.value) : h('p', {}, 'Không có thay đổi nào cần đẩy.'),
+    planTable(result.value),
   );
 }
 

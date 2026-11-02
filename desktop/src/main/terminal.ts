@@ -1,18 +1,19 @@
 // The embedded terminal's main side: one node-pty process per tab, its output forwarded to the renderer (xterm.js)
 // and its input taken from it, both over the typed channels of src/shared/api.ts. The renderer can only open a shell
 // or an agent (claude, codex, omp) in the open repository; a tab that runs a given command (kind `skill`) is opened
-// from the main process only, through `terminals.open`. Closing or cancelling a tab kills its whole process tree, and
+// from the main process only, through `terminals.open`. Closing or cancelling a tab kills its whole process tree
+// (node-pty starts each tab's process in its own session, so outside Windows its pid leads the process group), and
 // quitting the app kills every tree (`terminals.killAll`).
 
-import { execFile, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, delimiter, join } from 'node:path';
-import { app, type BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { app } from 'electron';
 import type * as NodePty from 'node-pty';
 import type { IPty } from 'node-pty';
 import { CHANNELS, type Result, type TerminalAgent, type TerminalExit, type TerminalTab, TERMINAL_AGENTS } from '../shared/api.ts';
-import { toFailure } from './project.ts';
+import { appContents, handle, listen } from './ipc.ts';
+import { killTree, killTreeSync } from './processes.ts';
 
 /** A command run directly in the pty, without a shell. */
 export interface TerminalCommand {
@@ -54,8 +55,6 @@ const loadPty = (): typeof NodePty =>
     app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'node-pty') : 'node-pty',
   ) as typeof NodePty;
 
-const TASKKILL = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-
 /** `pwsh` on PATH, else Windows PowerShell; `$SHELL` elsewhere. */
 function resolveShell(): string {
   if (process.platform !== 'win32') return process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh');
@@ -82,29 +81,6 @@ function shellArgs(shell: string, command: string | undefined): string[] {
 export function shellRun(command: string): TerminalCommand {
   const shell = resolveShell();
   return { file: shell, args: shellArgs(shell, command) };
-}
-
-/** Kills `pid` and every process under it. */
-export function killTree(pid: number): Promise<void> {
-  if (process.platform !== 'win32') {
-    killGroup(pid);
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => execFile(TASKKILL, ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve()));
-}
-
-function killTreeSync(pid: number): void {
-  if (process.platform === 'win32') spawnSync(TASKKILL, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeout: 10_000 });
-  else killGroup(pid);
-}
-
-/** node-pty starts the child in its own session, so its pid is the process group. */
-function killGroup(pid: number): void {
-  try {
-    process.kill(-pid, 'SIGKILL');
-  } catch {
-    // Already gone.
-  }
 }
 
 /** Where the main process sends tab events: the app window. */
@@ -231,40 +207,33 @@ export class TerminalManager {
 export const terminals = new TerminalManager();
 
 /**
- * The renderer side of the terminal: only from the app's own page (app://taigent), only shells and agents, always
- * in the open repository. Output and exits go to the window, while it exists (a tab may exit during quit).
+ * The renderer side of the terminal (through the sender-checked channels of ipc.ts): only shells and agents, always in
+ * the open repository. Output and exits go to the window, while it exists (a tab may exit during quit).
  */
-export function registerTerminalIpc(window: () => BrowserWindow | undefined, repo: () => string): void {
-  const contents = (): WebContents | undefined => {
-    const win = window();
-    return win && !win.isDestroyed() && !win.webContents.isDestroyed() ? win.webContents : undefined;
-  };
-  const trusted = (event: IpcMainEvent | IpcMainInvokeEvent): boolean =>
-    event.sender === contents() && (event.senderFrame?.url.startsWith('app://taigent/') ?? false);
+export function registerTerminalIpc(repo: () => string): void {
   terminals.attach({
-    opened: (tab) => contents()?.send(CHANNELS.terminalOpened, tab),
-    data: (id, data) => contents()?.send(CHANNELS.terminalData, id, data),
-    exit: (id, exit) => contents()?.send(CHANNELS.terminalExit, id, exit),
+    opened: (tab) => appContents()?.send(CHANNELS.terminalOpened, tab),
+    data: (id, data) => appContents()?.send(CHANNELS.terminalData, id, data),
+    exit: (id, exit) => appContents()?.send(CHANNELS.terminalExit, id, exit),
   });
-  ipcMain.handle(CHANNELS.terminalOpen, async (event, kind: unknown): Promise<Result<TerminalTab>> => {
-    try {
-      if (!trusted(event)) throw new Error('Không được phép mở terminal từ trang này.');
+  handle(
+    CHANNELS.terminalOpen,
+    async (kind: unknown): Promise<Result<TerminalTab>> => {
       if (kind !== 'shell' && !TERMINAL_AGENTS.some((agent) => agent === kind)) throw new Error(`Loại tab không hợp lệ: ${String(kind)}`);
       return { ok: true, value: terminals.open({ kind: kind as 'shell' | TerminalAgent, cwd: repo() }).tab };
-    } catch (error) {
-      return toFailure(error, 'Không mở được terminal');
-    }
+    },
+    'Không mở được terminal',
+  );
+  listen(CHANNELS.terminalWrite, (id, data) => {
+    if (typeof id === 'number' && typeof data === 'string') terminals.write(id, data);
   });
-  ipcMain.on(CHANNELS.terminalWrite, (event, id: unknown, data: unknown) => {
-    if (trusted(event) && typeof id === 'number' && typeof data === 'string') terminals.write(id, data);
+  listen(CHANNELS.terminalResize, (id, cols, rows) => {
+    if (typeof id === 'number' && typeof cols === 'number' && typeof rows === 'number') terminals.resize(id, cols, rows);
   });
-  ipcMain.on(CHANNELS.terminalResize, (event, id: unknown, cols: unknown, rows: unknown) => {
-    if (trusted(event) && typeof id === 'number' && typeof cols === 'number' && typeof rows === 'number') terminals.resize(id, cols, rows);
+  handle(CHANNELS.terminalCancel, async (id: unknown) => {
+    if (typeof id === 'number') await terminals.cancel(id);
   });
-  ipcMain.handle(CHANNELS.terminalCancel, async (event, id: unknown) => {
-    if (trusted(event) && typeof id === 'number') await terminals.cancel(id);
-  });
-  ipcMain.handle(CHANNELS.terminalClose, async (event, id: unknown) => {
-    if (trusted(event) && typeof id === 'number') await terminals.close(id);
+  handle(CHANNELS.terminalClose, async (id: unknown) => {
+    if (typeof id === 'number') await terminals.close(id);
   });
 }

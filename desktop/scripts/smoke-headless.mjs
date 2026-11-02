@@ -1,8 +1,9 @@
 // Headless steps of the desktop smoke (scripts/smoke.mjs): the Settings choice of the agent (saved in the app
 // settings), then each button of the Backlog section run through the bundled run-skill in `--dry-run` mode (the app is
 // launched with TAIGENT_RUN_SKILL_DRY_RUN=1): its `skill` tab shows exactly the command run-skill builds for that agent,
-// skill and request in this repository. Then, without --dry-run and with a fake `codex` first on PATH, Huỷ kills the
-// run's process tree and the tab says it was cancelled, and a failing run shows its exit code and last error line.
+// skill and request in this repository. Then, without --dry-run and with a fake `codex` first on PATH, the agent runs
+// with TAIGENT_READ_ONLY=1, Huỷ kills the run's process tree and the tab says it was cancelled, and a failing run shows
+// its exit code and last error line.
 
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -12,8 +13,8 @@ import { descendants, waitGone } from './smoke-terminal.mjs';
 const windows = process.platform === 'win32';
 
 /**
- * `path` with a folder holding a fake `codex` first: `codex exec` prints where it runs, then waits (or fails with exit 3
- * when SMOKE_CODEX=fail); any other call prints a version, so tool detection stays quick.
+ * `path` with a folder holding a fake `codex` first: `codex exec` prints where it runs and its TAIGENT_READ_ONLY, then
+ * waits (or fails with exit 3 when SMOKE_CODEX=fail); any other call prints a version, so tool detection stays quick.
  */
 export async function headlessPath(work, path) {
   const bin = join(work, 'headless-bin');
@@ -26,6 +27,7 @@ export async function headlessPath(work, path) {
         'if not "%~1"=="exec" goto version',
         'if "%SMOKE_CODEX%"=="fail" goto fail',
         'echo fake-codex exec in %CD%',
+        'echo fake-codex read-only=%TAIGENT_READ_ONLY%',
         'ping -n 600 127.0.0.1 >nul',
         'exit /b 0',
         ':fail',
@@ -44,6 +46,7 @@ export async function headlessPath(work, path) {
         '[ "$1" = exec ] || { echo codex-cli 0.0.0-fake; exit 0; }',
         '[ "$SMOKE_CODEX" = fail ] && { echo "fake-codex: error: smoke failure"; exit 3; }',
         'echo "fake-codex exec in $PWD"',
+        'echo "fake-codex read-only=$TAIGENT_READ_ONLY"',
         'sleep 600',
         '',
       ].join('\n'),
@@ -162,7 +165,10 @@ export async function smokeHeadless(page, { app, repo, project, work, shots, log
     delete process.env.TAIGENT_RUN_SKILL_DRY_RUN;
   });
   const long = await runButton(page, '#agent-review');
-  await page.waitForFunction((id) => document.querySelector(`.terminal-view[data-id="${id}"] .xterm-rows`)?.textContent?.includes('fake-codex exec in'), long.id, { timeout: 60_000 });
+  const rows = (id) => page.locator(`.terminal-view[data-id="${id}"] .xterm-rows`).evaluate((view) => (view.textContent ?? '').replaceAll('\u00a0', ' '));
+  await page.waitForFunction((id) => document.querySelector(`.terminal-view[data-id="${id}"] .xterm-rows`)?.textContent?.includes('fake-codex read-only='), long.id, { timeout: 60_000 });
+  const printed = (await rows(long.id)).match(/fake-codex read-only=.{0,20}/)?.[0];
+  check(printed?.startsWith('fake-codex read-only=1') ?? false, `the agent of a headless run gets TAIGENT_READ_ONLY=1, so its taigent refuses writes to Taiga (${printed})`);
   check(await page.isDisabled('#agent-story'), 'the buttons wait while a run goes on');
   const tree = descendants(long.pid);
   await page.click(`.terminal-tab[data-id="${long.id}"] .terminal-cancel`);

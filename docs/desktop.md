@@ -171,14 +171,19 @@ Form chỉ sửa `taiga/<slug>/backlog.yaml` trong repo. Không có gì được
   chuyển task sang story đó.
 - Ở nhóm **Issues** của cây, **+ Issue** mở form issue (xem [Form issue](#form-issue)).
 - Ở một epic, story, task hoặc issue, **Sửa** mở lại form với nội dung hiện có.
+- Mọi form có hai cột: bên trái là các ô, bên phải là **Xem trước**, cập nhật theo từng phím gõ. Form epic, task và
+  issue hiện mô tả (Markdown) bằng cùng renderer và cùng bộ làm sạch DOMPurify như màn hình review; form story hiện
+  mô tả ghép từ mẫu story (xem [Form story](#form-story)).
 - **Key** được gợi ý theo quy ước khi bạn gõ tiêu đề: epic là vài chữ đầu của tiêu đề (`SOAN-BACKLOG`), story là
-  `<EPIC>-<việc>`, task là `<STORY>-<bước>`. Bạn sửa được key; trùng key có sẵn thì form báo ngay. Item đã có trên
-  Taiga (`state.json`) bị khoá key, vì đổi key là tạo item mới và biến item cũ thành mồ côi.
+  `<EPIC>-<việc>`, task là `<STORY>-<bước>`, issue là `<BUG|ASK|ENH>-<triệu chứng>` theo loại của issue. Bạn sửa được
+  key; trùng key có sẵn thì form báo ngay. Item đã có trên Taiga (`state.json`) bị khoá key, vì đổi key là tạo item
+  mới và biến item cũ thành mồ côi.
 - **Lưu** chạy cùng luật với `taigent validate`. Lỗi của chính item hiện ngay dưới ô sai (kèm rule, ví dụ
   `tag-prefix`); lỗi có sẵn ở item khác không chặn lưu. File được sửa tại chỗ: comment, thứ tự, cách viết của phần
   không đụng tới (dấu ngoặc kép, `[a, b]`, xuống dòng CRLF) giữ nguyên.
 - Item mới luôn ở trạng thái *Chưa duyệt*. Sửa một item đã *Đạt* thì item thành *Đã đổi sau khi duyệt*, như khi agent
-  sửa. Form không ghi `review.yaml`; chỉ khi đổi key hoặc xoá item, ứng dụng chuyển hoặc xoá mục review của key đó.
+  sửa. Form không ghi `review.yaml`, trừ hai trường hợp: đổi key thì comment chuyển sang key mới và verdict bị bỏ (item
+  thành *Chưa duyệt*); xoá item thì mục review của nó bị xoá.
 - **Đang mở form mà file bị đổi** (thường là agent vừa sửa): form báo ngay. Bấm Lưu thì việc lưu bị từ chối, không có
   gì được ghi, và hộp thoại cho xem phần `backlog.yaml` đã đổi (dòng thêm/bớt). **Áp lại thay đổi của tôi** ghi phần
   của bạn lên bản mới; **Huỷ** giữ nguyên bản của agent.
@@ -188,7 +193,7 @@ Form chỉ sửa `taiga/<slug>/backlog.yaml` trong repo. Không có gì được
 
 ### Form story
 
-Form story có hai cột: bên trái là các ô, bên phải là **Xem trước**.
+Bên phải form story, **Xem trước** là mô tả story đúng như `apply` ghi lên Taiga.
 
 - **Thuộc epic**: đổi epic là chuyển story (kèm task) sang epic đó. Tiêu đề, key (gợi ý `<EPIC>-<việc>`).
 - **User story**: ba ô *As a*, *I want to*, *so that*, đều bắt buộc.
@@ -215,11 +220,11 @@ báo story được cập nhật `description`. Huỷ form thì story giữ nguy
 
 ### Form issue
 
-Form issue có hai cột: bên trái là các ô, bên phải là **Xem trước** (mô tả Markdown, cùng renderer và DOMPurify như
-màn hình review). Các field theo [conventions §6.4](taiga/conventions.md#64-issue):
+Bên phải form issue là **Xem trước** của mô tả Markdown. Các field theo [conventions §6.4](taiga/conventions.md#64-issue):
 
-- Tiêu đề (triệu chứng, không phải cách sửa) và key (gợi ý từ tiêu đề; issue dùng chung không gian key với epic,
-  story, task).
+- Tiêu đề (triệu chứng, không phải cách sửa) và key (gợi ý từ tiêu đề, theo conventions §5: `BUG-` cho Bug và loại
+  khác, `ASK-` cho Question, `ENH-` cho Enhancement; đổi loại thì gợi ý đổi theo, trừ khi bạn đã tự sửa key). Issue
+  dùng chung không gian key với epic, story, task.
 - **Mô tả**: issue mới được điền sẵn mẫu `## Steps to reproduce` / `## Expected` / `## Actual`. Với Question hay
   Enhancement, xoá các phần không hợp và viết một đoạn.
 - **Loại (type)**, **Mức độ (severity)**, **Ưu tiên (priority)**: form đọc các giá trị của project bằng `taigent
@@ -282,8 +287,11 @@ hợp lệ hay không) và hiện kết quả của lần chạy gần nhất ng
 khác.
 
 - **Xem thay đổi trên Taiga** chạy `taigent plan --project <slug> --json`: chỉ đọc Taiga, không ghi gì. Kết quả liệt
-  kê các mục sẽ được tạo mới, cập nhật (kèm trường thay đổi) hoặc gắn vào epic, cả issue, và các mục trên Taiga không
-  còn trong backlog, kèm loại của từng mục (taigent không bao giờ xoá chúng).
+  kê các mục sẽ được tạo mới, cập nhật (kèm trường thay đổi) hoặc gắn vào epic, cả issue, rồi hai danh sách không phải
+  thay đổi (taigent không bao giờ gỡ hay xoá chúng):
+  - **mục mồ côi**: mục trên Taiga không còn trong backlog, kèm loại của từng mục;
+  - **liên kết cũ (stale link)**: story trên Taiga còn gắn với một epic taigent khác epic của nó trong backlog (story
+    đã chuyển epic). `apply` gắn story vào epic mới nhưng không gỡ liên kết cũ; nếu không cần nữa, gỡ tay trên Taiga.
 - **Đẩy lên Taiga** bị chặn khi `taigent validate` báo lỗi hoặc còn mục **Cần sửa** có góp ý chưa xử lý. Nếu không
   bị chặn, ứng dụng chạy `plan` trước. Không có thay đổi thì dừng ở đó. Có thay đổi thì ứng dụng mở hộp thoại xác nhận
   liệt kê số mục tạo mới/cập nhật (trong đó bao nhiêu issue)/gắn epic, số mục chưa duyệt và số mục đã đổi sau khi duyệt. **Bấm "Đẩy lên Taiga"
@@ -302,7 +310,9 @@ Mục **Taiga** › **Project** liệt kê:
 - các thư mục `taiga/<slug>/` của repo chưa có trên Taiga (*Chưa có trên Taiga*), ví dụ project vừa viết
   `project.yaml` mà chưa bootstrap.
 
-Chưa đăng nhập hoặc Taiga lỗi thì danh sách chỉ có các thư mục của repo, kèm lý do. Bấm **Làm mới** để đọc lại.
+Chưa đăng nhập hoặc Taiga lỗi thì danh sách chỉ có các thư mục của repo, kèm lý do bằng tiếng Việt và cách sửa (cùng
+cách báo lỗi với [Ticket của tôi](#ticket-của-tôi): chưa đăng nhập, đăng nhập hết hạn hoặc bị từ chối, còn lại là
+mạng hay URL API, kèm thông báo của CLI). Bấm **Làm mới** để đọc lại.
 
 Bấm **Mở** (hoặc **Tạo project.yaml** với project chưa có manifest) để mở chi tiết project:
 
@@ -376,6 +386,9 @@ vừa đọc (chưa đăng nhập thì ô trống, kèm lý do). Chọn project 
 
 Các con số có cùng nghĩa với báo cáo của skill `taiga-status-report`. Story xong là story Taiga đã đóng; task xong là
 task có status đã đóng.
+
+Không đọc được báo cáo thì lỗi hiện bằng tiếng Việt kèm cách sửa, như ở Ticket của tôi (chưa đăng nhập, đăng nhập hết
+hạn hoặc bị từ chối, mạng hay URL API), rồi bấm lại **Xem báo cáo**; chi tiết của CLI để bên dưới.
 
 ## Git
 
@@ -496,9 +509,10 @@ electron-builder đặt chúng vào
 
 Terminal dùng `node-pty` (dependency của `desktop/`, ghim `1.1.0`). Bản này là module N-API kèm sẵn bản prebuilt cho
 Windows x64/arm64 và macOS (`prebuilds/`), nên cùng một file `pty.node` chạy được với mọi bản Electron mà không phải
-rebuild, và máy build hay máy người dùng đều không cần Visual Studio/Python. Vì vậy `npmRebuild` tắt trong cấu hình
-electron-builder: rebuild bằng node-gyp sẽ tạo `build/Release/pty.node`, được ưu tiên hơn bản prebuilt và đòi build
-tool. `node-pty` được giải nén khỏi `app.asar` (`asarUnpack`) vì Windows cần chạy file thật (`conpty.node`, worker
+rebuild, và máy build hay máy người dùng đều không cần Visual Studio/Python. Vì vậy `npmRebuild: false` trong cấu hình
+electron-builder là cố ý: node-pty (`node-addon-api`, `napi.h`) không gắn với ABI của Node hay Electron, còn rebuild
+bằng node-gyp sẽ tạo `build/Release/pty.node`, được nạp trước bản prebuilt và đòi build tool. `node-pty` được giải nén
+khỏi `app.asar` (`asarUnpack`) vì Windows cần chạy file thật (`conpty.node`, worker
 đọc output, `winpty-agent.exe`); main process nạp nó từ `resources/app.asar.unpacked/node_modules/node-pty`. Bộ cài
 Windows chỉ kèm bản prebuilt của Windows, bỏ mã nguồn C++ và file `.pdb`. Smoke chạy trên bản đóng gói kiểm tra
 chính việc nạp module này.
@@ -541,7 +555,7 @@ cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiể
 mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
 đổi sau khi duyệt*, thử phím `j`/`k`, rồi (chỉ với fixture) mở issue trong nhóm *Issues* của cây, kiểm tra phân loại
 và nhãn *Mới*, đặt *Đạt* và kiểm tra `review.yaml`. Sau đó là phần form: tạo epic (key gợi ý, custom attribute) và task bằng form,
-kiểm tra `backlog.yaml` (giữ comment, task nằm dưới đúng story) và trạng thái *Chưa duyệt*; kiểm tra key của epic đã
+kiểm tra bản xem trước Markdown của cả hai, `backlog.yaml` (giữ comment, task nằm dưới đúng story) và trạng thái *Chưa duyệt*; kiểm tra key của epic đã
 có trên Taiga bị khoá; mở form sửa task, giả lập agent sửa `backlog.yaml`, kiểm tra form báo file đổi, lưu bị từ chối
 (file vẫn là bản của agent), hộp thoại conflict hiện thay đổi, rồi *Áp lại*; kiểm tra cảnh báo mồ côi khi xoá story
 đã có trên Taiga (bấm *Huỷ*) và xoá task mới. Tiếp theo là form story: tạo story dưới epic `PUSH` có hai scenario (một
@@ -551,7 +565,8 @@ ngay dưới ô đó (file không đổi), rồi lưu thật; kiểm tra `backlo
 nhau) và với phần mô tả ở màn hình review (cùng HTML). Sau đó sửa story legacy `REVIEW-MARKDOWN` (vẫn là
 `acceptance_criteria`), rồi bấm *Chuyển sang user story format*, điền Given/When/Then, lưu và kiểm tra lại `validate`
 và `preview`. Cuối phần form là form issue: bấm *+ Issue* trong nhóm Issues, kiểm tra mô tả có sẵn mẫu Steps to
-reproduce / Expected / Actual và ba ô type, severity, priority nhập tự do (fixture không có trên Taiga), điền, xem
+reproduce / Expected / Actual và ba ô type, severity, priority nhập tự do (fixture không có trên Taiga), điền, kiểm tra
+key gợi ý có tiền tố theo loại (`BUG-`; đổi loại sang Question thì thành `ASK-`), xem
 bản xem trước Markdown, lưu, kiểm tra `backlog.yaml` đúng schema, `taigent validate` exit 0 và issue mới *Chưa
 duyệt*; rồi bấm *Sửa*, kiểm tra form mở đúng giá trị đã lưu và lưu lại. Rồi tới phần wiki: mục Wiki liệt kê 2 trang, form từ chối slug sai
 (rule `wiki-slug`), tạo trang `trang-smoke` (kiểm tra `pages/trang-smoke.md` và entry cuối `docs.yaml`, comment giữ
@@ -560,11 +575,14 @@ nguyên), sửa trang đó (slug bị khoá, chỉ file trang đổi). *Đẩy w
 `TAIGA_PASSWORD` của nó trong lúc đó): hộp thoại xác nhận liệt kê tạo mới, cập nhật, bỏ qua và được trả lời *Huỷ*
 (Taiga giả không nhận request ghi nào); sai mật khẩu thì hiện thông báo tiếng Việt kèm cách sửa; cuối cùng, chỉ với
 Taiga giả, hộp thoại được trả lời đồng ý trong khi trang bị sửa trên Taiga giữa chừng, và màn hình hiện thông báo
-conflict kèm cách sửa. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
+conflict kèm cách sửa. Tiếp đó, cũng với một Taiga giả có story `REVIEW-MARKDOWN` còn gắn với epic cũ `OLD-REVIEW`,
+script bấm *Xem thay đổi trên Taiga* trong mục Thay đổi và kiểm tra màn hình liệt kê liên kết cũ đó (stale link) và
+epic cũ là mục mồ côi, không có request ghi nào. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
 Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`), rồi tạo tạm một `backlog.yaml`
 trống cho project Taiga đầu tiên bạn là thành viên, mở form issue của project đó và kiểm tra ba dropdown type,
 severity, priority có đúng các giá trị trong `taigent projects --project <slug> --json` (bấm *Huỷ*, không lưu gì; thư
-mục tạm được xoá và fixture được mở lại). Sau đó script mở Taiga › Project,
+mục tạm được xoá và fixture được mở lại). Script gọi vài kênh IPC với slug xấu (`../outside`, `..`, chữ hoa,
+`project.yaml` có slug `../x`) và kiểm tra mọi kênh từ chối ngay tại ranh giới. Sau đó script mở Taiga › Project,
 kiểm tra fixture có trong danh sách, mở form `project.yaml`, sửa mô tả, lưu và kiểm tra file giữ comment và tag. Nếu
 đã đăng nhập, script bấm *Bootstrap lên Taiga…*: `bootstrap --dry-run` chạy rồi hộp thoại xác nhận hiện ra. Mọi hộp
 thoại xác nhận với Taiga thật (đẩy, bootstrap) luôn được trả lời *Huỷ*. Sau đó script kiểm tra mục Báo cáo. Nếu đã
@@ -590,8 +608,9 @@ Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form và phần
 kiểm tra shell thấy đúng số cột và dòng mới; chạy một process con (`ping`), đóng tab rồi kiểm tra shell và process con
 đã dừng. Ứng dụng được mở với `PATH` có một `claude` giả (in thư mục làm việc) đứng đầu và không có thư mục nào chứa
 `omp`: nút mở nhanh `claude` phải chạy ở thư mục repo, còn `omp` phải hiện lỗi của shell mà tab và ứng dụng vẫn chạy.
-Phần này để lại một shell chạy `ping`. Sau phần setup repo, script thoát ứng dụng và kiểm tra mọi process con của ứng
-dụng đã dừng.
+Phần này để lại một shell chạy `ping`. Sau phần setup repo, script gọi lại bước kiểm tra công cụ để `claude --version`
+giả (không bao giờ trả lời) còn chạy ngoài terminal, rồi thoát ứng dụng và kiểm tra mọi process con của ứng dụng, kể cả
+process đó, đã dừng.
 
 Phần nút chạy skill headless (`scripts/smoke-headless.mjs`) chạy ngay sau phần terminal. Ứng dụng được mở với
 `TAIGENT_RUN_SKILL_DRY_RUN=1` và một `codex` giả đứng đầu `PATH`. Script kiểm tra Settings mặc định là `claude`, bấm
@@ -599,9 +618,9 @@ Phần nút chạy skill headless (`scripts/smoke-headless.mjs`) chạy ngay sau
 chọn `codex` trong Settings (kiểm tra `settings.json` lưu `headlessAgent` mà vẫn giữ `lastRepo`) rồi bấm **Tạo user
 story…** với một câu mô tả. Mỗi lần, tab skill phải in đúng lệnh mà `run-skill --dry-run` của repo in ra cho cùng
 agent, skill và yêu cầu (gồm cả allowlist), yêu cầu phải có spec/dự án/mô tả và câu cấm apply/upload/bootstrap, và
-thanh Nhờ agent báo xong. Sau đó script bỏ `--dry-run`: `codex` giả chạy và chờ, các nút tắt trong lúc chạy, bấm
-**Huỷ** thì tab ghi *Đã huỷ lần chạy* và cả cây process đã dừng; rồi cho `codex` giả lỗi (mã thoát 3) và kiểm tra thanh
-Nhờ agent báo mã thoát và dòng lỗi cuối.
+thanh Nhờ agent báo xong. Sau đó script bỏ `--dry-run`: `codex` giả chạy với `TAIGENT_READ_ONLY=1` (nó in giá trị biến
+này ra tab) và chờ, các nút tắt trong lúc chạy, bấm **Huỷ** thì tab ghi *Đã huỷ lần chạy* và cả cây process đã dừng;
+rồi cho `codex` giả lỗi (mã thoát 3) và kiểm tra thanh Nhờ agent báo mã thoát và dòng lỗi cuối.
 
 Phần setup repo (`scripts/smoke-wizard.mjs`) chạy cuối, sau mục Git, trên một thư mục tạm. Nó đặt vào thư mục đầu tiên
 của `PATH` của ứng dụng (thay `codex` giả của phần headless): một `codex` giả dạng file `.cmd` mà `npm install -g`
@@ -615,8 +634,9 @@ file `.cmd` (không qua shell), `claude` *không trả lời* (timeout), `omp` *
 không bấm), trạng thái đăng nhập Taiga đúng với `whoami` và lời nhắc duyệt MCP server `taiga`. Sau đó sửa một skill
 Taigent trong repo cho cũ đi, mở lại repo và kiểm tra thanh trên cùng gợi ý chạy lại init, bấm gợi ý rồi chạy lại init
 (file *Cập nhật*, repo hết cũ); clone một đường dẫn không có repo và kiểm tra thông báo tiếng Việt, không còn thư mục
-dở; clone một repo bare tạm (không có Taigent) và kiểm tra repo được mở, được đề nghị cài Taigent, rồi cài; cuối cùng
-mở lại repo đã setup và kiểm tra ứng dụng không yêu cầu setup lại.
+dở; clone ba URL có `user:token@` (một URL bị từ chối có scheme, một không có scheme, một URL git không kết nối được)
+và kiểm tra token không có trong thông báo nào; clone một repo bare tạm (không có Taigent) và kiểm tra repo được mở,
+được đề nghị cài Taigent, rồi cài; cuối cùng mở lại repo đã setup và kiểm tra ứng dụng không yêu cầu setup lại.
 
 ## Bảo mật
 
@@ -629,19 +649,29 @@ mở lại repo đã setup và kiểm tra ứng dụng không yêu cầu setup l
 - Markdown trong mô tả do agent viết được làm sạch bằng DOMPurify trước khi hiển thị.
 - Renderer chỉ dùng được API có kiểu trong `desktop/src/shared/api.ts`, qua preload. Nó không đọc file và không gọi
   mạng.
+- Mọi kênh IPC, gọi (`invoke`) lẫn gửi (`send`), đi qua một wrapper duy nhất (`desktop/src/main/ipc.ts`). Main process
+  chỉ nhận yêu cầu từ trang của ứng dụng (`app://taigent/`) trong cửa sổ của nó: yêu cầu gọi từ nơi khác nhận Failure,
+  yêu cầu gửi bị bỏ. Lỗi bất ngờ trong handler cũng thành Failure. Slug dự án được kiểm tra ngay tại ranh giới IPC theo
+  đúng một mẫu (`PROJECT_SLUG_PATTERN` trong `src/manifest/conventions.ts`), trước khi thành thư mục hay tham số
+  `--project`, nên một slug như `../x` không ra được khỏi thư mục manifest.
 - **Terminal không phải ranh giới bảo mật.** Shell và agent trong terminal chạy với đúng quyền của bạn, như một
   terminal bình thường: chúng đọc, sửa file và gọi mạng được, và `npx taigent apply --yes` gõ trong terminal sẽ ghi
   lên Taiga. Ứng dụng chỉ chặn việc ghi ở các nút của chính nó (CLI + hộp thoại xác nhận).
 - Renderer chỉ mở được tab **shell** hoặc **agent** (`claude`, `codex`, `omp`), luôn ở thư mục repo đang mở. Nó không
   chọn được lệnh, tham số, thư mục hay biến môi trường. Tab chạy lệnh cho trước (kind `skill`) chỉ main process mở.
-  Main process chỉ nhận các kênh terminal từ chính trang của ứng dụng (`app://taigent`), và kiểm tra kiểu từng tham
-  số. Nút chạy skill headless chỉ chọn được một trong ba hành động; main process dựng lệnh `run-skill`, kiểm tra dự án
-  có trong repo và từ chối `"`, xuống dòng trong văn bản đưa vào yêu cầu.
+  Các kênh terminal cũng đi qua wrapper trên, và main process kiểm tra kiểu từng tham số. Nút chạy skill headless chỉ
+  chọn được một trong ba hành động; main process dựng lệnh `run-skill`, kiểm tra dự án có trong repo và từ chối `"`,
+  xuống dòng trong văn bản đưa vào yêu cầu.
+- Lần chạy skill headless có `TAIGENT_READ_ONLY=1`. Shell của agent và mọi `npx taigent` nó chạy đều kế thừa biến này,
+  nên CLI từ chối mọi lệnh ghi lên Taiga (`apply --yes`, `upload --yes`, `bootstrap --yes`, `status`, `comment`; mã
+  thoát 2). Việc ghi lên Taiga chỉ đi qua các nút của ứng dụng, sau hộp thoại xác nhận.
 - Nội dung do agent viết (Markdown, output trong terminal) không điều khiển được shell: Markdown đã được làm sạch và
   không có script; output của terminal chỉ được xterm.js vẽ ra, không bao giờ được chạy hay chèn vào DOM dạng HTML.
-- Môi trường của tab kế thừa từ ứng dụng, không thêm token hay mật khẩu. Mật khẩu Taiga chỉ nhập trong hộp thoại
-  đăng nhập, không đi qua terminal hay log.
-- Đóng tab hoặc thoát ứng dụng kill cả cây process, nên không còn agent nào chạy ngầm sau khi bạn đóng.
+- Môi trường của tab kế thừa từ ứng dụng, không thêm token hay mật khẩu (tab chạy skill headless chỉ thêm
+  `TAIGENT_READ_ONLY=1`). Mật khẩu Taiga chỉ nhập trong hộp thoại đăng nhập, không đi qua terminal hay log.
+- Đóng tab hoặc thoát ứng dụng kill cả cây process, nên không còn agent nào chạy ngầm sau khi bạn đóng. Các process
+  con khác (CLI taigent, `git`, `--version` của công cụ) được ghi vào một danh sách lúc khởi chạy
+  (`desktop/src/main/processes.ts`); thoát ứng dụng kill cây process của mọi process còn chạy trong danh sách đó.
 - Mục Git chạy `git` bằng `execFile`, không qua shell, với `GIT_TERMINAL_PROMPT=0` (không bao giờ chờ nhập mật khẩu).
   Danh sách file cần add và commit đi qua stdin (`--pathspec-from-file`) và được hiểu đúng nguyên văn
   (`--literal-pathspecs`).
@@ -649,5 +679,5 @@ mở lại repo đã setup và kiểm tra ứng dụng không yêu cầu setup l
   / `codex` / `omp`"; main process kiểm tra tên công cụ nằm trong danh sách cố định và tự chọn lệnh, rồi mở tab `skill`
   ở repo. Lệnh cài chỉ chạy khi bạn bấm. Phát hiện công cụ chạy `--version` bằng `execFile`, không qua shell, với timeout
   10 giây. `git init` và `git clone` cũng chạy bằng `execFile` với `GIT_TERMINAL_PROMPT=0` và timeout; URL clone phải
-  là URL git hoặc đường dẫn tuyệt đối, không bao giờ bắt đầu bằng `-`, và được đặt sau `--`. Lỗi clone hiện lên đã che
-  thông tin đăng nhập nằm trong URL.
+  là URL git hoặc đường dẫn tuyệt đối, không bao giờ bắt đầu bằng `-`, và được đặt sau `--`. Không thông báo nào (URL
+  bị từ chối, lỗi của git) chứa thông tin đăng nhập nằm trong URL: `user:token@` hiện thành `***@`.
