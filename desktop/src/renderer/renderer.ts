@@ -1,6 +1,6 @@
 // Taigent Desktop UI: the navigation shell (navigation.ts) with the Backlog section (tree, item detail and its
-// review) and the Thay đổi section (plan and push to Taiga). Everything it knows comes through `window.taigent`
-// (preload); it never reaches the file system or the network itself.
+// review), the Thay đổi section (plan and push to Taiga) and the Git section (git.ts). Everything it knows comes
+// through `window.taigent` (preload); it never reaches the file system or the network itself.
 
 import type {
   AppState,
@@ -9,6 +9,7 @@ import type {
   LoginStatus,
   Plan,
   PreviewEpic,
+  PreviewIssue,
   PreviewItem,
   PreviewStory,
   ProjectView,
@@ -20,7 +21,9 @@ import type {
 import { byId, h } from './dom.ts';
 import { itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
-import { currentSection, onSectionChange, wireNavigation } from './navigation.ts';
+import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
+import { mountTaigaProjects } from './taiga-projects.ts';
+import { gitRepoChanged, wireGit } from './git.ts';
 
 declare global {
   interface Window {
@@ -30,10 +33,11 @@ declare global {
 
 type Filter = 'all' | 'unreviewed' | 'changes' | 'stale';
 
+/** A row of the Backlog tree: an epic-tree item with its parents, or an issue (no parent). */
 interface TreeNode {
   item: PreviewItem;
   depth: number;
-  epic: PreviewEpic;
+  epic?: PreviewEpic;
   story?: PreviewStory;
 }
 
@@ -80,7 +84,7 @@ function matches(item: PreviewItem, filter: Filter): boolean {
   return true;
 }
 
-/** The tree in display order; with a filter, an item shows when it or one of its children matches. */
+/** The tree in display order, epics then issues; with a filter, an item shows when it or one of its children matches. */
 function visibleNodes(view: ProjectView, filter: Filter): TreeNode[] {
   const nodes: TreeNode[] = [];
   for (const epic of view.preview.epics) {
@@ -91,6 +95,7 @@ function visibleNodes(view: ProjectView, filter: Filter): TreeNode[] {
     }
     if (matches(epic, filter) || storyNodes.length > 0) nodes.push({ item: epic, depth: 0, epic }, ...storyNodes);
   }
+  for (const issue of view.preview.issues) if (matches(issue, filter)) nodes.push({ item: issue, depth: 0 });
   return nodes;
 }
 
@@ -175,6 +180,7 @@ function renderSummary(): void {
     cell('Epic', s.epics),
     cell('Story', s.stories),
     cell('Task', s.tasks),
+    cell('Issue', s.issues),
     h('div', { class: 'sep' }),
     cell('Mới', s.new, 'new'),
     cell('Đã đẩy', s.applied, 'applied'),
@@ -218,8 +224,10 @@ function renderTree(): void {
     tree.replaceChildren(h('div', { class: 'empty small' }, 'Không có mục nào khớp bộ lọc.'));
     return;
   }
+  const firstIssue = nodes.findIndex((node) => node.item.type === 'issue');
   tree.replaceChildren(
-    ...nodes.map((node) =>
+    ...nodes.flatMap((node, index) => [
+      ...(index === firstIssue ? [h('div', { class: 'tree-group' }, `Issues (${view.preview.issues.length})`)] : []),
       h(
         'button',
         {
@@ -232,7 +240,7 @@ function renderTree(): void {
         h('span', { class: 'subject' }, node.item.subject),
         badges(node.item, true),
       ),
-    ),
+    ]),
   );
   tree.querySelector('.node.selected')?.scrollIntoView({ block: 'nearest' });
 }
@@ -338,10 +346,9 @@ function renderDetail(): void {
   const item = node.item;
   const story = item.type === 'story' ? node.story : undefined;
   const epic = item.type === 'epic' ? node.epic : undefined;
-  const trail: PreviewItem[] = [];
-  if (node.depth > 0) trail.push(node.epic);
-  if (node.depth > 1 && node.story) trail.push(node.story);
+  const trail = [node.epic, node.story].filter((parent): parent is PreviewEpic | PreviewStory => parent !== undefined && parent !== item);
   const attributes = Object.entries(item.customAttributes);
+  const values = item.type === 'issue' ? (item as PreviewIssue).values : undefined;
 
   const blocks: (HTMLElement | false | undefined | '')[] = [
     h(
@@ -359,6 +366,17 @@ function renderDetail(): void {
       itemActions(item),
     ),
     section('Mô tả (đúng nội dung ghi lên Taiga)', markdownBlock(item.description)),
+    values &&
+      section(
+        'Phân loại',
+        h(
+          'table',
+          { class: 'attributes issue-values' },
+          h('tr', {}, h('th', {}, 'Loại'), h('td', {}, values.type)),
+          h('tr', {}, h('th', {}, 'Mức độ'), h('td', {}, values.severity)),
+          h('tr', {}, h('th', {}, 'Ưu tiên'), h('td', {}, values.priority)),
+        ),
+      ),
     story && section(`Task (${story.tasks.length})`, story.tasks.length ? h('ul', { class: 'children' }, ...story.tasks.map(itemLink)) : h('p', { class: 'muted' }, 'Không có task.')),
     epic && section(`Story (${epic.stories.length})`, h('ul', { class: 'children' }, ...epic.stories.map(itemLink))),
     (item.tags.length > 0 || attributes.length > 0) &&
@@ -410,7 +428,7 @@ function renderChanges(): void {
       'p',
       {},
       h('strong', {}, view.slug),
-      ` · ${s.epics} epic, ${s.stories} story, ${s.tasks} task · Mới ${s.new} · Đã đẩy ${s.applied}`,
+      ` · ${s.epics} epic, ${s.stories} story, ${s.tasks} task, ${s.issues} issue · Mới ${s.new} · Đã đẩy ${s.applied}`,
     ),
     h(
       'p',
@@ -463,7 +481,7 @@ function applyView(result: Result<ProjectView>): void {
     return;
   }
   state.view = result.value;
-  if (!findNode(result.value, state.selected)) state.selected = result.value.preview.epics[0]?.key;
+  if (!findNode(result.value, state.selected)) state.selected = visibleNodes(result.value, 'all')[0]?.item.key;
   render();
 }
 
@@ -559,7 +577,11 @@ function planTable(plan: Plan): HTMLElement {
         'div',
         { class: 'warn-box' },
         h('strong', {}, `${plan.orphans.length} mục trên Taiga không còn trong backlog (taigent không xoá):`),
-        h('ul', {}, ...plan.orphans.map((orphan) => h('li', {}, `#${orphan.ref} ${orphan.key} – ${orphan.subject}`))),
+        h(
+          'ul',
+          {},
+          ...plan.orphans.map((orphan) => h('li', {}, `${TYPE_LABEL[orphan.type as PreviewItem['type']] ?? orphan.type} #${orphan.ref} ${orphan.key} – ${orphan.subject}`)),
+        ),
       ),
   );
 }
@@ -682,6 +704,7 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
   state.selected = undefined;
   clearChangesResult();
   render();
+  gitRepoChanged();
   const only = result.value.projects.length === 1 ? result.value.projects[0] : undefined;
   if (only) void openProject(only.slug);
 }
@@ -761,6 +784,20 @@ function wire(): void {
     toast,
     failureBlock,
   });
+  mountTaigaProjects({
+    api,
+    repoRoot: () => state.repo?.root,
+    async openBacklog(slug) {
+      // A project.yaml or backlog.yaml written since the repository was read: list it in the picker first.
+      const repo = await api.refreshRepo();
+      if (repo.ok) state.repo = repo.value;
+      await openProject(slug);
+      showSection('backlog');
+    },
+    toast,
+    failureBlock,
+  });
+  wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
 }
 
 async function start(): Promise<void> {

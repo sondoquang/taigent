@@ -261,7 +261,7 @@ so a deleted or stale `state.json` never causes duplicates. `state.json` is a ca
 
 ## Commands
 
-Common options: `--project <slug>` (required except for `init`, `validate`, `tickets`, `notify`, `skills`, `login`, `logout`, `whoami` and `mcp`), `--json` (machine-readable stdout),
+Common options: `--project <slug>` (required except for `init`, `validate`, `tickets`, `projects`, `notify`, `skills`, `login`, `logout`, `whoami` and `mcp`), `--json` (machine-readable stdout),
 `--yes`, `--dry-run`, `-h/--help`. `--dry-run` lists the operations a writing command (`bootstrap`, `apply`, `upload`)
 would run and writes nothing, not even `state.json`; it exits 3 when there are changes, 0 otherwise (`apply --dry-run`
 is the same as `plan`; `init --dry-run` lists the files it would write). Without `--yes` or `--dry-run`, a writing
@@ -285,6 +285,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   changes.
 - `taigent tickets`, `taigent status`, `taigent comment`, `taigent notify`: see [Tickets](#tickets),
   [Status and comment](#status-and-comment) and [Notify](#notify).
+- `taigent projects [--project <slug>] [--json]`: the Taiga projects you are a member of, or the issue values of one
+  project; read-only. See [Projects](#projects).
 - `taigent login [--application <id>]`, `taigent logout`, `taigent whoami [--json]`, `taigent mcp`: see
   [Login and the MCP server](#login-and-the-mcp-server).
 
@@ -346,14 +348,17 @@ never writes to Taiga, and `plan`/`apply` ignore `review.yaml`: apply still need
 
 `taigent preview --project <slug> [--out <file>] [--json]` reads `backlog.yaml` (required; the whole project
 directory is validated like `plan`), `state.json` and `review.yaml`, offline (no `TAIGA_*` variable, no login). The
-text form is one Markdown page: a summary table (epics, stories, tasks, new / on Taiga, approved, changes requested,
-not reviewed, stale, open comments), then each epic → story → task with its tags, custom attributes, Taiga ref
-(from `state.json`), review status and comments, and its description exactly as apply writes it (a story's
-includes its acceptance criteria and spec link). `--json` prints the `Preview` object of `src/review.ts`
-(`{ project: { slug, name? }, summary, epics: [{ …item, stories: [{ …item, format, spec, tasks }] }] }`, `format`
-being `user-story` or `legacy`,
+text form is one Markdown page: a summary table (epics, stories, tasks, issues, new / on Taiga, approved, changes
+requested, not reviewed, stale, open comments), then each epic → story → task, then an **Issues** section with each
+issue's type, severity and priority; every item with its tags, custom attributes, Taiga ref (from `state.json`),
+review status and comments, and its description exactly as apply writes it (a story's includes its acceptance
+criteria and spec link). `--json` prints the `Preview` object of `src/review.ts`
+(`{ project: { slug, name? }, summary, epics: [{ …item, stories: [{ …item, format, spec, tasks }] }], issues: [{ …item,
+values: { type, severity, priority } }] }`, `format` being `user-story` or `legacy`, `values` the names as in the
+manifest,
 each item `{ type, key, subject, description, tags, customAttributes, parent?, applied?: { id, ref }, digest,
-review: { verdict?, stale, by?, at?, comments, openComments } }`). `--out <file>` writes the page (or the JSON) to
+review: { verdict?, stale, by?, at?, comments, openComments } }`; `summary` counts `epics`, `stories`, `tasks` and
+`issues`, and the review states over all of them). `--out <file>` writes the page (or the JSON) to
 that file instead and prints `Preview written to <file>` (`{ "out": "<file>" }` with `--json`). Exit 0; 4 when a
 manifest or `review.yaml` is invalid.
 
@@ -376,13 +381,15 @@ items:
 ```
 
 An item's **digest** is the SHA-256 of what apply writes for it: subject, description as written (a story's with
-its acceptance criteria and spec), tags (lowercased, order-insensitive), custom attributes and parent key. A verdict
+its acceptance criteria and spec), tags (lowercased, order-insensitive), custom attributes, parent key and, for an
+issue, its type, severity and priority names. A verdict
 whose digest differs from the item's current one is **stale**: the item changed after it was reviewed, so it counts
 as stale, not as approved. Editing `review.yaml` never changes a digest. Files are written with sorted keys
 (`saveReview`); items with neither a verdict nor a comment are dropped.
 
 `validate` reports, besides the generic `type`, `required` and `known-field` rules: `key-format` and `key-reference`
-for item keys (a key the backlog does not declare, e.g. after the item was removed or renamed: move or delete its
+for item keys (epics, stories, tasks and issues: `reviewKeys(backlog)`; a key the backlog does not declare, e.g.
+after the item was removed or renamed: move or delete its
 entry), `review-verdict` (a verdict other than `approved`/`changes`) and `review-comment-unique` (a duplicate
 comment id within an item). `preview` itself tolerates unknown keys and lists them in `summary.unknownReviewKeys`.
 
@@ -515,6 +522,22 @@ Wiki `update`/`skip` operations add `id` (and `version` for `update`); `objectId
 same run; `previous: [{ id, size, sha1 }]` lists the same-name attachments that stay on Taiga. `upload --yes --json`
 prints an `UploadReport`: `{ project, operations: [<operation> + { id, result: "created" | "updated" | "unchanged" }],
 summary: { created, updated, unchanged } }`, where `id` is the wiki page or the (new) attachment.
+
+## Projects
+
+`taigent projects [--json]` lists the Taiga projects the user the CLI logs in as is a member of (`GET /users/me`, then
+`GET /projects?member=<id>`: public projects they only see are left out), in Taiga's order, with whether they are its
+admin (bootstrap needs it) and whether the repository holds its manifest directory, `<manifests root>/<slug>/`
+(`TAIGENT_MANIFESTS_DIR`, default `./taiga`; an empty directory counts). `--json` prints
+`{ "projects": [{ "id", "slug", "name", "admin", "manifest" }] }`.
+
+`taigent projects --project <slug> [--json]` reads one project the user can see (exit 5 when there is none) and the
+names of its issue types, severities and priorities, in Taiga's order (`GET /issue-types`, `/severities`,
+`/priorities`): the values an issue of `backlog.yaml` may name. `--json` prints
+`{ "project": { "id", "slug", "name", "admin", "manifest" }, "issueTypes": ["Bug", …], "severities": […], "priorities": […] }`.
+
+Read-only: it never writes to Taiga or to the repository. Errors are those of every command that reads Taiga: exit 2
+when not logged in, exit 5 when Taiga refuses the login (kind `taiga`) or cannot be reached.
 
 ## Tickets
 
@@ -828,11 +851,11 @@ skill checks all of it and names each fix.
 | Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
 | MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links, issue values (when the backlog has issues) and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)` |
 | Story template | `src/story-template.ts` | pure `storyDescription(story)`: the description apply writes for a story, shared by the planner, `preview` and Taigent Desktop's story form (bundled into its renderer, so the module imports nothing from Node) |
-| Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, pure `setVerdict`/`addComment`, `itemDigest`, `buildPreview(dir, slug)` → `Preview`, `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |
+| Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, `reviewKeys(backlog)` (the keys `review.yaml` may name), pure `setVerdict`/`addComment`, `itemDigest`, `buildPreview(dir, slug)` → `Preview` (epic tree + `issues`), `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |
 | Manifest edit | `src/edit.ts` | the library Taigent Desktop's forms write `backlog.yaml` with: `readManifestFile(dir, 'backlog')` → `{ file, text, digest }` (SHA-256 of the file); pure `readItem(text, type, key)` → the epic/story/task as its form edits it (`BacklogItem`, every field present, a story in its own format: `useCase` + `scenarios` or `acceptanceCriteria`; saving it back unchanged changes nothing); `saveItem(dir, { baseDigest, original?, item })` adds or edits an epic/story/task (`item` = `{ type, key, parent?, fields }`; a new key renames, a new parent moves the item with its children; a story's `useCase`/`scenarios` replace `acceptance_criteria` and the reverse); `removeItem(dir, { baseDigest, type, key })` removes any item (an issue too) with its children and returns `removed` and `orphaned` (those in state.json). Every write returns `EditResult`: `saved` (new `digest`), `conflict` (the file no longer has `baseDigest`; `current` is the file now, nothing written) or `invalid` (`issues` with `path` + `rule`: the `checkBacklog` issues under the edited item only, `key-unique` (issues included), `key-reference` for a missing item or parent, `key-locked` for a new key on an item in state.json). Edits go through yaml's Document API, so comments, order, quoting, flow style and line ends of untouched nodes stay; the file is written atomically; review.yaml is never touched (an edited item's verdict turns stale through its digest). Where each item type sits and its field order is the `KINDS` table; the issue form adds its input to `BacklogItem`, docs.yaml entries add a file to `EDITABLE_FILES` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
@@ -840,6 +863,8 @@ skill checks all of it and names each fix.
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `ask-taigent`), `.agents/skills/` → `.claude/skills/`; `compareSkillDirs(source, target)` (file by file, `same` included) and `copySkills(source, target, comparison)` for any two directories |
 | Init | `src/init.ts` | `initRepository(root, { dryRun })` → `InitReport` (`files: [{ path, status }]`), `InitError` (exit 2): the offline `init` command, copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed) |
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
+| Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport`, `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
+| Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |
 
@@ -871,7 +896,8 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
 - Seeding: `addEpic`, `addUserStory`, `addTask` (`{ project, subject, description?, tags? }`, plus
   `user_story?` for tasks), `addIssue` (the same plus `type?`, `severity?`, `priority?`, `status?` ids; the project's
   defaults otherwise), `addEpicRelatedUserStory(epic, story)`; bootstrap fixtures `addUser`, `addProject({ slug,
-  name?, members?, admins?, is_private?, modules?, tagsColors? })`, `addCustomAttribute`, `addMembership`,
+  name?, members?, admins?, is_private?, modules?, tagsColors? })` (`GET /projects?member=<user id>` lists the projects
+  of that member the caller can see, like taiga-back's `member` filter, with `i_am_admin`), `addCustomAttribute`, `addMembership`,
   `addWikiPage`; upload fixtures `addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki",
   object_id, name, content })`. For `tickets`, set the returned story's `assigned_users`, `is_closed`, `finish_date`,
   `due_date` (YYYY-MM-DD), `total_points` (number or null) and `status_name` (its status name when open or closed, null

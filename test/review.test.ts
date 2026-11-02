@@ -35,6 +35,16 @@ const BACKLOG = `epics:
             subject: Login endpoint
 `;
 
+const ISSUES = `issues:
+  - key: BUG-LONG-PASSWORD
+    subject: Login fails with a 100-character password
+    description: The form spins forever.
+    type: Bug
+    severity: Critical
+    priority: High
+    tags: [area:auth]
+`;
+
 const AT = '2026-11-02T09:30:00.000Z';
 
 async function tempDir(t: TestContext): Promise<string> {
@@ -84,7 +94,7 @@ test('review.yaml never changes digests; an approval given on another digest is 
   assert.deepEqual(story(reviewed).review, { verdict: 'approved', stale: false, by: 'Lan', at: AT, comments: [], openComments: 0 });
   assert.deepEqual(
     { ...reviewed.summary },
-    { epics: 1, stories: 1, tasks: 1, new: 3, applied: 0, approved: 1, changes: 1, unreviewed: 1, stale: 0, openComments: 1, unknownReviewKeys: [] },
+    { epics: 1, stories: 1, tasks: 1, issues: 0, new: 3, applied: 0, approved: 1, changes: 1, unreviewed: 1, stale: 0, openComments: 1, unknownReviewKeys: [] },
   );
 
   const changed = await preview(dir, { 'backlog.yaml': BACKLOG.replace('Wrong password shows an error', 'Wrong password is rejected') });
@@ -137,6 +147,66 @@ test('buildPreview marks the items recorded in state.json as applied', async (t)
   assert.equal(story(p).applied, undefined);
   assert.equal(p.summary.applied, 1);
   assert.equal(p.summary.new, 2);
+});
+
+test('issues are reviewed like other items: verdict, comments, counted, and stale once edited', async (t) => {
+  const dir = await tempDir(t);
+  const before = await preview(dir, { 'backlog.yaml': BACKLOG + ISSUES });
+  assert.equal(before.issues.length, 1);
+  const bug = before.issues[0]!;
+  assert.deepEqual(
+    { type: bug.type, key: bug.key, values: bug.values, parent: bug.parent },
+    { type: 'issue', key: 'BUG-LONG-PASSWORD', values: { type: 'Bug', severity: 'Critical', priority: 'High' }, parent: undefined },
+  );
+  let review = setVerdict({ items: {} }, bug.key, 'approved', bug.digest, 'Lan', AT);
+  review = addComment(review, bug.key, 'Which browsers?', 'Lan', AT);
+  await saveReview(join(dir, REVIEW_FILE), review);
+
+  const reviewed = await buildPreview(dir, 'demo');
+  assert.equal(reviewed.issues[0]!.review.verdict, 'approved');
+  assert.equal(reviewed.issues[0]!.review.stale, false);
+  assert.equal(reviewed.issues[0]!.review.openComments, 1);
+  assert.deepEqual(
+    { ...reviewed.summary },
+    { epics: 1, stories: 1, tasks: 1, issues: 1, new: 4, applied: 0, approved: 1, changes: 0, unreviewed: 3, stale: 0, openComments: 1, unknownReviewKeys: [] },
+  );
+
+  // Apply writes the type, severity and priority too: changing one makes the approval stale.
+  for (const variant of [ISSUES.replace('Critical', 'Minor'), ISSUES.replace('type: Bug', 'type: Question'), ISSUES.replace('High', 'Low'), ISSUES.replace('forever', 'for ever')]) {
+    const changed = await preview(dir, { 'backlog.yaml': BACKLOG + variant });
+    assert.equal(changed.issues[0]!.review.stale, true, variant);
+    assert.equal(changed.summary.stale, 1);
+    assert.equal(changed.summary.approved, 0);
+  }
+});
+
+test('validate accepts review.yaml entries for issues', async (t) => {
+  const h = await startHarness(t);
+  await h.writeManifest('demo', 'backlog.yaml', BACKLOG + ISSUES);
+  await h.writeManifest('demo', REVIEW_FILE, 'items:\n  BUG-LONG-PASSWORD:\n    verdict: approved\n    digest: abc\n');
+  const ok = await h.taigent(['validate', '--project', 'demo'], { env: OFFLINE });
+  assert.equal(ok.code, 0, ok.stderr);
+});
+
+test('preview shows issues with their type, severity and priority', async (t) => {
+  const h = await startHarness(t);
+  await h.writeManifest('demo', 'backlog.yaml', BACKLOG + ISSUES);
+  await h.writeManifest('demo', REVIEW_FILE, `items:\n  BUG-LONG-PASSWORD:\n    comments:\n      - { id: c1, by: Lan, at: "${AT}", text: Which browsers? }\n`);
+
+  const result = await h.taigent(['preview', '--project', 'demo', '--json'], { env: OFFLINE });
+  assert.equal(result.code, 0, result.stderr);
+  const p = result.json<Preview>();
+  assert.equal(p.summary.issues, 1);
+  assert.deepEqual(p.issues.map((i) => [i.key, i.values, i.review.openComments]), [['BUG-LONG-PASSWORD', { type: 'Bug', severity: 'Critical', priority: 'High' }, 1]]);
+
+  const page = await h.taigent(['preview', '--project', 'demo'], { env: OFFLINE });
+  assert.equal(page.code, 0, page.stderr);
+  assert.match(page.stdout, /\| Issues \| 1 \|/);
+  assert.match(page.stdout, /^## Issues$/m);
+  assert.match(page.stdout, /^### Issue BUG-LONG-PASSWORD: Login fails with a 100-character password$/m);
+  assert.match(page.stdout, /type: Bug · severity: Critical · priority: High/);
+  assert.match(page.stdout, /Which browsers\?/);
+  assert.deepEqual(h.fake.requests, []);
 });
 
 test('validate checks review.yaml: unknown keys and malformed reviews are issues', async (t) => {

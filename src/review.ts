@@ -8,8 +8,8 @@ import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { stringify } from 'yaml';
 import { isRecord } from './guards.ts';
-import type { ItemType } from './items.ts';
-import type { AttributeValue, StorySpec } from './manifest/backlog.ts';
+import type { IssueValueField, ItemType } from './items.ts';
+import { type AttributeValue, type Backlog, backlogKeys, type StorySpec } from './manifest/backlog.ts';
 import { checkKeyReference, KEY_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { loadManifests } from './manifest/manifests.ts';
@@ -62,6 +62,13 @@ function isDateTime(value: unknown): value is string {
 
 function isText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '';
+}
+
+/** Every key review.yaml may name: the epic tree's and the issues'. */
+export function reviewKeys(backlog: Backlog): Set<string> {
+  const keys = backlogKeys(backlog);
+  for (const issue of backlog.issues) keys.add(issue.key);
+  return keys;
 }
 
 /**
@@ -214,7 +221,7 @@ export interface PreviewItem {
   /** Tags as written in the manifest (apply also adds `src:<key>`). */
   tags: string[];
   customAttributes: Record<string, AttributeValue>;
-  /** Key of the epic (story) or story (task) the item belongs to; absent for epics. */
+  /** Key of the epic (story) or story (task) the item belongs to; absent for epics and issues. */
   parent?: string;
   /** Id/ref on Taiga, from state.json; absent while the item is new. */
   applied?: { id: number; ref: number };
@@ -244,10 +251,17 @@ export interface PreviewEpic extends PreviewItem {
   stories: PreviewStory[];
 }
 
+export interface PreviewIssue extends PreviewItem {
+  type: 'issue';
+  /** Names of the issue's type, severity and priority, as in the manifest (apply resolves them to ids). */
+  values: Record<IssueValueField, string>;
+}
+
 export interface PreviewSummary {
   epics: number;
   stories: number;
   tasks: number;
+  issues: number;
   /** Items not in state.json yet. */
   new: number;
   applied: number;
@@ -265,14 +279,18 @@ export interface Preview {
   project: { slug: string; name?: string };
   summary: PreviewSummary;
   epics: PreviewEpic[];
+  issues: PreviewIssue[];
 }
 
-/** What apply writes for an item, the input of `itemDigest`. */
-export type DigestFields = Pick<PreviewItem, 'subject' | 'description' | 'tags' | 'customAttributes' | 'parent'>;
+/** What apply writes for an item, the input of `itemDigest`; `values` only for issues. */
+export type DigestFields = Pick<PreviewItem, 'subject' | 'description' | 'tags' | 'customAttributes' | 'parent'> & {
+  values?: Record<IssueValueField, string>;
+};
 
 /**
  * SHA-256 (hex) of what apply writes for an item: subject, description as written, tags (lowercased like Taiga,
- * order-insensitive), custom attributes and parent key. Review and Taiga ids are not part of it.
+ * order-insensitive), custom attributes, parent key and, for an issue, its type, severity and priority names. Review
+ * and Taiga ids are not part of it.
  */
 export function itemDigest(item: DigestFields): string {
   const attributes: Record<string, AttributeValue> = {};
@@ -283,6 +301,8 @@ export function itemDigest(item: DigestFields): string {
     tags: [...new Set(item.tags.map((tag) => tag.toLowerCase()))].sort(),
     customAttributes: attributes,
     parent: item.parent ?? null,
+    // Only issues carry values, so the digests of epics, stories and tasks (and their verdicts) stay as they were.
+    ...(item.values && { values: { type: item.values.type, severity: item.values.severity, priority: item.values.priority } }),
   });
   return createHash('sha256').update(canonical).digest('hex');
 }
@@ -298,7 +318,7 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
   const review = await loadReview(join(dir, REVIEW_FILE));
 
   const summary: PreviewSummary = {
-    epics: 0, stories: 0, tasks: 0, new: 0, applied: 0, approved: 0, changes: 0, unreviewed: 0, stale: 0, openComments: 0, unknownReviewKeys: [],
+    epics: 0, stories: 0, tasks: 0, issues: 0, new: 0, applied: 0, approved: 0, changes: 0, unreviewed: 0, stale: 0, openComments: 0, unknownReviewKeys: [],
   };
   const keys = new Set<string>();
 
@@ -306,7 +326,7 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
     type: T,
     spec: { key: string; subject: string; tags: string[]; customAttributes: Record<string, AttributeValue> },
     description: string,
-    parent?: string,
+    { parent, values }: Pick<DigestFields, 'parent' | 'values'> = {},
   ): PreviewItem & { type: T } {
     keys.add(spec.key);
     const fields: DigestFields = {
@@ -315,6 +335,7 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
       tags: [...spec.tags],
       customAttributes: { ...spec.customAttributes },
       ...(parent !== undefined && { parent }),
+      ...(values !== undefined && { values }),
     };
     const digest = itemDigest(fields);
     const entry = state.items[spec.key];
@@ -353,19 +374,24 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
     const item = previewItem('epic', epic, epic.description);
     const stories = epic.stories.map((story): PreviewStory => {
       summary.stories++;
-      const storyItem = previewItem('story', story, storyDescription(story), epic.key);
+      const storyItem = previewItem('story', story, storyDescription(story), { parent: epic.key });
       const tasks = story.tasks.map((task) => {
         summary.tasks++;
-        return previewItem('task', task, task.description, story.key);
+        return previewItem('task', task, task.description, { parent: story.key });
       });
       return { ...storyItem, format: story.format, spec: story.spec, tasks };
     });
     return { ...item, stories };
   });
+  const issues = backlog.issues.map((issue): PreviewIssue => {
+    summary.issues++;
+    const values = { type: issue.type, severity: issue.severity, priority: issue.priority };
+    return { ...previewItem('issue', issue, issue.description, { values }), values };
+  });
   summary.unknownReviewKeys = Object.keys(review.items).filter((key) => !keys.has(key)).sort();
 
   const name = manifests.project?.name;
-  return { project: { slug, ...(name !== undefined && { name }) }, summary, epics };
+  return { project: { slug, ...(name !== undefined && { name }) }, summary, epics, issues };
 }
 
 // ---- Markdown -----------------------------------------------------------------------------------
@@ -400,9 +426,10 @@ function shortTime(at: string): string {
 
 const TYPE_LABEL: Record<ItemType, string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
 
-function renderItem(item: PreviewItem, level: number): string[] {
+function renderItem(item: PreviewItem | PreviewIssue, level: number): string[] {
   const lines = [`${'#'.repeat(level)} ${TYPE_LABEL[item.type]} ${item.key}: ${item.subject}`, ''];
   const facts = [item.applied ? `on Taiga #${item.applied.ref}` : 'new (not on Taiga yet)'];
+  if ('values' in item) facts.push(`type: ${item.values.type}`, `severity: ${item.values.severity}`, `priority: ${item.values.priority}`);
   if (item.tags.length > 0) facts.push(`tags: ${item.tags.map((tag) => `\`${tag}\``).join(', ')}`);
   const attributes = Object.entries(item.customAttributes);
   if (attributes.length > 0) facts.push(`custom attributes: ${attributes.map(([name, value]) => `${name} = ${String(value)}`).join(', ')}`);
@@ -432,7 +459,7 @@ function renderItem(item: PreviewItem, level: number): string[] {
   return lines;
 }
 
-/** The whole preview as one Markdown page: a summary table, then each epic → story → task with its review. */
+/** The whole preview as one Markdown page: a summary table, each epic → story → task, then the issues, with reviews. */
 export function renderPreviewMarkdown(preview: Preview): string {
   const { project, summary } = preview;
   const lines = [
@@ -445,6 +472,7 @@ export function renderPreviewMarkdown(preview: Preview): string {
     `| Epics | ${summary.epics} |`,
     `| Stories | ${summary.stories} |`,
     `| Tasks | ${summary.tasks} |`,
+    `| Issues | ${summary.issues} |`,
     `| New (not on Taiga yet) | ${summary.new} |`,
     `| On Taiga (state.json) | ${summary.applied} |`,
     `| Approved | ${summary.approved} |`,
@@ -457,13 +485,17 @@ export function renderPreviewMarkdown(preview: Preview): string {
   if (summary.unknownReviewKeys.length > 0) {
     lines.push(`**Warning:** ${REVIEW_FILE} reviews keys the backlog does not declare: ${summary.unknownReviewKeys.join(', ')}`, '');
   }
-  if (preview.epics.length === 0) lines.push('_The backlog has no items._', '');
+  if (preview.epics.length === 0 && preview.issues.length === 0) lines.push('_The backlog has no items._', '');
   for (const epic of preview.epics) {
     lines.push(...renderItem(epic, 2));
     for (const story of epic.stories) {
       lines.push(...renderItem(story, 3));
       for (const task of story.tasks) lines.push(...renderItem(task, 4));
     }
+  }
+  if (preview.issues.length > 0) {
+    lines.push('## Issues', '');
+    for (const issue of preview.issues) lines.push(...renderItem(issue, 3));
   }
   return `${lines.join('\n').trimEnd()}\n`;
 }

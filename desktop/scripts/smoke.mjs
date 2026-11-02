@@ -1,8 +1,8 @@
 // Smoke test of Taigent Desktop, driven with Playwright's Electron support. It never touches the user's manifests:
 // it copies the committed fixture `scripts/fixture/smoke-taigent-desktop` (or `taiga/<slug>` of the repository with
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
-// user-data folder. It never pushes to Taiga: the native confirm dialog is stubbed to "Huỷ", and "Xem thay đổi trên
-// Taiga" (read-only) runs only when the app reports a login.
+// user-data folder. It never writes to Taiga: every native confirm dialog (push, bootstrap) is stubbed to "Huỷ", and
+// "Xem thay đổi trên Taiga" and bootstrap --dry-run (read-only) run only when the app reports a login.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -15,6 +15,7 @@ import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright-core';
 import { parse } from 'yaml';
+import { smokeGit } from './smoke-git.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -110,7 +111,7 @@ try {
   await page.screenshot({ path: join(shots, '4-push-blocked.png') });
 
   // Switching sections keeps the open project and the selected item; sections without content yet have no controls.
-  for (const section of ['wiki', 'taiga', 'git', 'settings']) {
+  for (const section of ['wiki', 'settings']) {
     await goTo(page, section);
     const controls = await page.locator(`#screen-${section} :is(button, input, select, textarea, a)`).count();
     check(controls === 0, `section ${section} shows an empty state without controls`);
@@ -148,6 +149,22 @@ try {
   await page.keyboard.press('k');
   check((await page.getAttribute('#tree .node.selected', 'data-key')) === story, 'k moves back');
 
+  // Issues sit in their own group after the epic tree and are reviewed like any item.
+  const issue = 'BUG-STALE-AFTER-RENAME';
+  if (!values.project) {
+    check((await page.textContent('#tree .tree-group'))?.startsWith('Issues'), 'tree shows the Issues group');
+    await page.click(`#tree .node[data-key="${issue}"]`);
+    await page.waitForSelector('.issue-values');
+    const classification = await page.textContent('.issue-values');
+    check(classification?.includes('Bug') && classification.includes('Normal') && classification.includes('High'), `issue ${issue} shows type, severity and priority`);
+    check((await page.textContent(`#tree .node[data-key="${issue}"] .badge.new`)) === 'Mới', `issue ${issue} is labelled Mới`);
+    await page.click('.verdict-bar [data-verdict="approved"]');
+    await page.waitForSelector(`#tree .node[data-key="${issue}"] .badge.approved`);
+    const reviewed = await readFile(reviewFile, 'utf8');
+    check(new RegExp(`${issue}:\\r?\\n\\s+verdict: approved`).test(reviewed), `review.yaml has verdict approved for issue ${issue}`);
+    await page.screenshot({ path: join(shots, '5b-issue.png') });
+  }
+
   if (values.project) log('skipped forms: they use the keys of the fixture');
   else {
     await formScenario(page);
@@ -167,6 +184,48 @@ try {
   } else {
     log('skipped plan: not logged in');
   }
+
+  // Taiga > Project: the fixture's manifest directory is listed (with the user's Taiga projects when logged in), its
+  // project.yaml opens in the form and saves in place; bootstrap (logged in only) stops at the confirmation, "Huỷ".
+  await app.evaluate(({ dialog }) => {
+    globalThis.smokeDialogs = [];
+    dialog.showMessageBox = async (_window, options) => {
+      globalThis.smokeDialogs.push(options.title);
+      return { response: 1, checkboxChecked: false };
+    };
+  });
+  await goTo(page, 'taiga');
+  await page.waitForSelector(`#taiga-projects-list tr[data-slug="${project}"]`, { timeout: 60_000 });
+  log('projects:', (await page.textContent('#taiga-projects-status'))?.trim());
+  await page.click(`#taiga-projects-list [data-open="${project}"]`);
+  await page.waitForSelector('#project-form');
+  const projectFile = join(manifests, project, 'project.yaml');
+  const projectYaml = await readFile(projectFile, 'utf8');
+  const declaredName = /^name: (.+)$/m.exec(projectYaml)?.[1]?.trim();
+  check((await page.inputValue('#pf-name')) === declaredName, `project form shows project.yaml's name (${declaredName})`);
+  check((await page.textContent('#pf-slug')) === project, 'project form shows the slug');
+  await page.screenshot({ path: join(shots, '10-project.png') });
+  const description = `Smoke: mô tả sửa bằng form (${new Date().toISOString()})`;
+  await page.fill('#pf-description', description);
+  // Editing disables bootstrap until the form is saved; the form read back after the save enables it again.
+  check((await page.getAttribute('#taiga-bootstrap', 'data-off')) === 'true', 'bootstrap waits for the edited form to be saved');
+  await page.click('#pf-save');
+  await page.waitForSelector('#taiga-bootstrap[data-off="false"]');
+  check((await page.inputValue('#pf-description')) === description && !(await page.isVisible('#pf-issues')), 'form read back after the save, without issues');
+  const savedYaml = await readFile(projectFile, 'utf8');
+  check(savedYaml.includes(description) && savedYaml.includes('area:review') && savedYaml.includes('# Fixture of the desktop smoke'), 'project.yaml saved in place: description changed, comment and tags kept');
+  if (login.loggedIn) {
+    await page.click('#taiga-bootstrap');
+    await page.waitForSelector('#taiga-bootstrap-result :is(p:not(.muted), .failure)', { timeout: 120_000 });
+    const dialogs = await app.evaluate(() => globalThis.smokeDialogs);
+    const result = (await page.textContent('#taiga-bootstrap-result'))?.trim();
+    log('bootstrap result:', result);
+    check(dialogs.includes('Bootstrap project') && result?.includes('Đã huỷ bootstrap'), 'bootstrap --dry-run asked for confirmation, answered "Huỷ"');
+    await page.screenshot({ path: join(shots, '11-bootstrap-cancelled.png') });
+  } else {
+    log('skipped bootstrap: not logged in');
+  }
+  await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
   log('screenshots in', shots);
   log('temporary manifests in', manifests);
 } finally {
