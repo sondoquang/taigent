@@ -204,8 +204,8 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
 folder, read the backlog the agent wrote exactly as `apply` would write it, comment and mark each item **Đạt**
 (approved) or **Cần sửa** (changes) in `taiga/<slug>/review.yaml`, log in, see the Taiga plan and push after an
 explicit confirmation, and pull, commit and push `taiga/` plus the files `docs.yaml` references with git (never
-merging, rebasing or force-pushing). It runs the taigent CLI and core bundled inside it (no Node needed for the
-installed app).
+merging, rebasing or force-pushing). A terminal panel (`` Ctrl+` ``) runs shells and `claude`, `codex` or `omp` in
+the repository, in tabs. It runs the taigent CLI and core bundled inside it (no Node needed for the installed app).
 
 ```sh
 npm run build && cd desktop && npm install && npm start   # from source

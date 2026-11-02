@@ -88,7 +88,7 @@ function showOutcome(title: string, result: Result<GitOutcome>): void {
       h('h2', {}, `${title}: đã dừng`),
       time,
       h('p', { class: 'error' }, stop.message),
-      stop.terminal && h('p', {}, 'Đã mở thư mục repo để bạn tiếp tục trong terminal.'),
+      stop.terminal && h('p', {}, 'Đã mở một tab terminal ở repo để bạn tiếp tục.'),
       stop.commands.length > 0 && h('p', {}, 'Lệnh gợi ý, chạy trong terminal ở repo:'),
       stop.commands.length > 0 && h('pre', { class: 'detail-text' }, stop.commands.join('\n')),
       stop.detail && h('pre', { class: 'detail-text' }, stop.detail),

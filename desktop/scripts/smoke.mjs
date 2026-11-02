@@ -3,7 +3,8 @@
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
 // user-data folder. It never writes to Taiga: every native confirm dialog (push, bootstrap) is stubbed to "Huỷ", and
 // "Xem thay đổi trên Taiga", bootstrap --dry-run and Ticket của tôi (read-only) use the login only when the app
-// reports one. Ticket của tôi's writes (status, comment) run only against FakeTaiga (smoke-tickets.mjs).
+// reports one. Ticket của tôi's writes (status, comment) run only against FakeTaiga (smoke-tickets.mjs). Terminal
+// steps: scripts/smoke-terminal.mjs.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -14,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright-core';
+import { agentPath, descendants, smokeTerminal, waitGone } from './smoke-terminal.mjs';
 import { smokeGit } from './smoke-git.mjs';
 import { smokeTickets } from './smoke-tickets.mjs';
 
@@ -41,7 +43,7 @@ const executablePath = values.exe ? resolve(values.exe) : createRequire(import.m
 const app = await electron.launch({
   executablePath,
   args: [...(values.exe ? [] : [desktop]), `--user-data-dir=${join(work, 'user-data')}`],
-  env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests },
+  env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests, PATH: await agentPath(work) },
   cwd: repo,
 });
 const log = (...parts) => console.log('[smoke]', ...parts);
@@ -168,6 +170,8 @@ try {
   if (values.project) log('skipped forms: they use the keys of the fixture');
   else await formScenario(page);
 
+  await smokeTerminal(page, { repo, shots, log, check });
+
   await page.waitForFunction(() => document.querySelector('#statusbar')?.textContent?.includes('Taiga'), null, { timeout: 30_000 }).catch(() => undefined);
   const login = await page.evaluate(() => window.taigent.whoami());
   log('login', JSON.stringify({ loggedIn: login.loggedIn, username: login.username, apiUrl: login.apiUrl, message: login.message }));
@@ -226,9 +230,16 @@ try {
   await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
   log('screenshots in', shots);
   log('temporary manifests in', manifests);
-} finally {
+} catch (error) {
   await app.close();
+  throw error;
 }
+
+// Quitting kills every process the app started: terminal shells, their children, the pseudo consoles.
+const appTree = descendants(app.process().pid);
+await app.close();
+const survivors = await waitGone(appTree.keys());
+check(survivors.length === 0, `after quitting, none of the app's ${appTree.size} child processes runs (left: ${survivors.map((pid) => `${pid} ${appTree.get(pid)}`).join(', ') || 'none'})`);
 
 /**
  * Forms: an epic and a task written to backlog.yaml (new items are "Chưa duyệt"), the key lock of an item already on
