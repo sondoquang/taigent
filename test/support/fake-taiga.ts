@@ -1707,6 +1707,14 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       return { status: 200, body: { project: project.id } };
     }
 
+    // taiga-back ProjectViewSet.list: the projects the user can view (members always, everyone for public ones),
+    // filtered by `member=<user id>` (filter_fields `("member", "members")`), each with `i_am_admin`/`i_am_member`.
+    if (method === 'GET' && path === '/projects') {
+      const member = queryNumber(query, 'member');
+      const projects = state.projects.filter((p) => readableProject(p, userId) && (member === undefined || p.members.includes(member)));
+      return paginate(req, query, projects.map((project) => projectJson(project, userId)));
+    }
+
     const bootstrapReply = bootstrapRoute(method, path, query, body, userId);
     if (bootstrapReply) return bootstrapReply;
 

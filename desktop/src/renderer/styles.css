@@ -568,6 +568,20 @@ textarea:focus {
   color: var(--muted);
 }
 
+.type-issue {
+  background: #fdecea;
+  color: #b3261e;
+}
+
+.tree-group {
+  margin: 12px 0 2px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .badges {
   display: inline-flex;
   gap: 4px;
@@ -1015,4 +1029,249 @@ textarea:focus {
 .issues {
   padding-left: 18px;
   line-height: 1.6;
+}
+
+/* ---- forms (src/renderer/forms.ts) ---- */
+
+.form-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+
+.btn.small {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.btn.danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+.item-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.item-form .field {
+  margin: 10px 0;
+}
+
+.item-form .field-label {
+  margin: 0 0 4px;
+}
+
+.item-form input[type='text'],
+.item-form input[type='number'],
+.item-form input[type='url'],
+.item-form input[type='date'],
+.item-form textarea,
+.item-form select {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: var(--text);
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.item-form input:disabled {
+  background: var(--gray-soft);
+  color: var(--muted);
+}
+
+.item-form .hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.item-form .hint.error,
+.item-form .field-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--red);
+}
+
+.item-form .field-error[hidden],
+.item-form .issues[hidden],
+.warn-box[hidden] {
+  display: none;
+}
+
+.attributes-field {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+
+.attributes-field .attribute {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.attributes-field .attribute > span {
+  min-width: 160px;
+}
+
+.diff {
+  max-height: 46vh;
+  overflow: auto;
+  background: var(--gray-soft);
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff span {
+  display: block;
+  white-space: pre-wrap;
+}
+
+.diff-added {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.diff-removed {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.diff-gap {
+  color: var(--muted);
+}
+
+/* Taiga > Project (taiga-projects.ts). */
+.taiga-project-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.taiga-project-head h2 {
+  margin: 8px 0;
+  font-size: 17px;
+}
+
+.taiga-projects-table,
+.taiga-values {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.taiga-projects-table th,
+.taiga-projects-table td,
+.taiga-values th,
+.taiga-values td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.taiga-values th {
+  width: 120px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.taiga-projects-table tr.selected td {
+  background: var(--accent-soft);
+}
+
+.taiga-project-card {
+  margin: 16px 0;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.taiga-project-card h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.taiga-project-card h3 {
+  margin: 16px 0 6px;
+  font-size: 15px;
+}
+
+.project-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.project-form label.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 12px 4px 0;
+  display: inline-flex;
+  color: var(--text);
+}
+
+.project-form fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin: 10px 0;
+}
+
+.bootstrap-block {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+}
+
+/* ---- git section ---- */
+.git-overview p {
+  margin: 4px 0;
+}
+
+.git-files {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.git-files li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+}
+
+.git-state {
+  min-width: 64px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.git-files li.conflicted .git-state {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.git-commit {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.git-commit input {
+  flex: 1;
+  max-width: 520px;
 }

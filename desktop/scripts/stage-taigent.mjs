@@ -21,7 +21,7 @@ const LEFT_OUT = new Set(['taiga-mcp-server']);
 
 const exists = (path) => stat(path).then(() => true, () => false);
 
-for (const file of ['dist/cli.js', 'dist/review.js', 'dist/login.js']) {
+for (const file of ['dist/cli.js', 'dist/review.js', 'dist/edit.js', 'dist/login.js']) {
   if (!(await exists(join(repo, file)))) {
     console.error(`missing ${file}: run \`npm run build\` at the taigent repository root first`);
     process.exit(1);

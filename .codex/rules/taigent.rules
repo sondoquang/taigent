@@ -1,10 +1,10 @@
 # Codex execpolicy rules (Starlark; https://learn.chatgpt.com/docs/agent-configuration/rules), loaded only when this
 # project is trusted. Mirrors the taigent commands of tools/taiga/allowlist.txt (test/headless.test.ts checks that
 # both list the same commands): they run outside the sandbox, with network, so plan/apply/bootstrap/upload/tickets/
-# status/comment reach Taiga. apply/bootstrap/upload still need --yes, which the skills add only after the user's
-# confirmation; status/comment edit one of the user's own tickets, named in the request.
+# projects/status/comment reach Taiga. apply/bootstrap/upload still need --yes, which the skills add only after the user's
+# confirmation; status/comment edit one of the user's own tickets, named in the request; projects only reads.
 prefix_rule(
-    pattern = ["npx", "taigent", ["validate", "plan", "apply", "bootstrap", "upload", "tickets", "status", "comment", "preview"]],
+    pattern = ["npx", "taigent", ["validate", "plan", "apply", "bootstrap", "upload", "tickets", "status", "comment", "preview", "projects"]],
     decision = "allow",
     justification = "taigent CLI commands of the standard allowlist (tools/taiga/allowlist.txt)",
     match = [
@@ -17,6 +17,7 @@ prefix_rule(
         "npx taigent status --project vigo-auth 84 Done",
         "npx taigent comment --project vigo-auth 84 'tested on UAT'",
         "npx taigent preview --project vigo-auth --json",
+        "npx taigent projects --project vigo-auth --json",
     ],
     not_match = [
         "npx taigent skills check",

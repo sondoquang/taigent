@@ -15,6 +15,7 @@ Bash(npx taigent tickets *)
 Bash(npx taigent status *)
 Bash(npx taigent comment *)
 Bash(npx taigent preview *)
+Bash(npx taigent projects *)
 PowerShell(npx taigent validate *)
 PowerShell(npx taigent plan *)
 PowerShell(npx taigent apply *)
@@ -24,6 +25,7 @@ PowerShell(npx taigent tickets *)
 PowerShell(npx taigent status *)
 PowerShell(npx taigent comment *)
 PowerShell(npx taigent preview *)
+PowerShell(npx taigent projects *)
 
 # Taiga MCP read tools (taiga-mcp-server@1.9.20).
 mcp__taiga__listProjects
