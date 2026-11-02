@@ -10,17 +10,21 @@
 //   taiga-back's SIMPLE_JWT settings. Application tokens never expire; one per (user, application), handed out again
 //   until deleted (taiga-back `external_apps`).
 // - Lists are paginated (30 per page, `x-pagination-*` headers) unless `x-disable-pagination` is sent.
-// - Tags are stored lowercased and returned as `[name, color|null]` pairs. The epic, user story and task lists
-//   filter by `tags=a,b` (items carrying any listed tag, exact match), like taiga-back's TagsFilter.
+// - Tags are stored lowercased and returned as `[name, color|null]` pairs. The epic, user story, task and issue
+//   lists filter by `tags=a,b` (items carrying any listed tag, exact match), like taiga-back's TagsFilter.
 // - Validation errors are 400 with DRF-style `{ field: [message] }` bodies. The fake is STRICTER than
 //   Taiga on one point: unknown payload fields are rejected (Taiga silently ignores them), so typos
 //   such as `project_id` instead of `project` fail loudly in tests.
 // - PATCH implements OCC like taiga-back: `version` is required, and a stale version is refused with
 //   400 {"version": "..."} only when a field in the payload was modified since that version.
 // - Epic ↔ story links are unique per (epic, user_story); a duplicate POST is a 400.
-// - Every epic, user story and task gets a custom attribute values object (version 1, no values) when it is
+// - Every epic, user story, task and issue gets a custom attribute values object (version 1, no values) when it is
 //   created, like taiga-back's post_save signal. Its `attributes_values` keys are attribute ids as strings, a
 //   PATCH replaces the whole object, and it has its own OCC `version`.
+// - Every project gets the issue statuses, types, severities and priorities of taiga-back's default templates, with
+//   their defaults (`New`, `Bug`, `Normal`, `Normal`). An issue created without one of them gets the project's
+//   default (taiga-back `Issue.save`); an id that does not exist is a 400, one of another project a 403
+//   (`IssueViewSet.pre_conditions_on_save`).
 
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -61,7 +65,7 @@ export interface FakeTemplate {
   roles: { name: string; slug: string }[];
 }
 
-export type FakeCustomAttributeType = 'epic' | 'userstory' | 'task';
+export type FakeCustomAttributeType = 'epic' | 'userstory' | 'task' | 'issue';
 
 export interface FakeCustomAttribute {
   id: number;
@@ -115,6 +119,11 @@ export interface FakeProject {
   modules: FakeModules;
   /** Explicit tag colors (create_tag/edit_tag); tags used by items are added with a null color. */
   tagsColors: Record<string, string | null>;
+  /** Values a new issue gets when its payload has none (taiga-back `Issue.save`), from the template defaults. */
+  default_issue_status: number;
+  default_issue_type: number;
+  default_severity: number;
+  default_priority: number;
 }
 
 export interface FakeEpic {
@@ -172,6 +181,39 @@ export interface FakeTask {
   is_closed: boolean;
 }
 
+/** An issue ("issue detail" in the Taiga API docs). */
+export interface FakeIssue {
+  id: number;
+  ref: number;
+  version: number;
+  project: number;
+  subject: string;
+  description: string;
+  tags: string[];
+  status: number | null;
+  assigned_to: number | null;
+  milestone: number | null;
+  type: number | null;
+  severity: number | null;
+  priority: number | null;
+  is_closed: boolean;
+}
+
+/** An issue type, severity or priority of a project ("issue type detail", "severity detail", "priority detail"). */
+export interface FakeIssueValue {
+  id: number;
+  project: number;
+  name: string;
+  order: number;
+  color: string;
+}
+
+/** An issue status of a project ("issue status detail" in the Taiga API docs). */
+export interface FakeIssueStatus extends FakeIssueValue {
+  slug: string;
+  is_closed: boolean;
+}
+
 /** Epic ↔ user story link ("epic related user story detail" in the Taiga API docs). */
 export interface FakeEpicRelatedUserStory {
   epic: number;
@@ -214,7 +256,7 @@ export interface FakeApplicationToken {
   token: string | null;
 }
 
-export type FakeItem = FakeEpic | FakeUserStory | FakeTask;
+export type FakeItem = FakeEpic | FakeUserStory | FakeTask | FakeIssue;
 
 /** URL segment of the attachment endpoints (`/{type}/attachments`), one per content type. */
 export type FakeAttachmentObjectType = 'epics' | 'userstories' | 'tasks' | 'wiki';
@@ -259,6 +301,11 @@ export interface FakeState {
   epics: FakeEpic[];
   userStories: FakeUserStory[];
   tasks: FakeTask[];
+  issues: FakeIssue[];
+  issueStatuses: FakeIssueStatus[];
+  issueTypes: FakeIssueValue[];
+  severities: FakeIssueValue[];
+  priorities: FakeIssueValue[];
   epicRelatedUserStories: FakeEpicRelatedUserStory[];
   storyStatuses: FakeStoryStatus[];
   comments: FakeComment[];
@@ -351,6 +398,8 @@ export interface FakeTaiga {
   intercept(rule: InterceptRule): void;
   addUserStory(input: FakeItemInput): FakeUserStory;
   addTask(input: FakeItemInput & { user_story?: number }): FakeTask;
+  /** Adds an issue; values left out get the project's defaults, like an issue created on Taiga. */
+  addIssue(input: FakeItemInput & Partial<Pick<FakeIssue, 'type' | 'severity' | 'priority' | 'status'>>): FakeIssue;
   addEpicRelatedUserStory(epic: number, userStory: number): FakeEpicRelatedUserStory;
   /** Edits an item like a Taiga user would: bumps `version` and records the fields for OCC checks. */
   editItem<T extends FakeItem>(item: T, changes: Partial<Omit<T, 'id' | 'ref' | 'version' | 'project'>>): void;
@@ -407,10 +456,39 @@ const TASK_FIELDS: Record<string, true> = {
   is_iocaine: true, external_reference: true, watchers: true,
 };
 
+// Create/edit payload fields documented for issues (docs.taiga.io/api.html §Issues), plus Taiga 6's due date.
+const ISSUE_FIELDS: Record<string, true> = {
+  assigned_to: true, blocked_note: true, description: true, is_blocked: true, is_closed: true, milestone: true,
+  priority: true, project: true, severity: true, status: true, subject: true, tags: true, type: true, watchers: true,
+  due_date: true, due_date_reason: true,
+};
+
+/**
+ * Issue statuses, types, severities and priorities of taiga-back's default templates (scrum and kanban alike:
+ * fixtures/initial_project_templates.json), each with the template's default.
+ */
+const TEMPLATE_ISSUE_STATUSES: [name: string, slug: string, closed: boolean][] = [
+  ['New', 'new', false],
+  ['In progress', 'in-progress', false],
+  ['Ready for test', 'ready-for-test', true],
+  ['Closed', 'closed', true],
+  ['Needs Info', 'needs-info', false],
+  ['Rejected', 'rejected', true],
+  ['Postponed', 'postponed', false],
+];
+const TEMPLATE_ISSUE_VALUES: Record<'issueTypes' | 'severities' | 'priorities', { names: string[]; default: string }> = {
+  issueTypes: { names: ['Bug', 'Question', 'Enhancement'], default: 'Bug' },
+  severities: { names: ['Wishlist', 'Minor', 'Normal', 'Important', 'Critical'], default: 'Normal' },
+  priorities: { names: ['Low', 'Normal', 'High'], default: 'Normal' },
+};
+
+/** Issue fields holding the id of a project value, and the list each id must come from. */
+const ISSUE_VALUE_LISTS = { status: 'issueStatuses', type: 'issueTypes', severity: 'severities', priority: 'priorities' } as const;
+
 const RELATED_USER_STORY_FIELDS: Record<string, true> = { epic: true, user_story: true, order: true };
 
-/** URL segment of the epic, user story and task endpoints (`/{segment}`, `/{segment}/{id}`, …). */
-type ItemSegment = 'epics' | 'userstories' | 'tasks';
+/** URL segment of the epic, user story, task and issue endpoints (`/{segment}`, `/{segment}/{id}`, …). */
+type ItemSegment = 'epics' | 'userstories' | 'tasks' | 'issues';
 
 /**
  * Per URL segment: the item type (custom attributes, values objects), the item key of its values object and the
@@ -420,6 +498,7 @@ const ITEM_KINDS: Record<ItemSegment, { itemType: FakeCustomAttributeType; value
   epics: { itemType: 'epic', valuesField: 'epic', fields: EPIC_FIELDS },
   userstories: { itemType: 'userstory', valuesField: 'user_story', fields: USER_STORY_FIELDS },
   tasks: { itemType: 'task', valuesField: 'task', fields: TASK_FIELDS },
+  issues: { itemType: 'issue', valuesField: 'issue', fields: ISSUE_FIELDS },
 };
 
 /** Fixture input shared by `addEpic`, `addUserStory` and `addTask`. */
@@ -522,6 +601,11 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     epics: [],
     userStories: [],
     tasks: [],
+    issues: [],
+    issueStatuses: [],
+    issueTypes: [],
+    severities: [],
+    priorities: [],
     epicRelatedUserStories: [],
     storyStatuses: [],
     comments: [],
@@ -623,10 +707,35 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     });
   }
 
+  /**
+   * The issue statuses, types, severities and priorities of the default templates, as taiga-back creates them with
+   * project `projectId`; returns the project's defaults.
+   */
+  function addIssueValues(projectId: number): Pick<FakeProject, 'default_issue_status' | 'default_issue_type' | 'default_severity' | 'default_priority'> {
+    const color = '#A9AABC';
+    TEMPLATE_ISSUE_STATUSES.forEach(([name, slug, closed], index) => {
+      state.issueStatuses.push({ id: ++nextId, project: projectId, name, slug, order: index + 1, color, is_closed: closed });
+    });
+    const defaults = {} as Record<keyof typeof TEMPLATE_ISSUE_VALUES, number>;
+    for (const [list, values] of Object.entries(TEMPLATE_ISSUE_VALUES) as [keyof typeof TEMPLATE_ISSUE_VALUES, (typeof TEMPLATE_ISSUE_VALUES)[keyof typeof TEMPLATE_ISSUE_VALUES]][]) {
+      values.names.forEach((name, index) => {
+        state[list].push({ id: ++nextId, project: projectId, name, order: index + 1, color });
+        if (name === values.default) defaults[list] = nextId;
+      });
+    }
+    return {
+      default_issue_status: state.issueStatuses.find((s) => s.project === projectId && s.slug === 'new')!.id,
+      default_issue_type: defaults.issueTypes,
+      default_severity: defaults.severities,
+      default_priority: defaults.priorities,
+    };
+  }
+
   function addProject(input: Parameters<FakeTaiga['addProject']>[0]): FakeProject {
     const members = input.members ?? [user.id];
+    const id = ++nextId;
     const project: FakeProject = {
-      id: ++nextId,
+      id,
       slug: input.slug,
       name: input.name ?? input.slug,
       members: [],
@@ -637,6 +746,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       admins: input.admins ?? members,
       modules: { is_epics_activated: true, is_backlog_activated: true, is_kanban_activated: true, is_issues_activated: true, is_wiki_activated: true, ...input.modules },
       tagsColors: { ...input.tagsColors },
+      ...addIssueValues(id),
     };
     state.projects.push(project);
     addRoles(project, SCRUM_ROLES);
@@ -683,12 +793,12 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return page;
   }
 
-  /** The collection holding the epics, user stories or tasks. */
+  /** The collection holding the epics, user stories, tasks or issues. */
   function itemsOf(itemType: FakeCustomAttributeType): FakeItem[] {
-    return { epic: state.epics, userstory: state.userStories, task: state.tasks }[itemType];
+    return { epic: state.epics, userstory: state.userStories, task: state.tasks, issue: state.issues }[itemType];
   }
 
-  /** Creates an epic, user story or task with the next project ref and its (empty) custom attribute values. */
+  /** Creates an epic, user story, task or issue with the next project ref and its (empty) custom attribute values. */
   function addItem<T extends FakeItem>(itemType: FakeCustomAttributeType, input: FakeItemInput, extra: Omit<T, keyof FakeEpic>): T {
     const project = state.projects.find((p) => p.id === input.project);
     if (!project) throw new Error(`fake taiga: no project ${input.project}`);
@@ -730,6 +840,20 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return addItem<FakeTask>('task', input, { user_story: input.user_story ?? null, milestone: null, is_closed: false });
   }
 
+  function addIssue(input: Parameters<FakeTaiga['addIssue']>[0]): FakeIssue {
+    const project = state.projects.find((p) => p.id === input.project);
+    if (!project) throw new Error(`fake taiga: no project ${input.project}`);
+    const status = input.status ?? project.default_issue_status;
+    return addItem<FakeIssue>('issue', input, {
+      milestone: null,
+      type: input.type ?? project.default_issue_type,
+      severity: input.severity ?? project.default_severity,
+      priority: input.priority ?? project.default_priority,
+      is_closed: state.issueStatuses.find((s) => s.id === status)?.is_closed ?? false,
+      status,
+    } as Omit<FakeIssue, keyof FakeEpic>);
+  }
+
   /** Tags of the project (`tags_colors`): explicit colors plus tags used by items (null color), like taiga-back. */
   function projectTagsColors(project: FakeProject): Record<string, string | null> {
     const colors: Record<string, string | null> = {};
@@ -766,6 +890,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       epic_custom_attributes: attributes('epic'),
       userstory_custom_attributes: attributes('userstory'),
       task_custom_attributes: attributes('task'),
+      issue_custom_attributes: attributes('issue'),
     };
   }
 
@@ -818,8 +943,9 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     for (let suffix = 1; state.projects.some((p) => p.slug === slug); suffix += 1) slug = `${base}-${suffix}`;
     const modules = { ...template!.modules };
     for (const flag of MODULE_FLAGS) if (typeof data[flag] === 'boolean') modules[flag] = data[flag] as boolean;
+    const id = ++nextId;
     const project: FakeProject = {
-      id: ++nextId,
+      id,
       slug,
       name: data.name as string,
       members: [],
@@ -830,6 +956,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       admins: [userId],
       modules,
       tagsColors: {},
+      ...addIssueValues(id),
     };
     state.projects.push(project);
     addRoles(project, template!.roles);
@@ -958,7 +1085,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       if (action && method === 'POST') return tagOperation(adminProject(id, userId), action, body);
     }
 
-    const attributes = /^\/(epic|userstory|task)-custom-attributes$/.exec(path);
+    const attributes = /^\/(epic|userstory|task|issue)-custom-attributes$/.exec(path);
     if (attributes) {
       const itemType = attributes[1] as FakeCustomAttributeType;
       if (method === 'POST') return createCustomAttribute(itemType, body, userId);
@@ -1060,9 +1187,9 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     saveAttributeValues(values, next);
   }
 
-  /** GET/PATCH `/{epics,userstories,tasks}/custom-attributes-values/{id}`; the item key is `epic`, `user_story` or `task`. */
+  /** GET/PATCH `/{epics,userstories,tasks,issues}/custom-attributes-values/{id}`; the item key is `epic`, `user_story`, `task` or `issue`. */
   function routeAttributeValues(method: string, path: string, body: unknown, userId: number): Reply | undefined {
-    const match = /^\/(epics|userstories|tasks)\/custom-attributes-values\/(\d+)$/.exec(path);
+    const match = /^\/(epics|userstories|tasks|issues)\/custom-attributes-values\/(\d+)$/.exec(path);
     if (!match) return undefined;
     const { itemType, valuesField: itemField } = ITEM_KINDS[match[1] as ItemSegment];
     const item = itemsOf(itemType).find((i) => i.id === Number(match[2]) && visibleProject(i.project, userId));
@@ -1173,6 +1300,13 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     if (points !== undefined && (typeof points !== 'object' || points === null || Array.isArray(points) || !Object.values(points).every(Number.isInteger))) {
       errors.points = ['Points must be a dictionary of role id → points id (fake wording).'];
     }
+    // Issue value ids (`status`, `type`, `severity`, `priority`) must exist; their project is checked after validation.
+    for (const [field, list] of allowed === ISSUE_FIELDS ? Object.entries(ISSUE_VALUE_LISTS) : []) {
+      const id = data[field];
+      if (id !== undefined && id !== null && !(state[list] as FakeIssueValue[]).some((v) => v.id === id)) {
+        errors[field] = [`Invalid pk "${String(id)}" - object does not exist.`];
+      }
+    }
     if (data.user_story !== undefined && data.user_story !== null) {
       const projectId = existing?.project ?? data.project;
       if (!state.userStories.some((s) => s.id === data.user_story && s.project === projectId)) {
@@ -1217,6 +1351,82 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     if (tags !== undefined) changes.tags = tags;
     saveEdit(item, changes);
     return itemJson(item);
+  }
+
+  // --- Issues (spec #35): the project's issue values, and issues created/edited with ids of those values ---
+
+  /** An issue value id of a valid payload that belongs to another project is a 403 (`pre_conditions_on_save`). */
+  function checkIssueValueProjects(data: Json, projectId: number): void {
+    for (const [field, list] of Object.entries(ISSUE_VALUE_LISTS)) {
+      const value = (state[list] as FakeIssueValue[]).find((v) => v.id === data[field]);
+      if (value && value.project !== projectId) {
+        throw new HttpError(403, { _error_message: `You don't have permissions to set this ${field} to this issue.`, _error_type: 'taiga.base.exceptions.PermissionDenied' });
+      }
+    }
+  }
+
+  /** An issue as taiga-back serializes it: itemJson with the name of its own status. */
+  function issueJson(issue: FakeIssue): Json {
+    const status = state.issueStatuses.find((s) => s.id === issue.status);
+    return { ...itemJson(issue), status_extra_info: { name: status?.name ?? null, is_closed: issue.is_closed } };
+  }
+
+  function routeIssues(req: IncomingMessage, method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
+    const lists: Record<string, keyof typeof TEMPLATE_ISSUE_VALUES | 'issueStatuses'> = {
+      '/issue-statuses': 'issueStatuses',
+      '/issue-types': 'issueTypes',
+      '/severities': 'severities',
+      '/priorities': 'priorities',
+    };
+    const list = Object.hasOwn(lists, path) ? lists[path]! : undefined;
+    if (list && method === 'GET') {
+      const projectId = queryNumber(query, 'project');
+      const values = (state[list] as FakeIssueValue[])
+        .filter((v) => visibleProject(v.project, userId) && (projectId === undefined || v.project === projectId))
+        .sort((a, b) => a.order - b.order);
+      return paginate(req, query, values.map((value) => ({ ...value })));
+    }
+
+    if (path === '/issues') {
+      if (method === 'GET') {
+        const projectId = queryNumber(query, 'project');
+        const issues = state.issues.filter((i) => visibleProject(i.project, userId) && (projectId === undefined || i.project === projectId) && hasTags(i, query));
+        return paginate(req, query, issues.map(issueJson));
+      }
+      if (method === 'POST') {
+        const { data, tags } = validateItemPayload(body, ISSUE_FIELDS, userId);
+        checkIssueValueProjects(data, data.project as number);
+        const issue = addIssue({
+          project: data.project as number,
+          subject: data.subject as string,
+          description: (data.description as string | undefined) ?? '',
+          tags: tags ?? [],
+          ...(typeof data.type === 'number' && { type: data.type }),
+          ...(typeof data.severity === 'number' && { severity: data.severity }),
+          ...(typeof data.priority === 'number' && { priority: data.priority }),
+          ...(typeof data.status === 'number' && { status: data.status }),
+        });
+        for (const field of ['assigned_to', 'milestone'] as const) {
+          if (data[field] !== undefined) (issue as unknown as Json)[field] = data[field];
+        }
+        return { status: 201, body: issueJson(issue) };
+      }
+    }
+
+    const one = /^\/issues\/(\d+)$/.exec(path);
+    if (one && method === 'PATCH') {
+      const issue = state.issues.find((i) => i.id === Number(one[1]) && visibleProject(i.project, userId));
+      if (!issue) throw notFound();
+      const { data, tags } = validateItemPayload(body, ISSUE_FIELDS, userId, issue);
+      checkIssueValueProjects(data, issue.project);
+      checkVersion(issue, data);
+      const { version: _version, ...changes } = data;
+      if (tags !== undefined) changes.tags = tags;
+      if (typeof data.status === 'number') changes.is_closed = state.issueStatuses.find((s) => s.id === data.status)!.is_closed;
+      saveEdit(issue, changes);
+      return { status: 200, body: issueJson(issue) };
+    }
+    return undefined;
   }
 
   /**
@@ -1515,7 +1725,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     if (attachmentReply) return attachmentReply;
     const valuesReply = routeAttributeValues(method, path, body, userId);
     if (valuesReply) return valuesReply;
-    const reply = routeStoriesAndTasks(req, method, path, query, body, userId) ?? routeApplicationTokens(req, method, path, query, body, userId);
+    const reply =
+      routeStoriesAndTasks(req, method, path, query, body, userId) ??
+      routeIssues(req, method, path, query, body, userId) ??
+      routeApplicationTokens(req, method, path, query, body, userId);
     if (reply) return reply;
     throw notFound();
   }
@@ -1699,6 +1912,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     intercept: (rule) => void intercepts.push({ ...rule }),
     addUserStory,
     addTask,
+    addIssue,
     addEpicRelatedUserStory,
     editItem,
     editWikiPage,

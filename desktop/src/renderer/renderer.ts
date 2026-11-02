@@ -75,7 +75,7 @@ function h<K extends keyof HTMLElementTagNameMap>(
 
 // ---- status vocabulary ----------------------------------------------------------------------------------------
 
-const TYPE_LABEL: Record<PreviewItem['type'], string> = { epic: 'Epic', story: 'Story', task: 'Task' };
+const TYPE_LABEL: Record<PreviewItem['type'], string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
 
 function reviewStatus(item: PreviewItem): { label: string; css: string } {
   if (item.review.stale) return { label: 'Đã đổi sau khi duyệt', css: 'stale' };

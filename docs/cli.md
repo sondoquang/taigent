@@ -69,7 +69,7 @@ One directory per Taiga project, named by its slug, committed to git:
 
 ```
 taiga/<slug>/
-  backlog.yaml   # desired epics → stories → tasks
+  backlog.yaml   # desired epics → stories → tasks, and issues
   docs.yaml      # wiki pages + attachments (optional)
   review.yaml    # verdicts and comments of the BA/PO review, see Review (optional; commit it)
   state.json     # written by apply: key → Taiga id/ref/version (commit it)
@@ -79,7 +79,7 @@ taiga/<slug>/
 
 ```yaml
 epics:
-  - key: AUTH            # required, unique across epics, stories and tasks; uppercase letters/digits/dashes
+  - key: AUTH            # required, unique across epics, stories, tasks and issues; uppercase letters/digits/dashes
     subject: Authentication
     description: Users can sign in.   # optional
     tags: [type:feature, area:auth]   # optional
@@ -100,17 +100,36 @@ epics:
             then: I see "Invalid credentials"        # exactly one string
         spec: docs/specs/auth.md                     # optional link/path to the spec
         tags: [type:feature]
-        custom_attributes:                           # optional, on epics, stories and tasks
+        custom_attributes:                           # optional, on epics, stories, tasks and issues
           Due note: before launch                    # attribute name (as on Taiga) → string, number or boolean
         tasks:                                       # optional; created under this story
           - key: AUTH-LOGIN-API
             subject: Login endpoint
             description: POST /login returns a session.   # optional
             tags: []                                      # optional
+issues:                                                   # optional; bugs, questions, enhancements outside the epic tree
+  - key: BUG-LONG-PASSWORD
+    subject: Login fails with a 100-character password
+    description: |                                        # optional; written to Taiga as is
+      ## Steps to reproduce
+      1. Open the sign-in page
+    type: Bug                                             # required: names of the project's values on Taiga
+    severity: Critical
+    priority: High
+    tags: [type:bug, area:auth]                           # optional
+    custom_attributes:                                    # optional; the project's issue attributes
+      Found in: 1.2.0
 ```
 
 Unknown fields are rejected, also inside `use_case` and inside a scenario (there is no status, assignee, sprint or
 points field: those belong to the people doing the work).
+
+An issue has no parent and no link. `type`, `severity` and `priority` are required non-empty strings (missing or
+empty: `required`, another type: `type`); offline, `validate` checks only that shape. They name the project's own
+issue types, severities and priorities on Taiga (the default templates have `Bug`/`Question`/`Enhancement`,
+`Wishlist`/`Minor`/`Normal`/`Important`/`Critical` and `Low`/`Normal`/`High`); `plan` and `apply` match them by exact
+name after reading Taiga (see [Reconciliation](#reconciliation)). The description is written as is: the "Steps to
+reproduce / Expected / Actual" template is a convention (`docs/taiga/conventions.md` §6.4), not a rule.
 
 A story comes in one of two formats ([ADR 0001](adr/0001-user-story-format-mike-cohn-gherkin.md)): the **user story format**, `use_case` + `scenarios` (Mike Cohn +
 Gherkin, labels stay in English), and the **legacy format**, free `description` + `acceptance_criteria`, kept only
@@ -169,7 +188,7 @@ Spec: <spec>
 ```
 
 Names, tags, keys, wiki slugs and attachment names follow `docs/taiga/conventions.md`; each rule there has the
-`rule` id that validation errors report. Keys are unique across epics, stories and tasks.
+`rule` id that validation errors report. Keys are unique across epics, stories, tasks and issues.
 
 `docs.yaml` (paths are relative to the directory of `docs.yaml` and may point outside it, so documents are referenced
 where they already are, e.g. `../../docs/specs/auth.md`):
@@ -179,7 +198,7 @@ wiki:
   - slug: spec-auth                  # kebab-case, unique
     file: pages/spec-auth.md         # Markdown, must exist
 attachments:
-  - target: AUTH-LOGIN               # an epic, story or task key, or wiki:<slug> (a wiki page above, or wiki:home)
+  - target: AUTH-LOGIN               # an epic, story or task key (not an issue), or wiki:<slug> (a wiki page above, or wiki:home)
     file: files/auth-login-flow.pdf  # must exist; its name is the attachment name on Taiga
     description: Login flow          # optional
 ```
@@ -187,9 +206,9 @@ attachments:
 ## Identity and state
 
 Every item created on Taiga gets the tag `src:<key>` (lowercase, because Taiga lowercases tags). That tag
-is the source of truth: plan/apply read the project's epics, stories and tasks back and match them by tag, so a
-deleted or stale `state.json` never causes duplicates. `state.json` is a cache, rewritten by every `apply --yes`
-(`type` is `epic`, `story` or `task`):
+is the source of truth: plan/apply read the project's epics, stories, tasks and issues back and match them by tag,
+so a deleted or stale `state.json` never causes duplicates. `state.json` is a cache, rewritten by every
+`apply --yes` (`type` is `epic`, `story`, `task` or `issue`):
 
 ```json
 {
@@ -206,14 +225,20 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
   `scenarios`, with one issue `{file, path: epics[i].stories[j], rule: story-format}` per such story, and write
   nothing. A story is new when no story on Taiga carries its `src:<key>` tag; `state.json` plays no part. Updates
   and skips of stories in the legacy format already on Taiga are unaffected: their template renders byte for byte
-  as before.
+  as before. Issues come after the epic tree, in manifest order; they have no parent and no link.
+- **Issue values**: after reading Taiga, `plan` and `apply` resolve each issue's `type`, `severity` and `priority` to
+  the ids of the project's values with that exact name (`GET /issue-types`, `/severities`, `/priorities?project=`,
+  read only when the backlog has issues). A name the project does not define makes them exit 4 (kind `validation`),
+  with one issue `{file, path: issues[i].<field>, rule: issue-value}` per unknown name (its message lists the names
+  that exist), and write nothing.
 - **Link**: a story is linked to its epic with `POST /epics/{id}/related_userstories`, after
   `GET /epics/{id}/related_userstories` (read for every epic with a `src:` tag) shows the link is missing. Existing
   links are never removed.
-- **Update**: apply manages only `subject`, `description` and `tags`, and a task's parent story. When they differ
-  from the manifest it PATCHes them with the item's current `version` (OCC). Tags are only added: tags people put on
-  Taiga stay, and removing a tag from the manifest does not remove it from Taiga. Status, assignee, sprint, points and
-  ordering are never sent.
+- **Update**: apply manages only `subject`, `description` and `tags`, a task's parent story, and an issue's `type`,
+  `severity` and `priority`. When they differ from the manifest it PATCHes them with the item's current `version`
+  (OCC). Tags are only added: tags people put on Taiga stay, and removing a tag from the manifest does not remove it
+  from Taiga. Status, assignee, sprint, points and ordering are never sent: a new issue gets the project's default
+  status on Taiga, and the status, assignee and sprint people set on it stay.
 - **Moves**: a task placed under another story in the manifest is an `update` with `changes.parent`; apply PATCHes
   `{user_story, version}` (taiga-back then puts the task in that story's sprint, `TaskViewSet.pre_save`). A story
   placed under another epic gets a `link` to the new epic; a story can belong to several epics on Taiga
@@ -222,7 +247,7 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
   tag are reported; links people made to their own epics are left alone.
 - **Custom attribute values**: an item's `custom_attributes` are matched to the project's attributes of that item
   type by exact name (`GET /projects/by_slug` lists them; bootstrap creates them from `project.yaml`). `plan` reads
-  `GET /{epics,userstories,tasks}/custom-attributes-values/{id}` of existing items that declare values and lists the
+  `GET /{epics,userstories,tasks,issues}/custom-attributes-values/{id}` of existing items that declare values and lists the
   declared values that differ. `apply` writes them with `PATCH …/custom-attributes-values/{id}
   {attributes_values, version}` (keys are attribute ids as strings; values objects have their own `version`, read
   by plan for existing items, so a value changed on Taiga meanwhile is a `conflict`). Taiga replaces the whole
@@ -286,7 +311,10 @@ command prints the same operations, writes nothing and exits 2 when there are ch
 }
 ```
 
-`create.parent` is the epic key (story) or story key (task). `update.changes` holds only the fields that differ; a
+`create.parent` is the epic key (story) or story key (task); issues have none. An issue's `create.fields` also hold the
+ids of its `type`, `severity` and `priority`, and its `update.changes` may hold `type`, `severity` and `priority` as
+`{ from: <id> | null, to: <id>, names: { from: "<name>" | null, to: "<name>" } }` (apply sends `to`; the text form
+shows the names, e.g. `type (Question -> Enhancement)`). `update.changes` holds only the fields that differ; a
 moved task has `changes.parent: { from: "<story key>" | null, to: "<story key>" }` (`null`: in no taigent story).
 `staleLinks` lists stories still linked to a taigent epic other than their manifest epic (`epic`: that epic's key).
 Custom attribute values add `custom_attributes: { "<name>": value }` to `create`, and
@@ -305,7 +333,8 @@ Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1]
 names the item, nothing was overwritten, and re-running `plan` shows the new state.
 The text form is `<file>: <path>: <message> [<rule>]`. `plan`/`apply` validate the whole project directory the
 same way (and require `backlog.yaml`) before contacting Taiga; after reading Taiga they also refuse to create a story
-in the legacy format (rule `story-format`, see [Reconciliation](#reconciliation)), still before any write.
+in the legacy format (rule `story-format`) and an issue value the project does not define (rule `issue-value`), see
+[Reconciliation](#reconciliation), still before any write.
 
 ## Review
 
@@ -376,7 +405,7 @@ modules: [epics, wiki, kanban]      # required, enabled modules: epics backlog k
 tags:                               # optional
   - name: type:feature              # type:feature|bug|chore or area:<kebab>
     color: "#2E7D32"                # optional, defaults to (and must equal) the tag's standard color
-custom_attributes:                  # optional, per item type: epic | story | task (as in backlog.yaml and plans)
+custom_attributes:                  # optional, per item type: epic | story | task | issue (as in backlog.yaml and plans)
   task:
     - name: Estimate (h)            # required, unique per item type
       description: Hours of work    # optional
@@ -397,7 +426,7 @@ Steps, in order (each is `create`, `update` or `skip` in the plan):
 | project | `POST /projects {name, description, creation_template, is_private}` | no project has the slug (`GET /projects/by_slug`) |
 | modules | `PATCH /projects/{id} {is_<module>_activated: true}` | a listed module is off (templates ship with Epics off) |
 | tag | `POST /projects/{id}/create_tag {tag, color}`; `edit_tag {from_tag, color}` | tag missing; tag exists (e.g. used by items) with another color |
-| custom-attribute | `POST /{epic,userstory,task}-custom-attributes {project, name, description, type}` (Taiga's names for epic, story, task) | no attribute with that name |
+| custom-attribute | `POST /{epic,userstory,task,issue}-custom-attributes {project, name, description, type}` (Taiga's names for epic, story, task, issue) | no attribute with that name |
 | membership | `POST /memberships {project, role, username}` (role id looked up by name) | username not a member / e-mail not invited |
 | wiki | `POST /wiki {project, slug: "home", content}` | `GET /wiki/by_slug` finds no `home` (an existing page is left alone) |
 
@@ -785,7 +814,7 @@ skill checks all of it and names each fix.
 | 1 | Internal error (bug) |
 | 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository |
 | 3 | `plan` or `--dry-run` found changes (`init --dry-run`: a file would change); `skills check` found differing copies |
-| 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
+| 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
 
 ## Code map
@@ -794,14 +823,14 @@ skill checks all of it and names each fix.
 |---|---|---|
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`); one review gate (`reviewGate`) and one text form for every plan and report |
 | Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog`, `loadDocs`, conventions rules (`conventions.ts`), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
-| Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`): the one item vocabulary outside the client |
+| Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`, `issue`): the one item vocabulary outside the client; `ISSUE_VALUE_FIELDS` (`type`, `severity`, `priority`) |
 | Secrets | `src/secrets.ts` | `Secrets` (`add`, `redact`): what no output may show, shared by the CLI (environment, typed password), the client and the stored login (tokens) and the MCP proxy |
 | Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
 | MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types to Taiga's endpoint and field names (`TAIGA_ITEM`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
-| Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links and attribute values `buildPlan` needs |
-| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), `describePlanOperation`, `srcTag(key)`, `storyDescription(story)` (the story template, shared with preview) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links, issue values (when the backlog has issues) and attribute values `buildPlan` needs |
+| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)`, `storyDescription(story)` (the story template, shared with preview) |
 | Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, pure `setVerdict`/`addComment`, `itemDigest`, `buildPreview(dir, slug)` → `Preview`, `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
@@ -837,7 +866,8 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
 - `fake.url` (TAIGA_API_URL, includes `/api/v1`) and `fake.user` (`{ id, username, password, email }`, the account
   `POST /auth` accepts; the harness logs in with it).
 - Seeding: `addEpic`, `addUserStory`, `addTask` (`{ project, subject, description?, tags? }`, plus
-  `user_story?` for tasks), `addEpicRelatedUserStory(epic, story)`; bootstrap fixtures `addUser`, `addProject({ slug,
+  `user_story?` for tasks), `addIssue` (the same plus `type?`, `severity?`, `priority?`, `status?` ids; the project's
+  defaults otherwise), `addEpicRelatedUserStory(epic, story)`; bootstrap fixtures `addUser`, `addProject({ slug,
   name?, members?, admins?, is_private?, modules?, tagsColors? })`, `addCustomAttribute`, `addMembership`,
   `addWikiPage`; upload fixtures `addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki",
   object_id, name, content })`. For `tickets`, set the returned story's `assigned_users`, `is_closed`, `finish_date`,
@@ -854,7 +884,10 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   `TAIGENT_TELEGRAM_API_URL`; the harness drops the developer's `TELEGRAM_*` and `CLAUDE_CONFIG_DIR`.
 - Edits like a Taiga user (bump `version`, recorded for OCC): `editItem(item, changes)`, `editWikiPage(page, changes)`,
   `editAttributeValues(itemType, itemId, values)`.
-- `fake.state`: what Taiga holds, the place to assert outcomes. `epics`, `userStories`, `tasks` (tags lowercased),
+- `fake.state`: what Taiga holds, the place to assert outcomes. `epics`, `userStories`, `tasks`, `issues` (tags
+  lowercased; an issue holds `type`, `severity`, `priority`, `status` ids, `assigned_to`, `milestone`, `is_closed`),
+  `issueStatuses`, `issueTypes`, `severities`, `priorities` (`{ id, project, name, order, color }`; every project gets
+  the default templates' values, and `default_issue_status`/`default_issue_type`/`default_severity`/`default_priority`),
   `epicRelatedUserStories` (`{ epic, user_story, order }`), `projects` (`modules`, `tagsColors`, `members`, `admins`),
   `users`, `roles` (`{ id, project, name, slug }`), `memberships` (`{ project, role, user, email }`), `customAttributes`
   (`{ itemType, project, name, description, type }`), `customAttributeValues` (`{ itemType, item, version,
@@ -883,12 +916,16 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   request body with nginx's HTML 413 page, like Taiga's reverse proxy (`client_max_body_size`).
 
 Fidelity: the fake implements Taiga's OCC (PATCH needs `version`; a stale one fails only when the same fields changed
-meanwhile), 30-item pagination unless `x-disable-pagination`, taiga-back's `tags=a,b` filter on the epic, story and
-task lists (items with any listed tag, exact match; taigent itself does not use it and matches `src:` tags client-side),
-and the post-save empty custom attribute values object (version 1) of every epic/story/task, served at
-`/{epics,userstories,tasks}/custom-attributes-values/{id}` (keys must be ids of the project's attributes of that type;
-PATCH replaces the object and needs its own `version`). It parses `multipart/form-data` with Node's own parser
-(`Response#formData`), computes attachment `size`/`sha1` from the bytes like taiga-back and rejects unknown form fields.
+meanwhile), 30-item pagination unless `x-disable-pagination`, taiga-back's `tags=a,b` filter on the epic, story, task
+and issue lists (items with any listed tag, exact match; taigent itself does not use it and matches `src:` tags
+client-side), and the post-save empty custom attribute values object (version 1) of every epic/story/task/issue, served
+at `/{epics,userstories,tasks,issues}/custom-attributes-values/{id}` (keys must be ids of the project's attributes of
+that type; PATCH replaces the object and needs its own `version`). Issues: `GET /issue-statuses`, `/issue-types`,
+`/severities`, `/priorities?project=` list the project's values; `POST /issues` and `PATCH /issues/{id}` give an
+issue without a value the project's default (taiga-back `Issue.save`), refuse an unknown value id with 400 and one of
+another project with 403 (`pre_conditions_on_save`), and a status sets `is_closed`. It parses `multipart/form-data`
+with Node's own parser (`Response#formData`), computes attachment `size`/`sha1` from the bytes like taiga-back and
+rejects unknown form fields.
 
 Live smoke test: `npm run test:live` runs `test/live/*.live.ts` against a real Taiga project. It is opt-in
 (`TAIGENT_LIVE_SMOKE=1`, target `TAIGENT_SMOKE_PROJECT`), never part of `npm test`, and only run by a person:
