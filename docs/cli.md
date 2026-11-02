@@ -84,10 +84,19 @@ epics:
     tags: [type:feature, area:auth]   # optional
     stories:                          # optional; each story is linked to this epic
       - key: AUTH-LOGIN
-        subject: User can log in
-        description: As a user I want to log in.    # optional
-        acceptance_criteria:                         # optional
-          - Wrong password shows an error
+        subject: Sign in to reach my projects        # the user story Summary
+        use_case:                                    # with scenarios: Mike Cohn use case, all three parts required
+          as_a: returning team member
+          i_want_to: sign in with my password
+          so_that: I land on my project list
+        description: Single sign-on comes later.     # optional context
+        scenarios:                                   # with use_case: one or more Gherkin scenarios
+          - scenario: Wrong password
+            given:                                   # one or more
+              - I have an account
+              - I am on the sign-in page
+            when: I submit a wrong password          # exactly one string
+            then: I see "Invalid credentials"        # exactly one string
         spec: docs/specs/auth.md                     # optional link/path to the spec
         tags: [type:feature]
         custom_attributes:                           # optional, on epics, stories and tasks
@@ -99,8 +108,53 @@ epics:
             tags: []                                      # optional
 ```
 
-Unknown fields are rejected (there is no status, assignee, sprint or points field: those belong to the people
-doing the work). A story's Taiga description is rendered from a template:
+Unknown fields are rejected, also inside `use_case` and inside a scenario (there is no status, assignee, sprint or
+points field: those belong to the people doing the work).
+
+A story comes in one of two formats ([ADR 0001](adr/0001-user-story-format-mike-cohn-gherkin.md)): the **user story format**, `use_case` + `scenarios` (Mike Cohn +
+Gherkin, labels stay in English), and the **legacy format**, free `description` + `acceptance_criteria`, kept only
+for stories already on Taiga:
+
+```yaml
+      - key: AUTH-LOGOUT
+        subject: User can log out
+        description: As a user I want to log out.    # optional
+        acceptance_criteria:                         # optional list of non-empty strings
+          - Session ends
+```
+
+`description`, `spec`, `tags`, `custom_attributes` and `tasks` work with both. Validation (offline, so in `validate`,
+`plan` and `apply`) checks the shape of the user story format: `use_case` is a mapping with non-empty `as_a`,
+`i_want_to` and `so_that`; `scenarios` is a non-empty list of mappings, each with a non-empty `scenario`, a `given`
+list of at least one non-empty string, and non-empty `when` and `then` strings (a list is a `type` error). Missing
+or empty values are `required`, wrong types `type`, unknown fields `known-field`. Rule **`story-format`** reports a
+story with `use_case` but no `scenarios` (or the reverse), and a story mixing `acceptance_criteria` with `use_case`
+or `scenarios`.
+
+A story's Taiga description is rendered from a template; its parts are joined by one blank line and empty parts are
+left out. User story format:
+
+```
+- **As a** <as_a>
+- **I want to** <i_want_to>
+- **so that** <so_that>
+
+<description>
+
+## Acceptance criteria
+
+- [ ] **Scenario:** <scenario>
+  - **Given:** <given[0]>
+  - **and Given:** <given[1..]>
+  - **When:** <when>
+  - **Then:** <then>
+- [ ] **Scenario:** <next scenario>
+  ...
+
+Spec: <spec>
+```
+
+Legacy format, unchanged byte for byte so stories already on Taiga stay unchanged:
 
 ```
 <description>
@@ -111,8 +165,6 @@ doing the work). A story's Taiga description is rendered from a template:
 
 Spec: <spec>
 ```
-
-Empty parts are left out.
 
 Names, tags, keys, wiki slugs and attachment names follow `docs/taiga/conventions.md`; each rule there has the
 `rule` id that validation errors report. Keys are unique across epics, stories and tasks.
