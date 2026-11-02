@@ -54,8 +54,9 @@ Bố cục gồm bốn phần, từ trên xuống:
   mục.
 - **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
   - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
-  - **Wiki**, **Taiga** (Project, Ticket của tôi, Báo cáo), **Git**: chưa có nội dung. Mỗi mục chỉ hiện một trạng thái
-    trống ghi rõ là chưa có và cách làm việc đó bằng CLI trong lúc chờ. Không có nút nào.
+  - **Wiki**, **Taiga** (Project, Ticket của tôi, Báo cáo): chưa có nội dung. Mỗi mục chỉ hiện một trạng thái trống
+    ghi rõ là chưa có và cách làm việc đó bằng CLI trong lúc chờ. Không có nút nào.
+  - **Git**: pull, commit và push thư mục manifest (xem [Git](#git)).
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
   - **Settings**: phiên bản của ứng dụng, taigent, Electron và Node. Chưa có thiết lập nào.
 
@@ -84,7 +85,7 @@ Mục **Backlog** gồm:
    ngắn. Câu trả lời hiện dưới góp ý (*Agent trả lời*). Agent không đổi verdict của bạn.
 3. Mục đã **Đạt** mà agent sửa sau đó (nội dung ghi lên Taiga khác lúc bạn duyệt) sẽ chuyển sang
    **Đã đổi sau khi duyệt** và không còn tính là *Đạt*. Hãy xem lại rồi bấm **Đạt** lần nữa.
-4. Commit `taiga/<slug>/review.yaml` cùng manifest để cả team thấy kết quả review.
+4. Commit `taiga/<slug>/review.yaml` cùng manifest (mục **Git**, xem [Git](#git)) để cả team thấy kết quả review.
 
 ## Đăng nhập Taiga
 
@@ -119,6 +120,41 @@ khác.
   trong `state.json`, lần chạy sau sẽ tiếp tục từ chỗ dừng.
 
 Verdict *Đạt* không thay cho bước đồng ý này: `plan`/`apply` không đọc `review.yaml`.
+
+## Git
+
+Mục **Git** chia sẻ manifest và kết quả review với team mà không cần biết git. Nó chỉ thao tác trên **phạm vi** gồm:
+
+- thư mục manifest (`taiga/`, hoặc thư mục `TAIGENT_MANIFESTS_DIR` khi thư mục đó nằm trong repo);
+- các file mà `taiga/<slug>/docs.yaml` tham chiếu (`file` của `wiki` và `attachments`) nằm ngoài thư mục đó, ví dụ
+  `docs/huong-dan.md`.
+
+File nằm ngoài repo đang mở không thuộc phạm vi. Ứng dụng chạy `git` của máy (không qua shell, không bao giờ hỏi mật
+khẩu trong ứng dụng: remote cần đăng nhập thì dùng credential helper của git). Cần git 2.25 trở lên.
+
+Màn hình hiện nhánh, nhánh theo dõi trên remote, số commit chưa push và số commit mới trên remote (theo lần fetch gần
+nhất), phạm vi, các file **trong phạm vi** đã đổi (`git status --porcelain`) và số file đã đổi ngoài phạm vi. Bấm
+**Làm mới** để đọc lại. Ba thao tác:
+
+- **Pull**: fetch rồi `git pull --ff-only --no-rebase` từ nhánh đang theo dõi. Nếu ở máy có commit chưa push trong khi
+  remote có commit mới (lịch sử đã tách nhánh) thì ứng dụng dừng trước khi pull, working tree không đổi.
+- **Commit + Push**: nhập message rồi bấm. Ứng dụng `git add` đúng các file trong phạm vi đã đổi, rồi
+  `git commit --only` với chính các file đó (file khác dù đã được stage cũng không vào commit), rồi `git push` lên nhánh
+  đang theo dõi. Nếu remote có commit mới, ứng dụng không commit và nhắc bấm **Pull** trước.
+- **Push**: push các commit chưa push (ví dụ commit trước đó bị lỗi push).
+
+Ứng dụng không bao giờ merge, rebase, force push hay add file ngoài phạm vi. Nó cũng không push commit nào sửa file ngoài
+phạm vi (commit bạn tự tạo trong terminal). Khi gặp một trong các trường hợp sau, ứng dụng dừng, giải thích bằng tiếng
+Việt, liệt kê lệnh gợi ý và mở thư mục repo để bạn xử lý trong terminal (khi có terminal trong ứng dụng thì mở tab
+terminal ở repo):
+
+- máy chưa cài git, hoặc thư mục đang mở không phải repo git;
+- conflict, hoặc một lần merge/rebase/cherry-pick/revert chưa xong;
+- lịch sử đã tách nhánh;
+- HEAD không ở nhánh nào, repo chưa có remote, hoặc nhánh chưa theo dõi nhánh nào trên remote;
+- có commit chưa push sửa file ngoài phạm vi;
+- một lệnh git thất bại (ví dụ fetch/push bị từ chối, thiếu `user.name`/`user.email`). Thông báo kèm nguyên văn lỗi của
+  git.
 
 ## Đóng gói
 
@@ -172,11 +208,18 @@ thì truyền `--project <slug> --story <key>` (chép `taiga/<slug>`).
 Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
 không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng và ứng dụng mở vào mục Backlog, mở repo, chụp
 cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
-đẩy bị chặn, đi qua Wiki, Taiga, Git, Settings (mỗi mục chỉ có trạng thái trống, không có nút; phím `j` không đổi
-mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
-đổi sau khi duyệt*, thử phím `j`/`k`. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục Thay đổi
+đẩy bị chặn, đi qua Wiki, Taiga, Settings (mỗi mục chỉ có trạng thái trống, không có nút; phím `j` không đổi mục
+đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã đổi
+sau khi duyệt*, thử phím `j`/`k`. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục Thay đổi
 (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Hộp thoại xác nhận đẩy luôn được trả lời
-*Huỷ*. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
+*Huỷ*.
+
+Cuối cùng script kiểm tra mục **Git** (`scripts/smoke-git.mjs`) trên một repo tạm có remote là một repo bare tạm, chứa
+fixture trong `taiga/<slug>/`, một `docs.yaml` tham chiếu `docs/huong-dan.md` và một file ngoài phạm vi: sửa một file
+trong `taiga/` và một file ngoài, kiểm tra danh sách chỉ có file trong `taiga/`, Commit + Push rồi kiểm tra remote chỉ
+nhận file đó; sửa `docs/huong-dan.md` và kiểm tra nó vào danh sách; tạo lịch sử tách nhánh (một commit của "đồng đội"
+trên remote, một commit ở máy) rồi bấm Pull, kiểm tra ứng dụng giải thích, mở repo (thay cho terminal) và HEAD, trạng
+thái cùng nội dung working tree không đổi. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
 
 ## Bảo mật
 
@@ -185,3 +228,6 @@ mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn đư�
 - Markdown trong mô tả do agent viết được làm sạch bằng DOMPurify trước khi hiển thị.
 - Renderer chỉ dùng được API có kiểu trong `desktop/src/shared/api.ts`, qua preload. Nó không đọc file và không gọi
   mạng.
+- Mục Git chạy `git` bằng `execFile`, không qua shell, với `GIT_TERMINAL_PROMPT=0` (không bao giờ chờ nhập mật khẩu).
+  Danh sách file cần add và commit đi qua stdin (`--pathspec-from-file`) và được hiểu đúng nguyên văn
+  (`--literal-pathspecs`).

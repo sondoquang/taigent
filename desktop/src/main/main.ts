@@ -20,6 +20,7 @@ import {
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, toFailure } from './project.ts';
 import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
+import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -270,6 +271,10 @@ function registerIpc(): void {
   handle(CHANNELS.openExternal, async (url: string) => {
     if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) await shell.openExternal(url);
   });
+  handle(CHANNELS.gitStatus, async () => gitStatus(requireRepo()));
+  handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
+  handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
+  handle(CHANNELS.gitPush, async () => gitPush(requireRepo()));
 }
 
 app.enableSandbox();

@@ -1,6 +1,6 @@
 // Taigent Desktop UI: the navigation shell (navigation.ts) with the Backlog section (tree, item detail and its
-// review) and the Thay đổi section (plan and push to Taiga). Everything it knows comes through `window.taigent`
-// (preload); it never reaches the file system or the network itself.
+// review), the Thay đổi section (plan and push to Taiga) and the Git section (git.ts). Everything it knows comes
+// through `window.taigent` (preload); it never reaches the file system or the network itself.
 
 import type {
   AppState,
@@ -19,6 +19,7 @@ import type {
 } from '../shared/api.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, wireNavigation } from './navigation.ts';
+import { gitRepoChanged, wireGit } from './git.ts';
 
 declare global {
   interface Window {
@@ -706,6 +707,7 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
   state.selected = undefined;
   clearChangesResult();
   render();
+  gitRepoChanged();
   const only = result.value.projects.length === 1 ? result.value.projects[0] : undefined;
   if (only) void openProject(only.slug);
 }
@@ -775,6 +777,7 @@ function wire(): void {
     if (result.ok && result.value.slug !== state.view?.slug) return;
     applyView(result);
   });
+  wireGit({ api, h, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
 }
 
 async function start(): Promise<void> {
