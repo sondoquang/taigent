@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { type BacklogItem, type EditResult, readItem, readManifestFile, readWikiPages, removeItem, saveItem, saveWikiPage } from '../src/edit.ts';
 import { issueKeyPrefix, suggestKey } from '../src/manifest/conventions.ts';
@@ -573,11 +573,14 @@ test('saveWikiPage adds a page under pages/ with its docs.yaml entry, keeping th
 });
 
 test('saveWikiPage edits the file an entry names, wherever it is, keeping CRLF; docs.yaml stays as it is', async (t) => {
-  const docs = DOCS.replace('attachments:', '  - slug: spec-billing\n    file: ../shared/billing.md\nattachments:');
-  const dir = await docsProject(t, docs);
-  await mkdir(join(dir, '..', 'shared'), { recursive: true });
-  const billing = join(dir, '..', 'shared', 'billing.md');
-  t.after(() => rm(join(dir, '..', 'shared'), { recursive: true, force: true }));
+  // A folder next to the project's, unique to this run: two test runs at once must not share the file.
+  const dir = await docsProject(t);
+  const shared = `${basename(dir)}-shared`;
+  const docs = DOCS.replace('attachments:', `  - slug: spec-billing\n    file: ../${shared}/billing.md\nattachments:`);
+  await writeFile(join(dir, 'docs.yaml'), docs);
+  await mkdir(join(dir, '..', shared), { recursive: true });
+  const billing = join(dir, '..', shared, 'billing.md');
+  t.after(() => rm(join(dir, '..', shared), { recursive: true, force: true }));
   await writeFile(billing, '# Billing\r\n\r\nOld.\r\n');
   const wiki = await readWikiPages(dir);
   const opened = wiki.pages.find((page) => page.slug === 'spec-billing')!;

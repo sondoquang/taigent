@@ -319,7 +319,8 @@ async function formScenario(page) {
   await page.fill('#item-form [data-attribute="Mục tiêu quý"]', 'Q4');
   await page.screenshot({ path: join(shots, '6-epic-form.png') });
   await page.click('#form-save');
-  await page.waitForSelector(`#tree .node[data-key="${epicKey}"]`);
+  // Selected, not just listed: the watcher's refresh can list the item before the save's own answer selects it.
+  await page.waitForSelector(`#tree .node.selected[data-key="${epicKey}"]`);
   let text = await readFile(backlogFile, 'utf8');
   check(new RegExp(`- key: ${epicKey}\\r?\\n +subject: Soạn backlog bằng form`).test(text) && text.includes('Mục tiêu quý: Q4'), 'backlog.yaml has the new epic and its custom attribute');
   check(text.includes('# Legacy format: kept because the story is already on Taiga'), 'backlog.yaml keeps its comments');
@@ -334,7 +335,7 @@ async function formScenario(page) {
   await page.fill('#form-description', 'Done khi: task tạo bằng form nằm dưới story của nó trong `backlog.yaml`.');
   check((await page.innerHTML('#form-preview-body')).includes('<code>backlog.yaml</code>'), 'the task form previews its Markdown description');
   await page.click('#form-save');
-  await page.waitForSelector(`#tree .node[data-key="${taskKey}"]`);
+  await page.waitForSelector(`#tree .node.selected[data-key="${taskKey}"]`);
   text = await readFile(backlogFile, 'utf8');
   const taskAt = text.indexOf(`- key: ${taskKey}`);
   check(text.indexOf('- key: REVIEW-APPROVE-STALE') < taskAt && taskAt < text.indexOf('- key: REVIEW-MARKDOWN'), 'backlog.yaml has the new task under REVIEW-APPROVE');
@@ -587,7 +588,7 @@ async function storyFormScenario(page) {
   check(source.includes('**and Given:** Epic cha đã có trong backlog') && html.includes('Story có nhiều Given'), 'the live preview shows the scenarios');
   await page.screenshot({ path: join(shots, '10-story-form.png') });
   await page.click('#form-save');
-  await page.waitForSelector(`#tree .node[data-key="${storyKey}"]`);
+  await page.waitForSelector(`#tree .node.selected[data-key="${storyKey}"]`);
   const created = await manifestStory(storyKey);
   check(
     Object.keys(created).join() === 'key,subject,use_case,scenarios,description,spec,tags' &&
@@ -599,10 +600,6 @@ async function storyFormScenario(page) {
   const validate = taigent('validate', '--project', project);
   check(validate.status === 0, `taigent validate exits 0 (${validate.status}) ${validate.stderr.trim()}`);
   check(previewDescription(storyKey) === source, 'the form preview is exactly the description taigent preview renders');
-  // The detail of the new story renders after the tree shows it (later still on a loaded machine): wait for it.
-  await page
-    .waitForFunction((expected) => document.querySelector('#detail-content .markdown')?.innerHTML === expected, html, { timeout: 15_000 })
-    .catch(() => undefined);
   check(
     (await page.innerHTML('#detail-content .markdown')) === html,
     `the form preview renders like the review screen (same renderer and sanitizer; detail shows ${(await page.textContent('.breadcrumb'))?.trim()})`,
