@@ -111,7 +111,9 @@ export async function smokeHeadless(page, { app, repo, project, work, shots, log
   await goTo(page, 'backlog');
   // A taller panel shows a whole command (the claude one carries the allowlist).
   await page.evaluate(() => document.getElementById('terminal-dock')?.style.setProperty('--terminal-height', '520px'));
+  // The spec picker answers with a file of this repository; the folder picker of later steps is put back afterwards.
   await app.evaluate(({ dialog }, file) => {
+    globalThis.smokeOpenDialog = dialog.showOpenDialog;
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
   }, join(repo, 'docs', 'headless.md'));
 
@@ -151,6 +153,9 @@ export async function smokeHeadless(page, { app, repo, project, work, shots, log
     log(`${run.selector} status:`, (await page.textContent('#agent-status'))?.trim());
     await page.screenshot({ path: join(shots, `headless-${run.selector.slice(7)}.png`) });
   }
+  await app.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = globalThis.smokeOpenDialog;
+  });
 
   // Huỷ: a real run (no --dry-run) of the fake codex, which waits; the tab kills its tree and says so.
   await app.evaluate(() => {
@@ -183,4 +188,7 @@ export async function smokeHeadless(page, { app, repo, project, work, shots, log
   await app.evaluate(() => {
     delete process.env.SMOKE_CODEX;
   });
+  // Later steps get the panel as the terminal steps left it: default height, hidden.
+  await page.evaluate(() => document.getElementById('terminal-dock')?.style.removeProperty('--terminal-height'));
+  await page.click('#terminal-hide');
 }
