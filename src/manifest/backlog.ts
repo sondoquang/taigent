@@ -148,7 +148,7 @@ export function unknownIssueValuesError(file: string, values: readonly UnknownIs
   );
 }
 
-/** Every key of the epic tree (epics, stories and tasks): the items attachments and review entries may name. */
+/** Every key of the epic tree (epics, stories and tasks): the items attachments may name (review: `reviewKeys`). */
 export function backlogKeys(backlog: Backlog): Set<string> {
   const keys = new Set<string>();
   for (const epic of backlog.epics) {

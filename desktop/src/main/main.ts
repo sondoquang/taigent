@@ -191,10 +191,12 @@ async function apply(slug: string): Promise<Result<ApplyOutcome>> {
 
   const { summary } = view.value.preview;
   const counts = planned.value.summary;
+  const issueOps = planned.value.operations.filter((op) => op.type === 'issue');
   const detail = [
     `Dự án: ${slug}`,
     `Tạo mới: ${counts.create} mục`,
     `Cập nhật: ${counts.update} mục`,
+    `Trong đó issue: tạo mới ${issueOps.filter((op) => op.action === 'create').length}, cập nhật ${issueOps.filter((op) => op.action === 'update').length}`,
     `Gắn story vào epic: ${counts.link}`,
     '',
     `Chưa duyệt: ${summary.unreviewed} mục`,

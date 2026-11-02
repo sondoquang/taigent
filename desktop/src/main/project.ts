@@ -48,7 +48,7 @@ export async function buildView(root: string, slug: string): Promise<Result<Proj
 }
 
 export function allItems(preview: Preview): PreviewItem[] {
-  return preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]);
+  return [...preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]), ...preview.issues];
 }
 
 // review.yaml writes run one at a time, so two quick clicks never read the same old file.
