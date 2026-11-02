@@ -15,7 +15,7 @@ import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { loadManifests } from './manifest/manifests.ts';
 import { readState, STATE_FILE } from './manifest/state.ts';
 import { readManifestYaml } from './manifest/yaml.ts';
-import { storyDescription } from './planner.ts';
+import { storyDescription } from './story-template.ts';
 
 export const REVIEW_FILE = 'review.yaml';
 

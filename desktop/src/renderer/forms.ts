@@ -1,7 +1,8 @@
-// Forms that write backlog.yaml through the manifest edit API (`src/edit.ts`, via `window.taigent`): the epic and
-// task forms, the item actions (edit, add task, remove), the conflict dialog when backlog.yaml changed since a form
-// opened, and the removal warning for items already on Taiga. Forms never write review.yaml: a new item is
-// "Chưa duyệt", an edited item that had a verdict turns "Đã đổi sau khi duyệt" through its digest.
+// Forms that write backlog.yaml through the manifest edit API (`src/edit.ts`, via `window.taigent`): the epic, story
+// and task forms (the story's own parts are in story-form.ts), the item actions (edit, add story or task, remove),
+// the conflict dialog when backlog.yaml changed since a form opened, and the removal warning for items already on
+// Taiga. Forms never write review.yaml: a new item is "Chưa duyệt", an edited item that had a verdict turns "Đã đổi
+// sau khi duyệt" through its digest.
 
 import { suggestKey } from '../../../src/manifest/conventions.ts';
 import type {
@@ -18,6 +19,7 @@ import type {
 } from '../shared/api.ts';
 import { changeHunks, lineDiff } from './diff.ts';
 import { byId, h } from './dom.ts';
+import { storyEditor, type StoryEditor } from './story-form.ts';
 
 /** What the forms need from the main renderer. */
 export interface FormsHost {
@@ -29,7 +31,7 @@ export interface FormsHost {
   failureBlock(failure: Failure): HTMLElement;
 }
 
-type FormType = 'epic' | 'task';
+type FormType = 'epic' | 'story' | 'task';
 
 interface OpenForm {
   type: FormType;
@@ -39,9 +41,17 @@ interface OpenForm {
   /** backlog.yaml as the form opened it: its digest guards the save, its text is the "before" of a conflict. */
   base: BacklogSnapshot;
   keyTouched: boolean;
+  /** The story form's format section and preview. */
+  story?: StoryEditor;
 }
 
-const TYPE_LABEL: Record<FormType, string> = { epic: 'Epic', task: 'Task' };
+const TYPE_LABEL: Record<FormType, string> = { epic: 'Epic', story: 'Story', task: 'Task' };
+
+const KEY_HINT: Record<FormType, string> = {
+  epic: 'Gợi ý theo quy ước: tên mảng việc, ví dụ AUTH.',
+  story: 'Gợi ý theo quy ước: <EPIC>-<việc>, ví dụ AUTH-LOGIN.',
+  task: 'Gợi ý theo quy ước: <STORY>-<bước>, ví dụ AUTH-LOGIN-API.',
+};
 
 let host: FormsHost | undefined;
 let form: OpenForm | undefined;
@@ -109,14 +119,16 @@ export function mountForms(formsHost: FormsHost): void {
   formsHost.api.onProjectChanged(() => void noticeChange());
 }
 
-/** Buttons of the item detail: edit (epic, task), add a task (story), remove. */
+/** Buttons of the item detail: edit, add a story (epic) or a task (story), remove. */
 export function itemActions(item: PreviewItem): HTMLElement {
+  const type = item.type;
   return h(
     'div',
     { class: 'item-actions' },
-    (item.type === 'epic' || item.type === 'task') &&
-      h('button', { type: 'button', class: 'btn small', 'data-action': 'edit', onclick: () => void openForm(item.type === 'epic' ? 'epic' : 'task', item) }, 'Sửa'),
-    item.type === 'story' &&
+    type !== 'issue' && h('button', { type: 'button', class: 'btn small', 'data-action': 'edit', onclick: () => void openForm(type, item) }, 'Sửa'),
+    type === 'epic' &&
+      h('button', { type: 'button', class: 'btn small', 'data-action': 'add-story', onclick: () => void openForm('story', undefined, item.key) }, '+ Story'),
+    type === 'story' &&
       h('button', { type: 'button', class: 'btn small', 'data-action': 'add-task', onclick: () => void openForm('task', undefined, item.key) }, '+ Task'),
     h('button', { type: 'button', class: 'btn small ghost', 'data-action': 'remove', onclick: () => void confirmRemove(item) }, 'Xoá'),
   );
@@ -166,9 +178,15 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
     toast('Chọn dự án trước.', 'error');
     return;
   }
-  const snapshot = await api.readBacklog(view.slug);
+  // A story's form edits its manifest fields (use case, scenarios…), not the description the preview composes.
+  const snapshot = await api.readBacklog(view.slug, type === 'story' && original ? { type, key: original.key } : undefined);
   if (!snapshot.ok) {
     toast(snapshot.message, 'error');
+    return;
+  }
+  const stored = snapshot.value.item?.type === 'story' ? snapshot.value.item.fields : undefined;
+  if (type === 'story' && original && !stored) {
+    toast(`Không tìm thấy story ${original.key} trong backlog.yaml.`, 'error');
     return;
   }
   form = { type, slug: view.slug, base: snapshot.value, keyTouched: original !== undefined, ...(original && { original }) };
@@ -180,43 +198,53 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   const keyHint = h(
     'p',
     { class: 'hint', id: 'form-key-hint' },
-    locked
-      ? `Đã có trên Taiga (#${original!.applied!.ref}): key bị khoá. Đổi key sẽ tạo item mới và biến item cũ thành mồ côi.`
-      : type === 'epic'
-        ? 'Gợi ý theo quy ước: tên mảng việc, ví dụ AUTH.'
-        : 'Gợi ý theo quy ước: <STORY>-<bước>, ví dụ AUTH-LOGIN-API.',
+    locked ? `Đã có trên Taiga (#${original!.applied!.ref}): key bị khoá. Đổi key sẽ tạo item mới và biến item cũ thành mồ côi.` : KEY_HINT[type],
   );
   const subject = h('input', { id: 'form-subject', type: 'text', autocomplete: 'off' });
   subject.value = original?.subject ?? '';
-  const description = h('textarea', { id: 'form-description', rows: type === 'epic' ? '5' : '4' });
-  description.value = original?.description ?? (type === 'task' ? 'Done khi: ' : '');
+  const description = h('textarea', { id: 'form-description', rows: type === 'epic' ? '5' : type === 'story' ? '3' : '4' });
+  description.value = (stored ? stored.description : original?.description) ?? (type === 'task' ? 'Done khi: ' : '');
   const tags = h('input', { id: 'form-tags', type: 'text', autocomplete: 'off', placeholder: 'type:feature, area:auth' });
   tags.value = (original?.tags ?? []).join(', ');
+  const specInput = type === 'story' && h('input', { id: 'form-spec', type: 'text', autocomplete: 'off', placeholder: 'docs/specs/auth.md hoặc link' });
+  if (specInput) specInput.value = stored?.spec ?? '';
 
-  const stories = view.preview.epics.flatMap((epic) => epic.stories.map((story) => story.key));
+  // A story belongs to an epic, a task to a story: choosing another one in the form moves the item there.
+  const parents =
+    type === 'story'
+      ? view.preview.epics.map((epic) => ({ key: epic.key, label: `${epic.key}: ${epic.subject}` }))
+      : view.preview.epics.flatMap((epic) => epic.stories.map((story) => ({ key: story.key, label: parentLabel(view, story.key) })));
   const parentSelect =
-    type === 'task' &&
-    h('select', { id: 'form-parent' }, ...stories.map((storyKey) => h('option', { value: storyKey, selected: storyKey === parentKey }, parentLabel(view, storyKey))));
+    type !== 'epic' && h('select', { id: 'form-parent' }, ...parents.map((option) => h('option', { value: option.key, selected: option.key === parentKey }, option.label)));
 
-  // Custom attributes: those project.yaml declares for epics, then any other the epic already has.
-  const declared = snapshot.value.attributes.epic;
+  // Custom attributes (epics and stories): those project.yaml declares for the type, then any other the item has.
+  const declared = type === 'task' ? [] : snapshot.value.attributes[type];
   const existing = original?.customAttributes ?? {};
   const undeclared = Object.keys(existing)
-    .filter((name) => !declared.some((spec) => spec.name === name))
+    .filter((name) => !declared.some((attribute) => attribute.name === name))
     .map((name): CustomAttributeSpec => {
       const value = existing[name];
       return { name, description: '', type: typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'checkbox' : 'text' };
     });
-  const attributes = type === 'epic' ? [...declared, ...undeclared] : [];
+  const attributes = type === 'task' ? [] : [...declared, ...undeclared];
+
+  const refreshPreview = () => form?.story?.refresh({ description: description.value.trim(), spec: specInput ? specInput.value.trim() : '' });
+  const story =
+    type === 'story'
+      ? storyEditor(
+          stored?.acceptanceCriteria ? { acceptanceCriteria: stored.acceptanceCriteria } : stored?.useCase && { useCase: stored.useCase, scenarios: stored.scenarios ?? [] },
+          refreshPreview,
+        )
+      : undefined;
+  if (story) form.story = story;
 
   const taken = new Set(allItems(view).map((item) => item.key).filter((itemKey) => itemKey !== original?.key));
   const refreshKey = () => {
     if (!form || locked) return;
-    if (!form.keyTouched) key.value = suggestKey(subject.value, type === 'task' ? (parentSelect ? parentSelect.value : parentKey) : undefined, taken);
+    if (!form.keyTouched) key.value = suggestKey(subject.value, type === 'epic' ? undefined : parentSelect ? parentSelect.value : parentKey, taken);
     const duplicate = taken.has(key.value.trim());
     keyHint.classList.toggle('error', duplicate);
-    if (duplicate) keyHint.textContent = `Key ${key.value.trim()} đã có trong backlog: chọn key khác.`;
-    else keyHint.textContent = type === 'epic' ? 'Gợi ý theo quy ước: tên mảng việc, ví dụ AUTH.' : 'Gợi ý theo quy ước: <STORY>-<bước>, ví dụ AUTH-LOGIN-API.';
+    keyHint.textContent = duplicate ? `Key ${key.value.trim()} đã có trong backlog: chọn key khác.` : KEY_HINT[type];
   };
   subject.addEventListener('input', refreshKey);
   key.addEventListener('input', () => {
@@ -226,25 +254,28 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   if (parentSelect) parentSelect.addEventListener('change', refreshKey);
 
   const body = byId<HTMLFormElement>('item-form-body');
+  body.classList.toggle('with-preview', story !== undefined);
   body.replaceChildren(
     h(
       'div',
       { class: 'form-fields' },
       h('h2', {}, original ? `Sửa ${TYPE_LABEL[type].toLowerCase()} ${original.key}` : `Thêm ${TYPE_LABEL[type].toLowerCase()}`),
       h('p', { class: 'warn-box', id: 'form-stale', hidden: true }, 'backlog.yaml vừa đổi từ lúc mở form (có thể do agent). Khi lưu, bạn sẽ được xem thay đổi đó rồi áp lại phần của mình.'),
-      parentSelect && field('parent', 'Thuộc story', parentSelect),
+      parentSelect && field('parent', type === 'story' ? 'Thuộc epic' : 'Thuộc story', parentSelect),
       field('subject', 'Tiêu đề', subject),
       field('key', 'Key', key, keyHint),
-      field('description', type === 'task' ? 'Định nghĩa done' : 'Mô tả (Markdown)', description),
+      story?.element,
+      field('description', type === 'task' ? 'Định nghĩa done' : type === 'story' ? 'Mô tả thêm (Markdown, tuỳ chọn)' : 'Mô tả (Markdown)', description),
+      specInput && field('spec', 'Spec (đường dẫn hoặc link, tuỳ chọn)', specInput),
       field('tags', 'Tag (cách nhau bằng dấu phẩy)', tags),
       attributes.length > 0 &&
         h(
           'fieldset',
           { class: 'field attributes-field', 'data-field': 'custom_attributes' },
           h('legend', {}, 'Thuộc tính (custom attributes trong project.yaml)'),
-          ...attributes.map((spec, index) => {
-            const control = attributeInput(spec, existing[spec.name], index);
-            return h('label', { class: 'attribute', for: control.id }, h('span', {}, spec.name), control);
+          ...attributes.map((attribute, index) => {
+            const control = attributeInput(attribute, existing[attribute.name], index);
+            return h('label', { class: 'attribute', for: control.id }, h('span', {}, attribute.name), control);
           }),
           h('p', { class: 'field-error', hidden: true }),
         ),
@@ -257,13 +288,16 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
         h('button', { type: 'submit', class: 'btn primary', id: 'form-save' }, 'Lưu vào backlog.yaml'),
       ),
     ),
+    ...(story ? [story.preview] : []),
   );
   body.onsubmit = (event) => {
     event.preventDefault();
     void submitForm();
   };
+  body.oninput = refreshPreview;
   byId<HTMLDialogElement>('item-form').showModal();
   refreshKey();
+  refreshPreview();
   subject.focus();
 }
 
@@ -292,10 +326,18 @@ function formRequest(open: OpenForm): SaveItemRequest {
   };
   const original = open.original ? { original: open.original.key } : {};
   if (open.type === 'epic') return { baseDigest: open.base.file.digest, ...original, item: { type: 'epic', key, fields: { ...fields, customAttributes: attributeValues() } } };
-  return { baseDigest: open.base.file.digest, ...original, item: { type: 'task', key, parent: byId<HTMLSelectElement>('form-parent').value, fields } };
+  const parent = byId<HTMLSelectElement>('form-parent').value;
+  if (open.type === 'story') {
+    const story = { ...fields, spec: byId<HTMLInputElement>('form-spec').value.trim(), customAttributes: attributeValues(), ...open.story!.format() };
+    return { baseDigest: open.base.file.digest, ...original, item: { type: 'story', key, parent, fields: story } };
+  }
+  return { baseDigest: open.base.file.digest, ...original, item: { type: 'task', key, parent, fields } };
 }
 
-/** Puts each issue next to its field (`epics[0].tags[1]` → tags); the others go to the list under the form. */
+/**
+ * Puts each issue next to the part of the form its path names, the most specific one there is (`…scenarios[1].when`,
+ * else `…scenarios[1]`, else `…scenarios`; `…tags[1]` → tags); the others go to the list under the form.
+ */
 function showIssues(issues: ManifestIssue[]): void {
   for (const error of document.querySelectorAll<HTMLElement>('#item-form .field-error')) {
     error.hidden = true;
@@ -303,9 +345,14 @@ function showIssues(issues: ManifestIssue[]): void {
   }
   const general: ManifestIssue[] = [];
   for (const issue of issues) {
-    const rest = issue.path.replace(/^epics\[\d+\](?:\.stories\[\d+\](?:\.tasks\[\d+\])?)?\.?/, '');
-    const name = issue.path === '' ? '' : rest.split(/[.[]/)[0];
-    const error = name ? document.querySelector<HTMLElement>(`#item-form .field[data-field="${name}"] .field-error`) : null;
+    let at = issue.path.replace(/^epics\[\d+\](?:\.stories\[\d+\](?:\.tasks\[\d+\])?)?\.?/, '');
+    let error: HTMLElement | null = null;
+    while (at !== '' && !error) {
+      const name = CSS.escape(at);
+      error = document.querySelector<HTMLElement>(`#item-form [data-path="${name}"] > .field-error, #item-form .field[data-field="${name}"] > .field-error`);
+      const parentPath = at.replace(/(?:\.[^.[\]]+|\[\d+\])$/, '');
+      at = parentPath === at ? '' : parentPath;
+    }
     if (!error) {
       general.push(issue);
       continue;

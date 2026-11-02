@@ -6,6 +6,7 @@
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
+import { spawnSync } from 'node:child_process';
 import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -13,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright-core';
+import { parse } from 'yaml';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -147,7 +149,10 @@ try {
   check((await page.getAttribute('#tree .node.selected', 'data-key')) === story, 'k moves back');
 
   if (values.project) log('skipped forms: they use the keys of the fixture');
-  else await formScenario(page);
+  else {
+    await formScenario(page);
+    await storyFormScenario(page);
+  }
 
   await page.waitForFunction(() => document.querySelector('#statusbar')?.textContent?.includes('Taiga'), null, { timeout: 30_000 }).catch(() => undefined);
   const login = await page.evaluate(() => window.taigent.whoami());
@@ -243,4 +248,124 @@ async function formScenario(page) {
   await page.click('#remove-confirm');
   await page.waitForSelector(`#tree .node[data-key="${taskKey}"]`, { state: 'detached' });
   check(!(await readFile(backlogFile, 'utf8')).includes(taskKey), 'the task is removed from backlog.yaml');
+}
+
+/** Runs the taigent CLI of this repository on the temporary manifests (offline commands only). */
+function taigent(...args) {
+  return spawnSync(process.execPath, [join(repo, 'bin', 'taigent.js'), ...args], { cwd: work, env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests }, encoding: 'utf8' });
+}
+
+/** The story `key` as backlog.yaml holds it now. */
+async function manifestStory(key) {
+  const backlog = parse(await readFile(backlogFile, 'utf8'));
+  return backlog.epics.flatMap((epic) => epic.stories ?? []).find((candidate) => candidate.key === key);
+}
+
+/** The description `taigent preview --json` renders for story `key`: what apply writes to Taiga. */
+function previewDescription(key) {
+  const run = taigent('preview', '--project', project, '--json');
+  if (run.status !== 0) throw new Error(`FAILED: taigent preview exited ${run.status}: ${run.stderr}`);
+  return JSON.parse(run.stdout).epics.flatMap((epic) => epic.stories).find((candidate) => candidate.key === key)?.description;
+}
+
+/**
+ * Story form: a new story in the user story format with two scenarios (one with two Given), scenario add / move /
+ * remove, an error shown on the broken scenario field, the live preview equal to what `taigent preview` renders, then
+ * a legacy story edited without changing its format and converted to the user story format on request.
+ */
+async function storyFormScenario(page) {
+  const cards = page.locator('#story-format .scenario');
+  const names = () => cards.locator('.scenario-name').evaluateAll((inputs) => inputs.map((input) => input.value));
+
+  await page.click('#tree .node[data-key="PUSH"]');
+  await page.click('.detail-head [data-action="add-story"]');
+  await page.waitForSelector('#item-form[open] #story-format[data-format="user-story"]');
+  check((await page.inputValue('#form-parent')) === 'PUSH', 'the new story belongs to the epic it was added from');
+  await page.fill('#form-subject', 'Soạn story bằng form');
+  const storyKey = await page.inputValue('#form-key');
+  check(storyKey === 'PUSH-SOAN-STORY', `story key suggested under its epic (${storyKey})`);
+  await page.fill('#story-as-a', 'BA soạn backlog');
+  await page.fill('#story-i-want-to', 'viết story theo user story format bằng form');
+  await page.fill('#story-so-that', 'không phải sửa YAML bằng tay');
+  await cards.nth(0).locator('.scenario-name').fill('Story có nhiều Given');
+  await cards.nth(0).locator('.scenario-given').nth(0).fill('Tôi đang mở form story');
+  await cards.nth(0).locator('[data-action="add-given"]').click();
+  await cards.nth(0).locator('.scenario-given').nth(1).fill('Epic cha đã có trong backlog');
+  await cards.nth(0).locator('.scenario-when').fill('Tôi lưu story');
+  await cards.nth(0).locator('.scenario-then').fill('backlog.yaml có story với use_case và scenarios');
+  await page.click('#story-add-scenario');
+  await cards.nth(1).locator('.scenario-name').fill('Thiếu When');
+  await cards.nth(1).locator('.scenario-given').fill('Một scenario chưa có When');
+  await cards.nth(1).locator('.scenario-then').fill('Form báo lỗi ngay tại ô When');
+  await page.click('#story-add-scenario');
+  await cards.nth(2).locator('.scenario-name').fill('Tạm');
+  await cards.nth(2).locator('[data-action="up"]').click();
+  check(JSON.stringify(await names()) === JSON.stringify(['Story có nhiều Given', 'Tạm', 'Thiếu When']), 'a scenario moves up');
+  await cards.nth(1).locator('[data-action="remove-scenario"]').click();
+  check(JSON.stringify(await names()) === JSON.stringify(['Story có nhiều Given', 'Thiếu When']), 'a scenario is removed');
+
+  const before = await readFile(backlogFile, 'utf8');
+  await page.click('#form-save');
+  const whenError = cards.nth(1).locator('[data-part="when"] > .field-error');
+  await whenError.waitFor({ state: 'visible' });
+  check((await whenError.textContent())?.includes('[required]'), 'the empty When is reported on its own field, with the validate rule');
+  check((await readFile(backlogFile, 'utf8')) === before, 'nothing is written while the story is invalid');
+
+  await cards.nth(1).locator('.scenario-when').fill('Tôi điền When rồi lưu lại');
+  await page.fill('#form-description', 'Form story dùng cùng luật với `taigent validate`.');
+  await page.fill('#form-spec', 'docs/desktop.md');
+  await page.fill('#form-tags', 'type:feature, area:push');
+  const source = await page.textContent('#form-preview-source');
+  const html = await page.innerHTML('#form-preview-body');
+  check(source.includes('**and Given:** Epic cha đã có trong backlog') && html.includes('Story có nhiều Given'), 'the live preview shows the scenarios');
+  await page.screenshot({ path: join(shots, '10-story-form.png') });
+  await page.click('#form-save');
+  await page.waitForSelector(`#tree .node[data-key="${storyKey}"]`);
+  const created = await manifestStory(storyKey);
+  check(
+    Object.keys(created).join() === 'key,subject,use_case,scenarios,description,spec,tags' &&
+      created.scenarios.length === 2 &&
+      created.scenarios[0].given.length === 2 &&
+      Object.keys(created.scenarios[0]).join() === 'scenario,given,when,then',
+    'backlog.yaml has the story in the user story format: use_case and two scenarios, one with two Given',
+  );
+  const validate = taigent('validate', '--project', project);
+  check(validate.status === 0, `taigent validate exits 0 (${validate.status}) ${validate.stderr.trim()}`);
+  check(previewDescription(storyKey) === source, 'the form preview is exactly the description taigent preview renders');
+  check((await page.innerHTML('#detail-content .markdown')) === html, 'the form preview renders like the review screen (same renderer and sanitizer)');
+  check(await page.isVisible('.detail-head .badge.unreviewed'), 'the new story is "Chưa duyệt"');
+
+  // A legacy story is edited in the legacy mode: its format stays.
+  await page.click('#tree .node[data-key="REVIEW-MARKDOWN"]');
+  await page.click('.detail-head [data-action="edit"]');
+  await page.waitForSelector('#item-form[open] #story-format[data-format="legacy"]');
+  check(!(await page.isVisible('#story-as-a')) && (await page.locator('#story-format .criterion').count()) === 2, 'a legacy story opens in the legacy mode with its acceptance criteria');
+  await page.fill('#form-description', 'Là BA, tôi muốn thấy mô tả story đúng như Taiga sẽ hiển thị (sửa bằng form).');
+  await page.click('#form-save');
+  await page.waitForSelector('#item-form', { state: 'hidden' });
+  let legacy = await manifestStory('REVIEW-MARKDOWN');
+  check(legacy.acceptance_criteria?.length === 2 && !('use_case' in legacy) && legacy.description.endsWith('(sửa bằng form).'), 'editing a legacy story keeps its format');
+
+  // "Chuyển sang user story format" runs only when chosen.
+  await page.click('.detail-head [data-action="edit"]');
+  await page.waitForSelector('#item-form[open] #story-format[data-format="legacy"]');
+  await page.click('#story-convert');
+  await page.waitForSelector('#story-format[data-format="user-story"] #story-converted');
+  check(JSON.stringify(await names()) === JSON.stringify(legacy.acceptance_criteria), 'each acceptance criterion becomes a scenario to complete');
+  await page.fill('#story-as-a', 'BA đang duyệt backlog');
+  await page.fill('#story-i-want-to', 'thấy mô tả story đúng như trên Taiga');
+  await page.fill('#story-so-that', 'duyệt đúng thứ sẽ được ghi');
+  for (let i = 0; i < 2; i++) {
+    await cards.nth(i).locator('.scenario-given').fill('Tôi đang xem chi tiết story');
+    await cards.nth(i).locator('.scenario-when').fill('Mô tả có Markdown');
+    await cards.nth(i).locator('.scenario-then').fill('Mô tả hiển thị như trên Taiga');
+  }
+  const converted = await page.textContent('#form-preview-source');
+  await page.screenshot({ path: join(shots, '11-story-converted.png') });
+  await page.click('#form-save');
+  await page.waitForSelector('#item-form', { state: 'hidden' });
+  legacy = await manifestStory('REVIEW-MARKDOWN');
+  check(!('acceptance_criteria' in legacy) && legacy.use_case && legacy.scenarios.length === 2, 'the converted story has use_case + scenarios instead of acceptance_criteria');
+  check(taigent('validate', '--project', project).status === 0, 'taigent validate exits 0 after the conversion');
+  check(previewDescription('REVIEW-MARKDOWN') === converted, 'the converted story preview is what taigent preview renders (plan reports it as a description update)');
 }

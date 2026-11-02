@@ -10,6 +10,7 @@ import {
   type ApplyReport,
   CHANNELS,
   type AppState,
+  type ItemRef,
   type LoginInput,
   type LoginStatus,
   type Plan,
@@ -272,7 +273,7 @@ function registerIpc(): void {
   handle(CHANNELS.openExternal, async (url: string) => {
     if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) await shell.openExternal(url);
   });
-  handle(CHANNELS.readBacklog, async (slug: string) => readBacklog(requireRepo(), slug));
+  handle(CHANNELS.readBacklog, async (slug: string, item?: ItemRef) => readBacklog(requireRepo(), slug, item));
   handle(CHANNELS.saveItem, async (slug: string, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
   handle(CHANNELS.removeItem, async (slug: string, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
 }

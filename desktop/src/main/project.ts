@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import type {
   BacklogSnapshot,
   Failure,
+  ItemRef,
   ManifestIssue,
   Preview,
   PreviewItem,
@@ -102,13 +103,14 @@ export function changeReview(root: string, slug: string, key: string, change: Ch
 
 // ---- Forms: the manifest edit API (src/edit.ts) ---------------------------------------------------
 
-export async function readBacklog(root: string, slug: string): Promise<Result<BacklogSnapshot>> {
+export async function readBacklog(root: string, slug: string, item?: ItemRef): Promise<Result<BacklogSnapshot>> {
   const { edit, project } = await loadCore();
   const dir = projectDir(root, slug);
   try {
     const file = await edit.readManifestFile(dir, 'backlog');
     const manifest = await project.loadProject(join(dir, project.PROJECT_FILE), slug).catch(() => undefined);
-    return { ok: true, value: { file, attributes: manifest?.customAttributes ?? { epic: [], story: [], task: [], issue: [] } } };
+    const found = item && edit.readItem(file.text, item.type, item.key);
+    return { ok: true, value: { file, attributes: manifest?.customAttributes ?? { epic: [], story: [], task: [], issue: [] }, ...(found && { item: found }) } };
   } catch (error) {
     return toFailure(error);
   }

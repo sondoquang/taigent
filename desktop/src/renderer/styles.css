@@ -1021,3 +1021,72 @@ textarea:focus {
 .diff-gap {
   color: var(--muted);
 }
+
+/* ---- story form (src/renderer/story-form.ts) ---- */
+
+.modal.wide:has(.with-preview) {
+  width: 1180px;
+}
+
+.item-form form.with-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.form-preview {
+  position: sticky;
+  top: 0;
+  border-left: 1px solid var(--line);
+  padding-left: 20px;
+}
+
+.form-preview h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.form-preview details {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.story-box {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 12px 10px;
+}
+
+.story-box .field {
+  margin: 6px 0;
+}
+
+.scenario {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin: 8px 0;
+  background: var(--gray-soft);
+}
+
+.scenario-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scenario-head .scenario-title {
+  flex: 1;
+  font-size: 13px;
+}
+
+.list-row {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.convert {
+  margin-top: 10px;
+}
