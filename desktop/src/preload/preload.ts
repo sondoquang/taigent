@@ -24,6 +24,9 @@ const api: TaigentApi = {
   readBacklog: (slug) => ipcRenderer.invoke(CHANNELS.readBacklog, slug),
   saveItem: (slug, request) => ipcRenderer.invoke(CHANNELS.saveItem, slug, request),
   removeItem: (slug, request) => ipcRenderer.invoke(CHANNELS.removeItem, slug, request),
+  readWiki: (slug) => ipcRenderer.invoke(CHANNELS.readWiki, slug),
+  saveWikiPage: (slug, request) => ipcRenderer.invoke(CHANNELS.saveWikiPage, slug, request),
+  uploadWiki: (slug) => ipcRenderer.invoke(CHANNELS.uploadWiki, slug),
 };
 
 contextBridge.exposeInMainWorld('taigent', api);

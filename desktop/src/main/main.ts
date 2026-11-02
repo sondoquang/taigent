@@ -17,11 +17,13 @@ import {
   type RepoInfo,
   type Result,
   type SaveItemRequest,
+  type SaveWikiPageRequest,
   type VerdictChoice,
 } from '../shared/api.ts';
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
 import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
+import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -277,6 +279,9 @@ function registerIpc(): void {
   handle(CHANNELS.readBacklog, async (slug: string) => readBacklog(requireRepo(), slug));
   handle(CHANNELS.saveItem, async (slug: string, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
   handle(CHANNELS.removeItem, async (slug: string, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
+  handle(CHANNELS.readWiki, async (slug: string) => readWiki(requireRepo(), slug));
+  handle(CHANNELS.saveWikiPage, async (slug: string, request: SaveWikiPageRequest) => saveWikiPage(requireRepo(), slug, request));
+  handle(CHANNELS.uploadWiki, async (slug: string) => uploadWiki(requireRepo(), slug, window!));
 }
 
 app.enableSandbox();

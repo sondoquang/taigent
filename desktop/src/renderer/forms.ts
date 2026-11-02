@@ -358,11 +358,11 @@ async function save(open: OpenForm, request: SaveItemRequest): Promise<void> {
 
 // ---- conflict -------------------------------------------------------------------------------------------------
 
-/** Shows what changed in backlog.yaml since `base` (lines removed and added), with "Áp lại" running `reapply`. */
-function showConflict(base: ManifestFile, current: ManifestFile, reapply: () => void): void {
+/** Shows what changed in `name` (backlog.yaml by default) since `base`, lines removed and added, with "Áp lại" running `reapply`. */
+export function showConflict(base: ManifestFile, current: ManifestFile, reapply: () => void, name = 'backlog.yaml'): void {
   const hunks = changeHunks(lineDiff(base.text, current.text));
   byId('conflict-content').replaceChildren(
-    h('h2', {}, 'backlog.yaml đã đổi từ lúc bạn mở form'),
+    h('h2', {}, `${name} đã đổi từ lúc bạn mở form`),
     h(
       'p',
       {},

@@ -1,15 +1,16 @@
 // Smoke test of Taigent Desktop, driven with Playwright's Electron support. It never touches the user's manifests:
 // it copies the committed fixture `scripts/fixture/smoke-taigent-desktop` (or `taiga/<slug>` of the repository with
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
-// user-data folder. It never pushes to Taiga: the native confirm dialog is stubbed to "Huỷ", and "Xem thay đổi trên
-// Taiga" (read-only) runs only when the app reports a login.
+// user-data folder. It never pushes to a real Taiga: the native confirm dialogs are stubbed to "Huỷ", "Xem thay đổi
+// trên Taiga" (read-only) runs only when the app reports a login, and "Đẩy wiki lên Taiga" runs against an in-process
+// fake Taiga (test/support/fake-taiga.ts).
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
 import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright-core';
@@ -60,10 +61,17 @@ const goTo = async (page, section) => {
 try {
   const versions = await app.evaluate(() => ({ electron: process.versions.electron, node: process.versions.node }));
   log('versions', JSON.stringify(versions));
-  // The folder dialog and the push confirmation are native: answer them from the main process.
+  // The folder dialog and the push confirmations are native: answer them from the main process ("Huỷ" unless a step
+  // sets smokeAnswer), recording what they showed.
   await app.evaluate(({ dialog }, root) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [root] });
-    dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+    globalThis.smokeDialogs = [];
+    globalThis.smokeAnswer = 1;
+    dialog.showMessageBox = async (...args) => {
+      const options = args.at(-1);
+      globalThis.smokeDialogs.push({ title: options.title, message: options.message, detail: options.detail });
+      return { response: globalThis.smokeAnswer, checkboxChecked: false };
+    };
   }, repo);
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1400, height: 900 }).catch(() => undefined);
@@ -108,7 +116,7 @@ try {
   await page.screenshot({ path: join(shots, '4-push-blocked.png') });
 
   // Switching sections keeps the open project and the selected item; sections without content yet have no controls.
-  for (const section of ['wiki', 'taiga', 'git', 'settings']) {
+  for (const section of ['taiga', 'git', 'settings']) {
     await goTo(page, section);
     const controls = await page.locator(`#screen-${section} :is(button, input, select, textarea, a)`).count();
     check(controls === 0, `section ${section} shows an empty state without controls`);
@@ -163,7 +171,10 @@ try {
   }
 
   if (values.project) log('skipped forms: they use the keys of the fixture');
-  else await formScenario(page);
+  else {
+    await formScenario(page);
+    await wikiScenario(page);
+  }
 
   await page.waitForFunction(() => document.querySelector('#statusbar')?.textContent?.includes('Taiga'), null, { timeout: 30_000 }).catch(() => undefined);
   const login = await page.evaluate(() => window.taigent.whoami());
@@ -259,4 +270,105 @@ async function formScenario(page) {
   await page.click('#remove-confirm');
   await page.waitForSelector(`#tree .node[data-key="${taskKey}"]`, { state: 'detached' });
   check(!(await readFile(backlogFile, 'utf8')).includes(taskKey), 'the task is removed from backlog.yaml');
+}
+
+/** Sets (string) or removes (null) variables of the app's main process, which every CLI run inherits. */
+async function setMainEnv(app, values) {
+  return app.evaluate((_electron, vars) => {
+    const before = {};
+    for (const [name, value] of Object.entries(vars)) {
+      before[name] = process.env[name] ?? null;
+      if (value === null) delete process.env[name];
+      else process.env[name] = value;
+    }
+    return before;
+  }, values);
+}
+
+/**
+ * Wiki: a page created with the form (file under pages/, entry in docs.yaml, the other entries kept), a bad slug
+ * refused with its rule, an edit of the page; then "Đẩy wiki lên Taiga" against a fake Taiga: the confirm dialog lists
+ * create, update and skip and is answered "Huỷ" (nothing written), a failed login and an edit on Taiga during the
+ * upload (confirmed, on the fake only) show a Vietnamese message saying how to fix it.
+ */
+async function wikiScenario(page) {
+  const dir = join(manifests, project);
+  const docsFile = join(dir, 'docs.yaml');
+  const docsBefore = await readFile(docsFile, 'utf8');
+  await goTo(page, 'wiki');
+  await page.waitForSelector('#wiki-pages .wiki-page[data-slug="quy-uoc-smoke"]');
+  check((await page.locator('#wiki-pages .wiki-page').count()) === 2, 'Wiki lists the 2 pages of docs.yaml');
+
+  await page.click('#wiki-add');
+  await page.waitForSelector('#wiki-form[open]');
+  await page.fill('#wiki-slug', 'Trang Smoke');
+  await page.fill('#wiki-content', '# Trang smoke\n\nTạo bằng **form wiki** của desktop.\n');
+  check((await page.textContent('#wiki-preview h1')) === 'Trang smoke', 'the form previews the Markdown');
+  await page.click('#wiki-save');
+  await page.waitForSelector('#wiki-form .field[data-field="slug"] .field-error:not([hidden])');
+  check((await page.textContent('#wiki-form .field[data-field="slug"] .field-error'))?.includes('[wiki-slug]'), 'a slug that breaks the rule is refused with rule wiki-slug');
+  check((await readFile(docsFile, 'utf8')) === docsBefore, 'nothing is written for a bad slug');
+  await page.fill('#wiki-slug', 'trang-smoke');
+  await page.screenshot({ path: join(shots, '10-wiki-form.png') });
+  await page.click('#wiki-save');
+  await page.waitForSelector('#wiki-pages .wiki-page[data-slug="trang-smoke"]');
+  const pageFile = join(dir, 'pages', 'trang-smoke.md');
+  check((await readFile(pageFile, 'utf8')) === '# Trang smoke\n\nTạo bằng **form wiki** của desktop.\n', 'the page is written to pages/trang-smoke.md');
+  const docs = await readFile(docsFile, 'utf8');
+  check(docs.startsWith(docsBefore.trimEnd()) && /\n {2}- slug: trang-smoke\r?\n {4}file: pages\/trang-smoke\.md\r?\n$/.test(docs), 'docs.yaml has the new entry after the others, comments kept');
+
+  await page.click('#wiki-pages .wiki-page[data-slug="trang-smoke"] [data-action="edit"]');
+  await page.waitForSelector('#wiki-form[open]');
+  check(await page.isDisabled('#wiki-slug'), 'the slug of an existing page is locked');
+  await page.fill('#wiki-content', '# Trang smoke\n\nĐã sửa bằng form.\n');
+  await page.click('#wiki-save');
+  await page.waitForSelector('#wiki-form', { state: 'hidden' });
+  check((await readFile(pageFile, 'utf8')) === '# Trang smoke\n\nĐã sửa bằng form.\n' && (await readFile(docsFile, 'utf8')) === docs, 'an edit rewrites the page file only');
+
+  // "Đẩy wiki lên Taiga" against a fake Taiga holding the project, one page as written locally and one older page.
+  const { startFakeTaiga } = await import(pathToFileURL(join(repo, 'test', 'support', 'fake-taiga.ts')).href);
+  const fake = await startFakeTaiga();
+  const before = await setMainEnv(app, { TAIGA_API_URL: fake.url, TAIGA_USERNAME: fake.user.username, TAIGA_PASSWORD: fake.user.password, TAIGA_TOKEN: null });
+  try {
+    const remote = fake.addProject({ slug: project });
+    fake.addWikiPage({ project: remote.id, slug: 'huong-dan-review', content: await readFile(join(dir, 'pages', 'huong-dan-review.md'), 'utf8') });
+    const older = fake.addWikiPage({ project: remote.id, slug: 'quy-uoc-smoke', content: '# Bản cũ\n' });
+    const writes = () => fake.requests.filter((request) => request.method !== 'GET' && request.path !== '/auth').length;
+    const upload = async () => {
+      await app.evaluate(() => (globalThis.smokeDialogs = []));
+      await page.click('#wiki-upload');
+      await page.waitForSelector('#wiki-result h2', { timeout: 120_000 });
+      return { title: (await page.textContent('#wiki-result h2'))?.trim(), text: await page.textContent('#wiki-result'), dialogs: await app.evaluate(() => globalThis.smokeDialogs) };
+    };
+
+    let run = await upload();
+    const [dialog] = run.dialogs;
+    check(run.dialogs.length === 1 && dialog.title === 'Đẩy wiki lên Taiga', 'upload --dry-run found changes and opened the confirm dialog');
+    check(
+      /Tạo mới: 1\n {2}• Trang wiki trang-smoke/.test(dialog.detail) && /Cập nhật: 1\n {2}• Trang wiki quy-uoc-smoke/.test(dialog.detail) && /Bỏ qua[^\n]*: 1\n {2}• Trang wiki huong-dan-review/.test(dialog.detail),
+      'the dialog lists create, update and skip',
+    );
+    check(run.title === 'Đã huỷ đẩy wiki' && writes() === 0 && older.content === '# Bản cũ\n', 'answered "Huỷ": upload --yes never ran, nothing written to Taiga');
+    await page.screenshot({ path: join(shots, '11-wiki-upload-cancelled.png') });
+
+    await setMainEnv(app, { TAIGA_PASSWORD: 'wrong-password' });
+    run = await upload();
+    check(run.dialogs.length === 0 && run.title === 'Chưa đẩy được wiki lên Taiga' && run.text?.includes('Cách sửa'), 'a refused login stops the dry run with a Vietnamese message and how to fix it');
+    await setMainEnv(app, { TAIGA_PASSWORD: fake.user.password });
+
+    // Confirmed on the fake only: someone edits the page on Taiga while it uploads.
+    fake.onRequest({ method: 'PATCH', path: `/wiki/${older.id}`, run: () => fake.editWikiPage(older, { content: '# Sửa trên Taiga\n' }) });
+    await app.evaluate(() => (globalThis.smokeAnswer = 0));
+    run = await upload();
+    await app.evaluate(() => (globalThis.smokeAnswer = 1));
+    check(
+      run.title === 'Chưa đẩy được wiki lên Taiga' && run.text?.includes('wiki:quy-uoc-smoke') && run.text.includes('Cách sửa') && older.content === '# Sửa trên Taiga\n',
+      'a conflict during upload --yes shows a Vietnamese message with how to fix it; the page on Taiga is not overwritten',
+    );
+    await page.screenshot({ path: join(shots, '12-wiki-upload-conflict.png') });
+  } finally {
+    await setMainEnv(app, before);
+    await fake.close();
+  }
+  await goTo(page, 'backlog');
 }

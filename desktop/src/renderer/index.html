@@ -68,14 +68,17 @@
       <section class="screen" id="screen-wiki" aria-label="Wiki" hidden>
         <div class="screen-body">
           <h1>Wiki</h1>
-          <div class="empty-state">
-            <p><strong>Chưa có màn hình Wiki.</strong></p>
-            <p class="muted">
-              Trang wiki vẫn nằm trong <code>taiga/&lt;slug&gt;/docs.yaml</code> và các file mà nó tham chiếu. Trong
-              terminal, <code>npx taigent upload --project &lt;slug&gt; --dry-run</code> cho xem trước, rồi
-              <code>--yes</code> để đẩy lên Taiga.
-            </p>
+          <p class="muted">
+            Các trang wiki khai báo trong <code>taiga/&lt;slug&gt;/docs.yaml</code>; trang mới được lưu ở
+            <code>taiga/&lt;slug&gt;/pages/&lt;slug trang&gt;.md</code>. Wiki không qua review: "Đẩy wiki lên Taiga" cho
+            xem trước những gì sẽ tạo, cập nhật và bỏ qua, rồi chỉ ghi khi bạn xác nhận.
+          </p>
+          <div class="changes-actions">
+            <button id="wiki-add" class="btn" type="button" disabled>+ Trang wiki</button>
+            <button id="wiki-upload" class="btn primary" type="button" disabled>Đẩy wiki lên Taiga</button>
           </div>
+          <div id="wiki-pages" class="wiki-pages"></div>
+          <div id="wiki-result" class="changes-result" aria-live="polite"></div>
         </div>
       </section>
 

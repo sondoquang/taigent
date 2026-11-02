@@ -1,6 +1,6 @@
 // Taigent Desktop UI: the navigation shell (navigation.ts) with the Backlog section (tree, item detail and its
-// review) and the Thay đổi section (plan and push to Taiga). Everything it knows comes through `window.taigent`
-// (preload); it never reaches the file system or the network itself.
+// review), the Wiki section (wiki.ts) and the Thay đổi section (plan and push to Taiga). Everything it knows comes
+// through `window.taigent` (preload); it never reaches the file system or the network itself.
 
 import type {
   AppState,
@@ -22,6 +22,7 @@ import { byId, h } from './dom.ts';
 import { itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, wireNavigation } from './navigation.ts';
+import { mountWiki, refreshWiki } from './wiki.ts';
 
 declare global {
   interface Window {
@@ -452,6 +453,7 @@ function render(): void {
   renderDetail();
   renderChanges();
   renderButtons();
+  refreshWiki();
 }
 
 // ---- actions --------------------------------------------------------------------------------------------------
@@ -781,6 +783,7 @@ function wire(): void {
     toast,
     failureBlock,
   });
+  mountWiki({ api, view: () => state.view, toast, failureBlock });
 }
 
 async function start(): Promise<void> {
