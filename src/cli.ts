@@ -19,6 +19,7 @@ import type { Action, PlanSummary, Result } from './operations.ts';
 import { buildPlan, describePlanOperation, LegacyStoryCreateError, UnknownIssueValueError, type Plan } from './planner.ts';
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
+import { formatProjectDetailText, formatProjectsText, readProjectDetail, readProjects } from './projects.ts';
 import { readBacklogRemote } from './remote.ts';
 import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE, reviewKeys } from './review.ts';
 import { Secrets } from './secrets.ts';
@@ -40,6 +41,8 @@ Commands:
   apply     Apply the manifest to Taiga (requires --yes)
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
   tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
+  projects  List the Taiga projects you are a member of, with admin rights and whether taiga/<slug>/ exists; with
+            --project, that project's issue types, severities and priorities (read-only)
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
@@ -53,7 +56,7 @@ Commands:
   mcp       Run the Taiga MCP server on stdin/stdout for an agent (.mcp.json, .codex/config.toml)
 
 Options:
-  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets and notify)
+  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets, notify and projects)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
   --out <file>      preview: write the page (or the JSON) to this file instead of stdout
   --application <id>  login: store an application token of this Application (created by the instance admin)
@@ -81,9 +84,9 @@ Environment (a variable not set in the environment is read from ./.env):
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in),
             3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
-const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'notify', 'login', 'logout', 'whoami', 'mcp'];
+const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
@@ -576,6 +579,21 @@ async function runTickets(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `projects`: the user's Taiga projects and their manifest directories, or one project's issue values. Read-only. */
+async function runProjects(run: Run): Promise<number> {
+  const { options, env, cwd } = run;
+  const client = await connectTaiga(run);
+  const root = manifestsRoot(env, cwd);
+  if (options.project === undefined) {
+    const report = await readProjects(client, root);
+    emit(run, report, () => formatProjectsText(report, root, cwd));
+  } else {
+    const report = await readProjectDetail(client, options.project, root);
+    emit(run, report, () => formatProjectDetailText(report, root, cwd));
+  }
+  return ExitCode.Ok;
+}
+
 /** `status`: move one of the user's tickets to a status, at once (the request is the confirmation). */
 async function runStatus(run: Run): Promise<number> {
   const { options } = run;
@@ -727,6 +745,8 @@ function dispatch(run: Run): Promise<number> {
       return runSkills(run);
     case 'tickets':
       return runTickets(run);
+    case 'projects':
+      return runProjects(run);
     case 'status':
       return runStatus(run);
     case 'comment':

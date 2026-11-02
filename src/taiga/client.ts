@@ -97,6 +97,14 @@ export interface TaigaProject {
   customAttributes: Record<ItemType, TaigaCustomAttribute[]>;
 }
 
+/** One project of a list (`GET /projects`): its identity and whether the caller is its admin. */
+export interface TaigaProjectSummary {
+  id: number;
+  slug: string;
+  name: string;
+  iAmAdmin: boolean;
+}
+
 /** Custom attribute values of one item (`/{epics,userstories,tasks,issues}/custom-attributes-values/{id}`). */
 export interface TaigaAttributeValues {
   /** Attribute id (as a string, like Taiga's JSON keys) → value. */
@@ -623,6 +631,15 @@ export class TaigaClient {
       name: field(raw, 'name', 'string', 'project'),
       customAttributes: parseCustomAttributes(raw),
     };
+  }
+
+  /** The projects `userId` is a member of (`GET /projects?member=`), in Taiga's order, with the caller's admin right. */
+  async listMemberProjects(userId: number): Promise<TaigaProjectSummary[]> {
+    const raw = await this.#request('GET', '/projects', { query: { member: userId } });
+    return parseList(raw, 'project', (project) => {
+      const r = record(project, 'project');
+      return { id: field<number>(r, 'id', 'number', 'project'), slug: field<string>(r, 'slug', 'string', 'project'), name: field<string>(r, 'name', 'string', 'project'), iAmAdmin: r.i_am_admin === true };
+    });
   }
 
   /** All items of one type in a project, unfiltered: every `src:` tag is needed to find orphans. */

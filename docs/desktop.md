@@ -17,10 +17,13 @@
   của trang trong repo, không cần mạng. Wiki không qua review;
 - **đăng nhập / đăng xuất**: `storeLogin` / `removeLogin` (`dist/login.js`), dùng chung kho thông tin đăng nhập với
   `taigent login`;
-- **trạng thái đăng nhập, xem thay đổi, đẩy lên Taiga, đẩy wiki**: chạy CLI `bin/taigent.js` (`whoami --json`,
-  `plan --project <slug> --json`, `apply --project <slug> --yes --json`, `upload --project <slug> --dry-run --json` rồi
+- **trạng thái đăng nhập, xem thay đổi, đẩy lên Taiga, project trên Taiga, đẩy wiki**: chạy CLI `bin/taigent.js`
+  (`whoami --json`, `plan --project <slug> --json`, `apply --project <slug> --yes --json`, `projects --json`,
+  `bootstrap --project <slug> --dry-run --json` rồi `--yes --json`, `upload --project <slug> --dry-run --json` rồi
   `--yes --json`) bằng chính file thực thi của ứng dụng ở chế độ Node (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là
-  repo đang mở, không qua shell.
+  repo đang mở, không qua shell;
+- **form `project.yaml`**: `readProjectSettings` / `saveProjectSettings` trong `dist/project-settings.js`. Form chỉ ghi
+  file trong repo, không ghi lên Taiga.
 
 ## Cài đặt
 
@@ -56,18 +59,19 @@ một trang wiki hoặc trả lời góp ý trong `review.yaml`, màn hình tự
 
 Bố cục gồm bốn phần, từ trên xuống:
 
-- **Thanh trên cùng**: mở thư mục repo, chọn **Dự án**, đăng nhập/đăng xuất Taiga. Các phần này dùng chung cho mọi
-  mục.
+- **Thanh trên cùng**: mở thư mục repo, chọn **Dự án**, bật/tắt **Terminal**, đăng nhập/đăng xuất Taiga. Các phần này
+  dùng chung cho mọi mục.
 - **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
   - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
+  - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)). Ticket của tôi và Báo cáo chưa có:
+    màn hình ghi cách làm việc đó bằng CLI trong lúc chờ.
   - **Wiki**: các trang của `docs.yaml`, form tạo/sửa trang và nút **Đẩy wiki lên Taiga** (xem [Wiki](#wiki)).
-  - **Taiga** (Project, Ticket của tôi, Báo cáo), **Git**: chưa có nội dung. Mỗi mục chỉ hiện một trạng thái trống ghi
-    rõ là chưa có và cách làm việc đó bằng CLI trong lúc chờ. Không có nút nào.
+  - **Git**: pull, commit và push thư mục manifest (xem [Git](#git)).
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
   - **Settings**: phiên bản của ứng dụng, taigent, Electron và Node. Chưa có thiết lập nào.
 
   Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở.
-- **Panel dưới đáy**: chỗ dành cho terminal. Panel chưa có và đang ẩn.
+- **Panel dưới đáy**: terminal (xem [Terminal](#terminal)), ẩn mặc định.
 - **Thanh trạng thái**: người duyệt và kết quả `taigent whoami`.
 
 Mục **Backlog** gồm:
@@ -92,7 +96,7 @@ Mục **Backlog** gồm:
    ngắn. Câu trả lời hiện dưới góp ý (*Agent trả lời*). Agent không đổi verdict của bạn.
 3. Mục đã **Đạt** mà agent sửa sau đó (nội dung ghi lên Taiga khác lúc bạn duyệt) sẽ chuyển sang
    **Đã đổi sau khi duyệt** và không còn tính là *Đạt*. Hãy xem lại rồi bấm **Đạt** lần nữa.
-4. Commit `taiga/<slug>/review.yaml` cùng manifest để cả team thấy kết quả review.
+4. Commit `taiga/<slug>/review.yaml` cùng manifest (mục **Git**, xem [Git](#git)) để cả team thấy kết quả review.
 
 ## Thêm, sửa, xoá epic và task
 
@@ -181,6 +185,102 @@ khác.
 
 Verdict *Đạt* không thay cho bước đồng ý này: `plan`/`apply` không đọc `review.yaml`.
 
+## Project trên Taiga
+
+Mục **Taiga** › **Project** liệt kê:
+
+- các project trên Taiga mà bạn là thành viên (`taigent projects --json`, cần đăng nhập), kèm id, quyền của bạn (admin
+  hay thành viên) và trạng thái trong repo: *Có backlog.yaml*, *Có project.yaml*, *Có thư mục* hoặc *Chưa có manifest*;
+- các thư mục `taiga/<slug>/` của repo chưa có trên Taiga (*Chưa có trên Taiga*), ví dụ project vừa viết
+  `project.yaml` mà chưa bootstrap.
+
+Chưa đăng nhập hoặc Taiga lỗi thì danh sách chỉ có các thư mục của repo, kèm lý do. Bấm **Làm mới** để đọc lại.
+
+Bấm **Mở** (hoặc **Tạo project.yaml** với project chưa có manifest) để mở chi tiết project:
+
+- **trên Taiga**: id, quyền của bạn, và tên các issue type, severity, priority của project theo thứ tự trên Taiga
+  (`taigent projects --project <slug> --json`), tức các giá trị mà một issue trong `backlog.yaml` được dùng;
+- **Mở backlog**: khi thư mục có `backlog.yaml`, mở dự án đó ở mục Backlog;
+- **form `project.yaml`**: tên (`<Khách hàng/Mảng> - <Sản phẩm>`), mô tả, template, riêng tư, các module bật. Slug là
+  tên thư mục, và phải đúng slug Taiga suy ra từ tên. Lưu sẽ ghi đè đúng các trường này trong file, giữ nguyên comment,
+  thứ tự và các phần khác (tag, custom attribute, member, `wiki_home`), nên các phần đó vẫn do bạn hoặc agent
+  (skill `taiga-bootstrap-project`) viết. Trước khi ghi, ứng dụng chạy đúng luật của `taigent validate`. Lỗi ở các
+  trường của form thì không ghi và hiện từng lỗi. Lỗi ở chỗ khác chỉ được báo, không chặn việc lưu. Nếu `project.yaml`
+  đã đổi từ lúc mở form (ví dụ agent vừa sửa) thì ứng dụng từ chối lưu và cho chọn: tải lại file, hoặc ghi phần của
+  bạn lên bản mới.
+
+**Tạo project mới…** mở form trống. Lưu sẽ tạo `taiga/<slug>/project.yaml`, với slug suy ra từ tên.
+
+**Bootstrap lên Taiga…** (chỉ bật khi `project.yaml` đã lưu) chạy `taigent bootstrap --project <slug> --dry-run --json`.
+Không có gì để làm thì dừng ở đó. Có thay đổi thì ứng dụng mở hộp thoại xác nhận liệt kê từng thao tác (tạo project,
+bật module, tạo tag, custom attribute, mời member, tạo wiki home). **Bấm "Bootstrap" trong hộp thoại này chính là đồng
+ý bootstrap** (conventions §1). Chỉ sau đó ứng dụng mới chạy `taigent bootstrap --project <slug> --yes --json`.
+Bootstrap không bao giờ tắt, đổi tên hay xoá gì trên Taiga, và cần quyền admin với project đã có.
+
+## Git
+
+Mục **Git** chia sẻ manifest và kết quả review với team mà không cần biết git. Nó chỉ thao tác trên **phạm vi** gồm:
+
+- thư mục manifest (`taiga/`, hoặc thư mục `TAIGENT_MANIFESTS_DIR` khi thư mục đó nằm trong repo);
+- các file mà `taiga/<slug>/docs.yaml` tham chiếu (`file` của `wiki` và `attachments`) nằm ngoài thư mục đó, ví dụ
+  `docs/huong-dan.md`.
+
+File nằm ngoài repo đang mở không thuộc phạm vi. Ứng dụng chạy `git` của máy (không qua shell, không bao giờ hỏi mật
+khẩu trong ứng dụng: remote cần đăng nhập thì dùng credential helper của git). Cần git 2.25 trở lên.
+
+Màn hình hiện nhánh, nhánh theo dõi trên remote, số commit chưa push và số commit mới trên remote (theo lần fetch gần
+nhất), phạm vi, các file **trong phạm vi** đã đổi (`git status --porcelain`) và số file đã đổi ngoài phạm vi. Bấm
+**Làm mới** để đọc lại. Ba thao tác:
+
+- **Pull**: fetch rồi `git pull --ff-only --no-rebase` từ nhánh đang theo dõi. Nếu ở máy có commit chưa push trong khi
+  remote có commit mới (lịch sử đã tách nhánh) thì ứng dụng dừng trước khi pull, working tree không đổi.
+- **Commit + Push**: nhập message rồi bấm. Ứng dụng `git add` đúng các file trong phạm vi đã đổi, rồi
+  `git commit --only` với chính các file đó (file khác dù đã được stage cũng không vào commit), rồi `git push` lên nhánh
+  đang theo dõi. Nếu remote có commit mới, ứng dụng không commit và nhắc bấm **Pull** trước.
+- **Push**: push các commit chưa push (ví dụ commit trước đó bị lỗi push).
+
+Ứng dụng không bao giờ merge, rebase, force push hay add file ngoài phạm vi. Nó cũng không push commit nào sửa file ngoài
+phạm vi (commit bạn tự tạo trong terminal). Khi gặp một trong các trường hợp sau, ứng dụng dừng, giải thích bằng tiếng
+Việt, liệt kê lệnh gợi ý và mở một tab shell ở repo trong [panel terminal](#terminal) để bạn xử lý:
+
+- máy chưa cài git, hoặc thư mục đang mở không phải repo git;
+- conflict, hoặc một lần merge/rebase/cherry-pick/revert chưa xong;
+- lịch sử đã tách nhánh;
+- HEAD không ở nhánh nào, repo chưa có remote, hoặc nhánh chưa theo dõi nhánh nào trên remote;
+- có commit chưa push sửa file ngoài phạm vi;
+- một lệnh git thất bại (ví dụ fetch/push bị từ chối, thiếu `user.name`/`user.email`). Thông báo kèm nguyên văn lỗi của
+  git.
+
+## Terminal
+
+Panel terminal nằm dưới đáy cửa sổ, **ẩn mặc định**. Bật hoặc tắt bằng nút **Terminal** trên thanh trên cùng hoặc
+`` Ctrl+` `` (phím tắt vẫn chạy khi con trỏ đang ở trong terminal). Nút **Ẩn** cũng tắt panel. Ẩn panel không dừng
+process nào: các tab vẫn chạy và hiện lại nguyên vẹn khi bật panel. Kéo mép trên của panel để đổi chiều cao, terminal
+tự đổi số cột và số dòng theo panel và báo cho process.
+
+- **+ Shell** mở một tab shell mới: `pwsh` nếu có trên `PATH`, nếu không thì Windows PowerShell (`powershell.exe`).
+  Trên macOS là `$SHELL`. Trên Windows, shell chuyển console sang UTF-8 trước khi chạy, nên output tiếng Việt của
+  các chương trình khác (git, agent) cũng hiện đúng.
+- **Mở nhanh** `claude`, `codex`, `omp` mở một tab mới chạy agent đó trong shell. Agent chưa cài thì tab hiện lỗi
+  của shell và vẫn giữ shell để bạn gõ tiếp. Ứng dụng không cài, không đăng nhập agent giúp bạn.
+- Mọi tab chạy ở **thư mục repo đang mở**. Chưa mở repo thì không mở được tab. Môi trường của tab kế thừa từ ứng
+  dụng; ứng dụng chỉ thêm `COLORTERM=truecolor` (và `TERM=xterm-256color` ngoài Windows), không thêm thông tin đăng
+  nhập hay bí mật nào.
+- Có nhiều tab cùng lúc. Bấm tên tab để chuyển. Khi process trong tab kết thúc, tab ghi mã thoát và giữ nguyên nội
+  dung cho tới khi bạn đóng.
+- **Đóng tab (×) thì kill cả cây process** của tab: shell, agent và mọi process con của chúng (`taskkill /T /F` trên
+  Windows, cả process group trên macOS). **Thoát ứng dụng thì kill mọi cây process** của mọi tab trước khi thoát.
+- Tab **skill** do ứng dụng mở (chạy một lệnh cho trước, ví dụ một lần chạy skill headless) có thêm nút **Huỷ**: kill
+  cả cây process nhưng giữ tab để bạn đọc output.
+
+Đăng nhập Taiga trong ứng dụng bằng hộp thoại **Đăng nhập**, không gõ mật khẩu vào tab terminal. Lần đăng nhập đó
+dùng chung với `npx taigent` và agent chạy trong terminal.
+
+Cho các phần khác của ứng dụng (mục Git, nút skill headless): main process mở tab qua `terminals.open(...)` trong
+`desktop/src/main/terminal.ts`. `{ kind: 'shell', cwd }` mở một shell; `{ kind: 'skill', cwd, title, command: { file,
+args, env? } }` chạy thẳng lệnh đó trong pty (không qua shell). Kết quả có `tab`, `cancel()` (kill cả cây process),
+`exited` (Promise `{ exitCode, signal?, cancelled }`) và `onData(listener)`. Renderer tự hiện panel và chọn tab mới.
+
 ## Đóng gói
 
 ```sh
@@ -201,6 +301,15 @@ rule của Codex), kèm các dependency lúc chạy (`yaml`, `smol-toml`, `@napi
 electron-builder đặt chúng vào
 `resources/taigent/node_modules/taigent`, nên CLI chạy bằng file thực thi của ứng dụng, không cần Node trên máy.
 `taiga-mcp-server` không được đóng gói vì nó chỉ phục vụ `taigent mcp`, lệnh mà ứng dụng không dùng.
+
+Terminal dùng `node-pty` (dependency của `desktop/`, ghim `1.1.0`). Bản này là module N-API kèm sẵn bản prebuilt cho
+Windows x64/arm64 và macOS (`prebuilds/`), nên cùng một file `pty.node` chạy được với mọi bản Electron mà không phải
+rebuild, và máy build hay máy người dùng đều không cần Visual Studio/Python. Vì vậy `npmRebuild` tắt trong cấu hình
+electron-builder: rebuild bằng node-gyp sẽ tạo `build/Release/pty.node`, được ưu tiên hơn bản prebuilt và đòi build
+tool. `node-pty` được giải nén khỏi `app.asar` (`asarUnpack`) vì Windows cần chạy file thật (`conpty.node`, worker
+đọc output, `winpty-agent.exe`); main process nạp nó từ `resources/app.asar.unpacked/node_modules/node-pty`. Bộ cài
+Windows chỉ kèm bản prebuilt của Windows, bỏ mã nguồn C++ và file `.pdb`. Smoke chạy trên bản đóng gói kiểm tra
+chính việc nạp module này.
 
 ### Ký số (người làm)
 
@@ -228,14 +337,14 @@ node scripts/smoke.mjs --exe "release/win-unpacked/Taigent Desktop.exe"   # bả
 Cả hai cách dùng cùng fixture có trong repo: `desktop/scripts/fixture/smoke-taigent-desktop/` (project
 `Smoke - Taigent Desktop`: 3 epic, 5 story theo user story format, 1 story legacy đã có trên Taiga theo `state.json`,
 5 task, 1 issue `BUG-STALE-AFTER-RENAME`; `project.yaml` khai báo custom attribute `Mục tiêu quý` cho epic; `docs.yaml`
-có 2 trang wiki dưới `pages/`). Đây không phải project thật trên Taiga, nên không bootstrap, apply hay upload nó.
-Muốn smoke trên manifest của mình thì truyền `--project <slug> --story <key>` (chép `taiga/<slug>`); khi đó script bỏ
-qua phần issue, phần form và phần wiki, vì chúng dùng các key và trang của fixture.
+có 2 trang wiki dưới `pages/`). Đây không phải project thật trên Taiga, nên không bootstrap (ngoài `--dry-run`), apply
+hay upload nó lên Taiga thật. Muốn smoke trên manifest của mình thì truyền `--project <slug> --story <key>` (chép
+`taiga/<slug>`); khi đó script bỏ qua phần issue, phần form và phần wiki, vì chúng dùng các key và trang của fixture.
 
 Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
 không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng và ứng dụng mở vào mục Backlog, mở repo, chụp
 cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
-đẩy bị chặn, đi qua Taiga, Git, Settings (mỗi mục chỉ có trạng thái trống, không có nút; phím `j` không đổi
+đẩy bị chặn, đi qua Settings (chỉ có trạng thái trống, không có nút; phím `j` không đổi
 mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
 đổi sau khi duyệt*, thử phím `j`/`k`, rồi (chỉ với fixture) mở issue trong nhóm *Issues* của cây, kiểm tra phân loại
 và nhãn *Mới*, đặt *Đạt* và kiểm tra `review.yaml`. Sau đó là phần form: tạo epic (key gợi ý, custom attribute) và task bằng form,
@@ -249,14 +358,49 @@ nguyên), sửa trang đó (slug bị khoá, chỉ file trang đổi). *Đẩy w
 `TAIGA_PASSWORD` của nó trong lúc đó): hộp thoại xác nhận liệt kê tạo mới, cập nhật, bỏ qua và được trả lời *Huỷ*
 (Taiga giả không nhận request ghi nào); sai mật khẩu thì hiện thông báo tiếng Việt kèm cách sửa; cuối cùng, chỉ với
 Taiga giả, hộp thoại được trả lời đồng ý trong khi trang bị sửa trên Taiga giữa chừng, và màn hình hiện thông báo
-conflict kèm cách sửa. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục Thay đổi (chỉ đọc; với
-fixture, Taiga báo không có project `smoke-taigent-desktop`). Hộp thoại xác nhận với Taiga thật luôn được trả lời
-*Huỷ*. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
+conflict kèm cách sửa. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
+Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Sau đó script mở Taiga › Project,
+kiểm tra fixture có trong danh sách, mở form `project.yaml`, sửa mô tả, lưu và kiểm tra file giữ comment và tag. Nếu
+đã đăng nhập, script bấm *Bootstrap lên Taiga…*: `bootstrap --dry-run` chạy rồi hộp thoại xác nhận hiện ra. Mọi hộp
+thoại xác nhận với Taiga thật (đẩy, bootstrap) luôn được trả lời *Huỷ*.
+Cuối cùng script kiểm tra mục **Git** (`scripts/smoke-git.mjs`) trên một repo tạm có remote là một repo bare tạm, chứa
+fixture trong `taiga/<slug>/`, một `docs.yaml` tham chiếu `docs/huong-dan.md` và một file ngoài phạm vi: sửa một file
+trong `taiga/` và một file ngoài, kiểm tra danh sách chỉ có file trong `taiga/`, Commit + Push rồi kiểm tra remote chỉ
+nhận file đó; sửa `docs/huong-dan.md` và kiểm tra nó vào danh sách; tạo lịch sử tách nhánh (một commit của "đồng đội"
+trên remote, một commit ở máy) rồi bấm Pull, kiểm tra ứng dụng giải thích, mở một tab shell ở repo trong panel terminal,
+và HEAD, trạng thái cùng nội dung working tree không đổi. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
+
+Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form và phần wiki, trước *Xem thay đổi*: panel ẩn lúc mở, bật/tắt bằng
+`` Ctrl+` `` và nút; mở tab shell, gõ lệnh và thấy output, in tiếng Việt, in chữ đỏ bằng mã ANSI, kéo panel cao lên rồi
+kiểm tra shell thấy đúng số cột và dòng mới; chạy một process con (`ping`), đóng tab rồi kiểm tra shell và process con
+đã dừng. Ứng dụng được mở với `PATH` có một `claude` giả (in thư mục làm việc) đứng đầu và không có thư mục nào chứa
+`omp`: nút mở nhanh `claude` phải chạy ở thư mục repo, còn `omp` phải hiện lỗi của shell mà tab và ứng dụng vẫn chạy.
+Phần này để lại một shell chạy `ping`. Sau mục Git, script thoát ứng dụng và kiểm tra mọi process con của ứng dụng đã
+dừng.
 
 ## Bảo mật
 
-- Cửa sổ chạy với `contextIsolation`, `sandbox`, không có `nodeIntegration`, CSP chặt (không script inline, không tải
-  tài nguyên mạng) và chặn mọi điều hướng hay cửa sổ mới. Link trong mô tả mở bằng trình duyệt hệ thống (chỉ http/https).
+- Cửa sổ chạy với `contextIsolation`, `sandbox`, không có `nodeIntegration`, CSP chặt (chỉ script của ứng dụng, không
+  script inline, không tải tài nguyên mạng) và chặn mọi điều hướng hay cửa sổ mới. Link trong mô tả mở bằng trình
+  duyệt hệ thống (chỉ http/https).
+- CSP cho phép style inline (`style-src 'self' 'unsafe-inline'`) vì xterm.js tô màu và đặt kích thước dòng bằng thẻ
+  `<style>` và thuộc tính `style`. Nội dung do agent viết không dùng được quyền này: DOMPurify bỏ mọi thẻ `<style>` và
+  thuộc tính `style` trong Markdown, và script vẫn chỉ được nạp từ ứng dụng.
 - Markdown trong mô tả do agent viết được làm sạch bằng DOMPurify trước khi hiển thị.
 - Renderer chỉ dùng được API có kiểu trong `desktop/src/shared/api.ts`, qua preload. Nó không đọc file và không gọi
   mạng.
+- **Terminal không phải ranh giới bảo mật.** Shell và agent trong terminal chạy với đúng quyền của bạn, như một
+  terminal bình thường: chúng đọc, sửa file và gọi mạng được, và `npx taigent apply --yes` gõ trong terminal sẽ ghi
+  lên Taiga. Ứng dụng chỉ chặn việc ghi ở các nút của chính nó (CLI + hộp thoại xác nhận).
+- Renderer chỉ mở được tab **shell** hoặc **agent** (`claude`, `codex`, `omp`), luôn ở thư mục repo đang mở. Nó không
+  chọn được lệnh, tham số, thư mục hay biến môi trường. Tab chạy lệnh cho trước (kind `skill`) chỉ main process mở.
+  Main process chỉ nhận các kênh terminal từ chính trang của ứng dụng (`app://taigent`), và kiểm tra kiểu từng tham
+  số.
+- Nội dung do agent viết (Markdown, output trong terminal) không điều khiển được shell: Markdown đã được làm sạch và
+  không có script; output của terminal chỉ được xterm.js vẽ ra, không bao giờ được chạy hay chèn vào DOM dạng HTML.
+- Môi trường của tab kế thừa từ ứng dụng, không thêm token hay mật khẩu. Mật khẩu Taiga chỉ nhập trong hộp thoại
+  đăng nhập, không đi qua terminal hay log.
+- Đóng tab hoặc thoát ứng dụng kill cả cây process, nên không còn agent nào chạy ngầm sau khi bạn đóng.
+- Mục Git chạy `git` bằng `execFile`, không qua shell, với `GIT_TERMINAL_PROMPT=0` (không bao giờ chờ nhập mật khẩu).
+  Danh sách file cần add và commit đi qua stdin (`--pathspec-from-file`) và được hiểu đúng nguyên văn
+  (`--literal-pathspecs`).

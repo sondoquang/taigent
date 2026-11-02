@@ -1,6 +1,8 @@
 // Bundles the app into out/: main (ESM, Electron and Node built-ins external; taigent's core is imported at run
-// time from dist/, see src/main/taigent.ts), the sandboxed preload (CommonJS, as Electron requires) and the renderer
-// (one IIFE with marked + DOMPurify, plus index.html and styles.css). Type checking is `tsc --noEmit` (npm run build).
+// time from dist/, see src/main/taigent.ts; node-pty is loaded at run time from node_modules, see
+// src/main/terminal.ts), the sandboxed preload (CommonJS, as Electron requires) and the renderer (one IIFE with
+// marked, DOMPurify and xterm.js, plus index.html, styles.css and xterm.css). Type checking is `tsc --noEmit`
+// (npm run build).
 
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -28,5 +30,6 @@ await Promise.all([
   }),
   cp(join(root, 'src/renderer/index.html'), join(out, 'renderer/index.html')),
   cp(join(root, 'src/renderer/styles.css'), join(out, 'renderer/styles.css')),
+  cp(join(root, 'node_modules/@xterm/xterm/css/xterm.css'), join(out, 'renderer/xterm.css')),
 ]);
 console.log('built out/');

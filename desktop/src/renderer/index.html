@@ -4,10 +4,11 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Taigent Desktop</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="xterm.css" />
   </head>
   <body>
     <header class="topbar">
@@ -21,6 +22,7 @@
         </select>
       </label>
       <div class="spacer"></div>
+      <button id="terminal-toggle" class="btn ghost" type="button" title="Terminal (Ctrl+`)" aria-controls="terminal-dock" aria-expanded="false">Terminal</button>
       <button id="login-btn" class="btn ghost" type="button">Đăng nhập</button>
     </header>
 
@@ -85,13 +87,22 @@
       <section class="screen" id="screen-taiga" aria-label="Taiga" hidden>
         <div class="screen-body">
           <h1>Taiga</h1>
-          <div class="empty-state">
-            <p><strong>Chưa có màn hình Taiga</strong> (Project, Ticket của tôi, Báo cáo).</p>
-            <p class="muted">
-              Trong terminal: <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code> liệt kê ticket của
-              bạn, <code>npx taigent status</code> và <code>npx taigent comment</code> đổi status và comment.
-            </p>
+          <div class="taiga-project" id="taiga-project">
+            <div class="taiga-project-head">
+              <h2>Project</h2>
+              <div class="spacer"></div>
+              <button id="taiga-projects-refresh" class="btn ghost" type="button">Làm mới</button>
+              <button id="taiga-project-new" class="btn" type="button">Tạo project mới…</button>
+            </div>
+            <p class="muted" id="taiga-projects-status"></p>
+            <div id="taiga-projects-list"></div>
+            <div id="taiga-project-detail"></div>
           </div>
+          <p class="muted">
+            Ticket của tôi và Báo cáo chưa có trong ứng dụng. Trong terminal:
+            <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code> liệt kê ticket của bạn,
+            <code>npx taigent status</code> và <code>npx taigent comment</code> đổi status và comment.
+          </p>
         </div>
       </section>
 
@@ -114,13 +125,26 @@
       <section class="screen" id="screen-git" aria-label="Git" hidden>
         <div class="screen-body">
           <h1>Git</h1>
-          <div class="empty-state">
-            <p><strong>Chưa có panel git.</strong></p>
-            <p class="muted">
-              Commit và push <code>taiga/&lt;slug&gt;/</code> (gồm cả <code>review.yaml</code>) bằng git như bình thường để
-              cả team thấy manifest và kết quả review.
-            </p>
+          <p class="muted">
+            Chỉ thao tác trên thư mục manifest (<code>taiga/</code>) và các file mà <code>docs.yaml</code> tham chiếu.
+            Ứng dụng không bao giờ merge, rebase hay force push: khi cần, nó dừng lại, giải thích và mở một tab terminal
+            ở repo để bạn xử lý.
+          </p>
+          <div id="git-overview" class="git-overview"></div>
+          <div class="changes-actions">
+            <button id="git-refresh" class="btn" type="button" disabled>Làm mới</button>
+            <button id="git-pull" class="btn" type="button" disabled>Pull</button>
+            <button id="git-push" class="btn" type="button" disabled>Push</button>
           </div>
+          <h3>File đã đổi trong phạm vi</h3>
+          <ul id="git-files" class="git-files"></ul>
+          <p id="git-files-empty" class="muted" hidden>Không có file nào trong phạm vi đã đổi.</p>
+          <p id="git-outside" class="muted"></p>
+          <form id="git-commit-form" class="git-commit">
+            <input id="git-message" type="text" placeholder="Message của commit" aria-label="Message của commit" />
+            <button id="git-commit-push" class="btn primary" type="submit" disabled>Commit + Push</button>
+          </form>
+          <div id="git-result" class="changes-result" aria-live="polite"></div>
         </div>
       </section>
 
@@ -137,8 +161,23 @@
       </section>
     </div>
 
-    <!-- Bottom panel of the layout, reserved for the terminal (#39); empty and hidden until then. -->
-    <section id="terminal-dock" class="terminal-dock" aria-label="Terminal" hidden></section>
+    <!-- Bottom panel: the terminal (src/renderer/terminal.ts), hidden until toggled with the top-bar button or Ctrl+`. -->
+    <section id="terminal-dock" class="terminal-dock" aria-label="Terminal" hidden>
+      <div id="terminal-resizer" class="terminal-resizer" role="separator" aria-orientation="horizontal" aria-label="Đổi cỡ terminal" title="Kéo để đổi cỡ"></div>
+      <div class="terminal-bar">
+        <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="Tab terminal"></div>
+        <button id="terminal-new" class="btn small" type="button" title="Tab shell mới ở thư mục repo">+ Shell</button>
+        <span class="terminal-launch-label">Mở nhanh</span>
+        <button class="btn small" type="button" data-launch="claude" title="Tab mới chạy claude ở thư mục repo">claude</button>
+        <button class="btn small" type="button" data-launch="codex" title="Tab mới chạy codex ở thư mục repo">codex</button>
+        <button class="btn small" type="button" data-launch="omp" title="Tab mới chạy omp ở thư mục repo">omp</button>
+        <div class="spacer"></div>
+        <button id="terminal-hide" class="btn small ghost" type="button" title="Ẩn terminal (Ctrl+`)">Ẩn</button>
+      </div>
+      <div id="terminal-views" class="terminal-views">
+        <p id="terminal-empty" class="terminal-empty">Chưa có tab nào. Bấm <b>+ Shell</b> hoặc mở nhanh <code>claude</code>, <code>codex</code>, <code>omp</code>. Tab chạy ở thư mục repo đang mở.</p>
+      </div>
+    </section>
 
     <footer class="statusbar" id="statusbar"></footer>
 
