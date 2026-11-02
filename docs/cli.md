@@ -510,13 +510,15 @@ use the same bot:
 
 - **Messages**: a scheduled task (Task Scheduler, cron) runs `taigent notify week|day|eod` from the project root,
   as the user, so it finds `.env` and the stored login. It needs no Claude Code session.
-- **Chat**: `claude --channels plugin:telegram@claude-plugins-official`, started in the project root and left open,
-  receives the user's messages ([Channels](https://code.claude.com/docs/en/channels), research preview: needs
-  [Bun](https://bun.sh), a claude.ai or Console login, and on Team/Enterprise plans an admin's approval). The model
-  answers with `taiga-update-ticket`. `.claude/settings.json` pre-allows `npx taigent tickets|status|comment` (as
-  `Bash(...)` and `PowerShell(...)`), because a skill's `allowed-tools` cover only the turn that invoked it and a
-  follow-up chat message would otherwise stop at a permission prompt; other prompts reach Telegram as buttons (the
-  plugin relays them).
+- **Chat**: `claude --channels plugin:telegram@claude-plugins-official --append-system-prompt-file
+  node_modules/taigent/docs/telegram-reply.md`, started in the project root and left open, receives the user's
+  messages ([Channels](https://code.claude.com/docs/en/channels), research preview: needs [Bun](https://bun.sh), a
+  claude.ai or Console login, and on Team/Enterprise plans an admin's approval). The model answers with
+  `taiga-update-ticket`. [`telegram-reply.md`](telegram-reply.md) has it call the plugin's `reply` tool with
+  `format: "markdownv2"` and bold the key facts, falling back to plain text when Telegram refuses the markup.
+  `.claude/settings.json` pre-allows `npx taigent tickets|status|comment` (as `Bash(...)` and `PowerShell(...)`),
+  because a skill's `allowed-tools` cover only the turn that invoked it and a follow-up chat message would otherwise
+  stop at a permission prompt; other prompts reach Telegram as buttons (the plugin relays them).
 
 The chat session does not see what `notify` sent (a bot receives no copy of its own messages, and the Bot API keeps
 no history), so `taiga-update-ticket` rebuilds "close them" from `taigent tickets`: the open tickets due today or

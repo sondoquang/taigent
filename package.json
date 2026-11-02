@@ -15,7 +15,8 @@
     "bin/",
     "dist/",
     "docs/cli.md",
-    "docs/taiga/"
+    "docs/taiga/",
+    "docs/telegram-reply.md"
   ],
   "engines": {
     "node": ">=24"
