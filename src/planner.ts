@@ -121,11 +121,27 @@ export function describePlanOperation(op: Operation): string {
   }
 }
 
-/** Story description template: free text, then acceptance criteria as a checklist, then the spec link. */
+/**
+ * Story description. A use case + scenarios story renders the use case, the free text, one checkbox per
+ * scenario with its Given/When/Then, then the spec link. A legacy story keeps its template byte for byte:
+ * free text, acceptance criteria as a checklist, then the spec link.
+ */
 function storyDescription(story: StorySpec): string {
   const parts: string[] = [];
+  if (story.useCase) {
+    const { asA, iWantTo, soThat } = story.useCase;
+    parts.push([`- **As a** ${asA}`, `- **I want to** ${iWantTo}`, `- **so that** ${soThat}`].join('\n'));
+  }
   if (story.description.trim() !== '') parts.push(story.description.trimEnd());
-  if (story.acceptanceCriteria.length > 0) {
+  if (story.useCase) {
+    const scenarios = story.scenarios.flatMap(({ scenario, given, when, then }) => [
+      `- [ ] **Scenario:** ${scenario}`,
+      ...given.map((condition, i) => `  - **${i === 0 ? 'Given' : 'and Given'}:** ${condition}`),
+      `  - **When:** ${when}`,
+      `  - **Then:** ${then}`,
+    ]);
+    parts.push(['## Acceptance criteria', '', ...scenarios].join('\n'));
+  } else if (story.acceptanceCriteria.length > 0) {
     parts.push(['## Acceptance criteria', '', ...story.acceptanceCriteria.map((criterion) => `- [ ] ${criterion}`)].join('\n'));
   }
   if (story.spec !== '') parts.push(`Spec: ${story.spec}`);
