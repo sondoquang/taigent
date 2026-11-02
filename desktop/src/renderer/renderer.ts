@@ -17,6 +17,8 @@ import type {
   TaigentApi,
   VerdictChoice,
 } from '../shared/api.ts';
+import { byId, h } from './dom.ts';
+import { itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, wireNavigation } from './navigation.ts';
 
@@ -45,33 +47,6 @@ const state: {
   busy: boolean;
 } = { filter: 'all', busy: false };
 const drafts = new Map<string, string>();
-
-function byId<T extends HTMLElement>(id: string): T {
-  const element = document.getElementById(id);
-  if (!element) throw new Error(`missing #${id}`);
-  // index.html declares every id this file asks for, with the element type the caller names.
-  const typed = element as T;
-  return typed;
-}
-
-/** Builds an element; text children are text nodes, never HTML. */
-function h<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Record<string, string | boolean | ((event: Event) => void)> = {},
-  ...children: (string | false | undefined | null | Node)[]
-): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tag);
-  for (const [name, value] of Object.entries(props)) {
-    if (typeof value === 'function') element.addEventListener(name.replace(/^on/, ''), value);
-    else if (value === true) element.setAttribute(name, '');
-    else if (value !== false) element.setAttribute(name, value);
-  }
-  for (const child of children) {
-    if (child === false || child === undefined || child === null) continue;
-    element.append(typeof child === 'string' ? document.createTextNode(child) : child);
-  }
-  return element;
-}
 
 // ---- status vocabulary ----------------------------------------------------------------------------------------
 
@@ -381,6 +356,7 @@ function renderDetail(): void {
       h('div', { class: 'detail-meta' }, h('span', { class: `type type-${item.type}` }, TYPE_LABEL[item.type]), h('code', {}, item.key), badges(item, false)),
       h('h1', {}, item.subject),
       verdictBar(item),
+      itemActions(item),
     ),
     section('Mô tả (đúng nội dung ghi lên Taiga)', markdownBlock(item.description)),
     story && section(`Task (${story.tasks.length})`, story.tasks.length ? h('ul', { class: 'children' }, ...story.tasks.map(itemLink)) : h('p', { class: 'muted' }, 'Không có task.')),
@@ -774,6 +750,16 @@ function wire(): void {
   api.onProjectChanged((result) => {
     if (result.ok && result.value.slug !== state.view?.slug) return;
     applyView(result);
+  });
+  mountForms({
+    api,
+    view: () => state.view,
+    showView(result, key) {
+      if (key !== undefined) state.selected = key;
+      applyView(result);
+    },
+    toast,
+    failureBlock,
   });
 }
 

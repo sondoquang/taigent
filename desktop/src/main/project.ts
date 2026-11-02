@@ -3,7 +3,21 @@
 
 import { type FSWatcher, watch } from 'node:fs';
 import { join } from 'node:path';
-import type { Failure, ManifestIssue, Preview, PreviewItem, ProjectView, Result, Validation, VerdictChoice } from '../shared/api.ts';
+import type {
+  BacklogSnapshot,
+  Failure,
+  ManifestIssue,
+  Preview,
+  PreviewItem,
+  ProjectView,
+  RemoveItemRequest,
+  RemoveOutcome,
+  Result,
+  SaveItemRequest,
+  SaveOutcome,
+  Validation,
+  VerdictChoice,
+} from '../shared/api.ts';
 import { projectDir, reviewerName } from './repo.ts';
 import { loadCore, parseCliJson, runCli } from './taigent.ts';
 
@@ -83,6 +97,70 @@ export function changeReview(root: string, slug: string, key: string, change: Ch
       return toFailure(error, 'Không ghi được review.yaml');
     }
     return buildView(root, slug);
+  });
+}
+
+// ---- Forms: the manifest edit API (src/edit.ts) ---------------------------------------------------
+
+export async function readBacklog(root: string, slug: string): Promise<Result<BacklogSnapshot>> {
+  const { edit, project } = await loadCore();
+  const dir = projectDir(root, slug);
+  try {
+    const file = await edit.readManifestFile(dir, 'backlog');
+    const manifest = await project.loadProject(join(dir, project.PROJECT_FILE), slug).catch(() => undefined);
+    return { ok: true, value: { file, attributes: manifest?.customAttributes ?? { epic: [], story: [], task: [], issue: [] } } };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+/**
+ * Moves (`to` set) or drops the reviews of re-keyed or removed items: review.yaml may only name keys of the backlog
+ * (rule `key-reference`). The edit API never touches review.yaml; the app does, as it does for verdicts.
+ */
+async function rekeyReviews(dir: string, keys: Record<string, string | undefined>): Promise<void> {
+  const { review } = await loadCore();
+  const path = join(dir, review.REVIEW_FILE);
+  const current = await review.loadReview(path);
+  const items = { ...current.items };
+  let changed = false;
+  for (const [from, to] of Object.entries(keys)) {
+    const entry = items[from];
+    if (!entry) continue;
+    delete items[from];
+    if (to !== undefined) items[to] = entry;
+    changed = true;
+  }
+  if (changed) await review.saveReview(path, { items });
+}
+
+export function saveItem(root: string, slug: string, request: SaveItemRequest): Promise<Result<SaveOutcome>> {
+  return serialized(async () => {
+    const { edit } = await loadCore();
+    const dir = projectDir(root, slug);
+    try {
+      const result = await edit.saveItem(dir, request);
+      if (result.status !== 'saved') return { ok: true, value: result };
+      if (request.original !== undefined && request.original !== request.item.key) await rekeyReviews(dir, { [request.original]: request.item.key });
+      return { ok: true, value: { ...result, view: await buildView(root, slug) } };
+    } catch (error) {
+      return toFailure(error, 'Không lưu được backlog.yaml');
+    }
+  });
+}
+
+export function removeItem(root: string, slug: string, request: RemoveItemRequest): Promise<Result<RemoveOutcome>> {
+  return serialized(async () => {
+    const { edit } = await loadCore();
+    const dir = projectDir(root, slug);
+    try {
+      const result = await edit.removeItem(dir, request);
+      if (result.status !== 'saved') return { ok: true, value: result };
+      await rekeyReviews(dir, Object.fromEntries(result.removed.map((key) => [key, undefined])));
+      return { ok: true, value: { ...result, view: await buildView(root, slug) } };
+    } catch (error) {
+      return toFailure(error, 'Không xoá được mục khỏi backlog.yaml');
+    }
   });
 }
 

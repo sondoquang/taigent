@@ -822,7 +822,7 @@ skill checks all of it and names each fix.
 | Module | File | Role |
 |---|---|---|
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`); one review gate (`reviewGate`) and one text form for every plan and report |
-| Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog`, `loadDocs`, conventions rules (`conventions.ts`), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
+| Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog` (and `checkBacklog(doc, path)`, the same rules on an already parsed document), `loadDocs`, conventions rules (`conventions.ts`, also `suggestKey`, the key naming advice the desktop forms use), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
 | Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`, `issue`): the one item vocabulary outside the client; `ISSUE_VALUE_FIELDS` (`type`, `severity`, `priority`) |
 | Secrets | `src/secrets.ts` | `Secrets` (`add`, `redact`): what no output may show, shared by the CLI (environment, typed password), the client and the stored login (tokens) and the MCP proxy |
 | Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
@@ -832,6 +832,7 @@ skill checks all of it and names each fix.
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links, issue values (when the backlog has issues) and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)`, `storyDescription(story)` (the story template, shared with preview) |
 | Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, pure `setVerdict`/`addComment`, `itemDigest`, `buildPreview(dir, slug)` → `Preview`, `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |
+| Manifest edit | `src/edit.ts` | the library Taigent Desktop's forms write `backlog.yaml` with: `readManifestFile(dir, 'backlog')` → `{ file, text, digest }` (SHA-256 of the file); `saveItem(dir, { baseDigest, original?, item })` adds or edits an epic/story/task (`item` = `{ type, key, parent?, fields }`; a new key renames, a new parent moves the item with its children); `removeItem(dir, { baseDigest, type, key })` removes any item (an issue too) with its children and returns `removed` and `orphaned` (those in state.json). Every write returns `EditResult`: `saved` (new `digest`), `conflict` (the file no longer has `baseDigest`; `current` is the file now, nothing written) or `invalid` (`issues` with `path` + `rule`: the `checkBacklog` issues under the edited item only, `key-unique` (issues included), `key-reference` for a missing item or parent, `key-locked` for a new key on an item in state.json). Edits go through yaml's Document API, so comments, order, quoting, flow style and line ends of untouched nodes stay; the file is written atomically; review.yaml is never touched (an edited item's verdict turns stale through its digest). Where each item type sits and its field order is the `KINDS` table; the issue form adds its input to `BacklogItem`, docs.yaml entries add a file to `EDITABLE_FILES` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
@@ -853,7 +854,8 @@ dependency order (`context.loaded` holds the manifests loaded before it, `contex
 ## Tests
 
 `npm test` (Node's built-in runner) and `npm run typecheck`. Tests go through the CLI seam, except the library APIs
-other programs call directly (`storeLogin`, the review API of `src/review.ts`):
+other programs call directly (`storeLogin`, the review API of `src/review.ts`, the manifest edit API of `src/edit.ts`
+in `test/edit.test.ts`, written like `test/review.test.ts` on a temporary project directory):
 `test/support/harness.ts` (`startHarness(t)`) spawns `bin/taigent.js` in a temp working directory against
 `test/support/fake-taiga.ts` (`startFakeTaiga()`), an in-process fake of the Taiga API that validates
 payloads like Taiga (and additionally rejects unknown fields). Extend the fake rather than mocking modules. Every run

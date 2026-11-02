@@ -16,3 +16,8 @@ tags:
     color: "#1565C0"
   - name: area:push
     color: "#1565C0"
+custom_attributes:
+  epic:
+    - name: Mục tiêu quý
+      description: Quý mà epic cần xong (form epic của desktop nhập theo tên này).
+      type: text
