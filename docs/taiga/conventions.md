@@ -108,14 +108,99 @@ Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên
 Manifest không có field status, assignee, sprint hay points. Các field đó thuộc về người làm và `apply` không
 ghi đè chúng.
 
-**Story** (`epics[].stories[]`): `key`, `subject`, `description`, `acceptance_criteria` (danh sách), `spec`
-(link hoặc đường dẫn tới spec/PRD), `tags`, `tasks`.
+Mục này là nguồn chuẩn duy nhất cho user story của Taigent. Chuẩn là format **Mike Cohn** (Use case "As a / I
+want to / so that") kết hợp tiêu chí chấp nhận **Gherkin** (Scenario / Given / When / Then). Đọc mục này là đủ
+để viết đúng chuẩn, không cần cài skill nào khác.
 
-- `subject`: một câu ngắn, bắt đầu bằng động từ hoặc tên tính năng, ví dụ `Đăng nhập bằng email`.
-- `description`: câu user story `Là <vai trò>, tôi muốn <mục tiêu>, để <lợi ích>.`, có thể kèm ngữ cảnh.
-- `acceptance_criteria`: mỗi tiêu chí là một câu kiểm được.
+### 6.1 Story dạng mới (bắt buộc cho mọi story mới)
 
-`apply` ghép mô tả trên Taiga theo đúng mẫu sau (phần rỗng thì bỏ):
+**Story** (`epics[].stories[]`): `key`, `subject`, `use_case`, `scenarios`, `description` (tuỳ chọn), `spec`
+(link hoặc đường dẫn tới spec/PRD), `tags`, `tasks`, `custom_attributes`. Nhãn (`As a`, `Scenario`, `Given`…)
+giữ tiếng Anh; nội dung viết bằng ngôn ngữ của nhóm.
+
+```yaml
+- key: AUTH-GOOGLE
+  subject: Đăng nhập bằng Google để người dùng thử không phải tạo mật khẩu mới
+  use_case:
+    as_a: người dùng thử lần đầu vào ứng dụng
+    i_want_to: đăng nhập bằng tài khoản Google
+    so_that: vào được ứng dụng mà không phải tạo và nhớ thêm một mật khẩu
+  scenarios:
+    - scenario: Người dùng thử đăng nhập lần đầu qua Google
+      given:
+        - Tôi đang ở trang đăng nhập
+        - Tôi có tài khoản Google
+      when: Tôi bấm "Đăng nhập bằng Google" và cấp quyền cho ứng dụng
+      then: Tôi vào được ứng dụng và được chuyển tới màn hình onboarding
+  description: Chỉ hỗ trợ tài khoản Google cá nhân ở bản này.
+  spec: docs/specs/auth.md
+```
+
+Khung (do `taigent validate` kiểm tra offline):
+
+- `use_case` là mapping có đủ `as_a`, `i_want_to`, `so_that`, mỗi trường là chuỗi không rỗng.
+- `scenarios` là danh sách không rỗng. Mỗi scenario có `scenario` (tên, chuỗi không rỗng), `given` (danh sách
+  ≥ 1 chuỗi), đúng **một** `when` và đúng **một** `then` (chuỗi, không phải danh sách).
+- `use_case` và `scenarios` luôn đi cùng nhau, và không đi cùng `acceptance_criteria` (rule `story-format`).
+  Trường lạ bị báo `known-field`.
+- `description`: bối cảnh tuỳ chọn (ghi chú, giới hạn, link), không lặp lại Use case.
+
+**Summary → subject.** `subject` chính là Summary của story: một câu ngắn, dễ nhớ, nói về **giá trị** cho người
+dùng chứ không phải tính năng. ✅ `Xoá hàng loạt để người dùng thường xuyên tiết kiệm thời gian`;
+❌ `Thêm nút xoá`.
+
+`apply` ghép mô tả trên Taiga theo đúng mẫu sau. Các phần nối bằng một dòng trống, phần rỗng thì bỏ; Given thứ
+hai trở đi dùng nhãn `and Given`:
+
+```markdown
+- **As a** người dùng thử lần đầu vào ứng dụng
+- **I want to** đăng nhập bằng tài khoản Google
+- **so that** vào được ứng dụng mà không phải tạo và nhớ thêm một mật khẩu
+
+Chỉ hỗ trợ tài khoản Google cá nhân ở bản này.
+
+## Acceptance criteria
+
+- [ ] **Scenario:** Người dùng thử đăng nhập lần đầu qua Google
+  - **Given:** Tôi đang ở trang đăng nhập
+  - **and Given:** Tôi có tài khoản Google
+  - **When:** Tôi bấm "Đăng nhập bằng Google" và cấp quyền cho ứng dụng
+  - **Then:** Tôi vào được ứng dụng và được chuyển tới màn hình onboarding
+
+Spec: docs/specs/auth.md
+```
+
+Mỗi scenario là một checkbox để QA viết test case và tick khi đã kiểm.
+
+**Quality check** (máy không kiểm, người viết và reviewer kiểm):
+
+- **As a** là persona cụ thể (`người dùng thử`, `admin của workspace`), không phải `người dùng` chung chung.
+- **I want to** là hành động người dùng làm, không phải tính năng đội đang xây.
+- **so that** là kết quả/động lực thật, không lặp lại "I want to". ❌ `muốn bấm Lưu, để lưu bài`;
+  ✅ `muốn bấm Lưu, để không mất bài khi trang bị lỗi`.
+- **When** khớp với "I want to"; **Then** khớp với "so that".
+- **Then** đo được: ❌ `trải nghiệm tốt hơn`, `nhanh hơn`; ✅ `trang tải dưới 2 giây`, `thấy thông báo thành công`.
+- Nhiều Given là bình thường; QA phải viết được test case từ mỗi scenario.
+
+**Anti-pattern:**
+
+- **Task kỹ thuật đội lốt story**: `Là developer, tôi muốn refactor API, để code sạch hơn`. Không có giá trị cho
+  người dùng thì không phải story: ghi thành task (`tasks[]`) của story liên quan.
+- **Feature list**: `tôi muốn dashboard, báo cáo và phân tích`. Quá lớn, phải tách.
+- **Tiêu chí mơ hồ**: `tôi muốn trải nghiệm tốt hơn`, Then không đo được.
+- Story là chỗ bắt đầu trao đổi, không phải hợp đồng khoá cứng.
+
+**Luật tách story:**
+
+- Cần nhiều hơn một When hoặc một Then trong một scenario → có nhiều story, tách ra.
+- Use case chứa nhiều mục tiêu (nhiều "và" trong I want to, hay một danh sách tính năng) → mỗi mục tiêu một story.
+- Các scenario của một story cùng phục vụ một Use case; scenario theo đuổi mục tiêu khác thì thành story riêng.
+- Mỗi story sau khi tách vẫn phải độc lập, có giá trị và kiểm thử được (INVEST).
+
+### 6.2 Dạng cũ (chỉ cho story đã có trên Taiga)
+
+Story đã có trên Taiga (có tag `src:<key>`) được giữ dạng cũ: `description` là câu `Là <vai trò>, tôi muốn
+<mục tiêu>, để <lợi ích>.` (kèm ngữ cảnh) và `acceptance_criteria` là danh sách câu kiểm được. `apply` ghép:
 
 ```markdown
 Là người dùng, tôi muốn đăng nhập bằng email, để truy cập dữ liệu của mình.
@@ -127,6 +212,12 @@ Là người dùng, tôi muốn đăng nhập bằng email, để truy cập d�
 
 Spec: docs/specs/auth.md
 ```
+
+Không dùng dạng cũ cho story mới: `plan` và `apply` thoát exit 4 (rule `story-format`) khi một story sắp được
+tạo không có `use_case`/`scenarios`. Story cũ chỉ được chuyển sang dạng mới khi người dùng yêu cầu; khi đó
+`apply` cập nhật `description` của nó như một thay đổi bình thường.
+
+### 6.3 Task, epic và custom attributes
 
 **Task** (`stories[].tasks[]`): `key`, `subject`, `description`, `tags`. `description` ghi định nghĩa
 **done** của task, ví dụ:
@@ -142,6 +233,13 @@ Epic, story và task đều có thể có `custom_attributes`: mapping **tên** 
 attribute của loại item đó trên Taiga, tức là attribute khai báo trong `custom_attributes` của `project.yaml` và
 đã tạo bằng `taigent bootstrap`. Tên không có trên project thì `plan`/`apply` báo lỗi và không ghi gì. `apply`
 chỉ ghi các attribute có trong manifest; giá trị người khác đặt cho attribute khác được giữ nguyên.
+
+### 6.4 Nguồn tham khảo
+
+- Mike Cohn, *User Stories Applied* (2004): format As a / I want to / so that.
+- Gherkin (Cucumber): Given / When / Then.
+- INVEST (Independent, Negotiable, Valuable, Estimable, Small, Testable).
+- Skill `user-story` trong [deanpeters/product-manager-skills](https://github.com/deanpeters/product-manager-skills).
 
 ## 7. Ánh xạ status mặc định
 
