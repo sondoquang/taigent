@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
-import { type BacklogItem, type EditResult, readManifestFile, removeItem, saveItem } from '../src/edit.ts';
+import { type BacklogItem, type EditResult, readItem, readManifestFile, removeItem, saveItem } from '../src/edit.ts';
 import { suggestKey } from '../src/manifest/conventions.ts';
 import { buildPreview, REVIEW_FILE, saveReview, setVerdict } from '../src/review.ts';
 
@@ -299,6 +299,123 @@ test('issues share the key space and can be removed; epics are added before the 
   const removed = saved(await removeItem(dir, { baseDigest: epic.digest, type: 'issue', key: 'LOGIN-SLOW' }));
   assert.deepEqual([removed.removed, removed.orphaned], [['LOGIN-SLOW'], []]);
   assert.equal(await backlogText(dir), `${BACKLOG}  - key: SEARCH\n    subject: Search\n`);
+});
+
+test('readItem returns a story as its form edits it, in its own format; saving it back leaves the file as it was', async (t) => {
+  const dir = await project(t);
+  const file = await readManifestFile(dir, 'backlog');
+  const common = { description: '', spec: '', tags: [], customAttributes: {} };
+  assert.deepEqual(readItem(file.text, 'story', 'AUTH-LOGIN'), {
+    type: 'story',
+    key: 'AUTH-LOGIN',
+    parent: 'AUTH',
+    fields: {
+      subject: 'Log in with email',
+      ...common,
+      useCase: { asA: 'registered user', iWantTo: 'log in with my email', soThat: 'I see my own data' },
+      scenarios: [{ scenario: 'Wrong password', given: ['a registered user'], when: 'they type a wrong password', then: 'an error shows' }],
+    },
+  });
+  assert.deepEqual(readItem(file.text, 'story', 'BILLING-PAY'), {
+    type: 'story',
+    key: 'BILLING-PAY',
+    parent: 'BILLING',
+    fields: { subject: 'Pay by card', ...common, acceptanceCriteria: ['A declined card shows why'] },
+  });
+  assert.deepEqual(readItem(file.text, 'task', 'AUTH-LOGIN-API'), {
+    type: 'task',
+    key: 'AUTH-LOGIN-API',
+    parent: 'AUTH-LOGIN',
+    fields: { subject: 'Login endpoint', description: 'Done when: POST /login returns a token.', tags: [], customAttributes: {} },
+  });
+  assert.equal(readItem(file.text, 'story', 'AUTH'), undefined);
+
+  for (const key of ['AUTH-LOGIN', 'BILLING-PAY']) {
+    saved(await saveItem(dir, { baseDigest: file.digest, original: key, item: readItem(file.text, 'story', key)! }));
+    assert.equal(await backlogText(dir), BACKLOG, key);
+  }
+});
+
+test('saveItem adds a user story format story with its scenarios; a broken use case or scenario is reported on its field', async (t) => {
+  const dir = await project(t);
+  const base = await digest(dir);
+  const story: BacklogItem = {
+    type: 'story',
+    key: 'BILLING-REFUND',
+    parent: 'BILLING',
+    fields: {
+      subject: 'Refund a payment',
+      useCase: { asA: 'shop owner', iWantTo: 'refund a card payment', soThat: 'the customer gets the money back' },
+      scenarios: [
+        { scenario: 'Full refund', given: ['a paid order', 'the payment is settled'], when: 'I refund the full amount', then: 'the customer sees the refund' },
+        { scenario: 'Refund twice', given: ['a refunded order'], when: 'I refund it again', then: 'I see that it is already refunded' },
+      ],
+      description: 'Card payments only.',
+      spec: 'docs/specs/billing.md',
+      tags: ['type:feature'],
+    },
+  };
+  const broken = { ...story.fields, useCase: { asA: '', iWantTo: 'refund', soThat: 'money back' }, scenarios: [{ scenario: 'Full refund', given: [], when: '', then: 'refunded' }] };
+  assert.deepEqual(issuesOf(await saveItem(dir, { baseDigest: base, item: { ...story, fields: broken } })), [
+    { path: 'epics[1].stories[1].use_case.as_a', rule: 'required' },
+    { path: 'epics[1].stories[1].scenarios[0].given', rule: 'required' },
+    { path: 'epics[1].stories[1].scenarios[0].when', rule: 'required' },
+  ]);
+  assert.equal(await backlogText(dir), BACKLOG, 'nothing is written');
+
+  assert.equal(saved(await saveItem(dir, { baseDigest: base, item: story })).path, 'epics[1].stories[1]');
+  assert.equal(
+    await backlogText(dir),
+    `${BACKLOG}      - key: BILLING-REFUND
+        subject: Refund a payment
+        use_case:
+          as_a: shop owner
+          i_want_to: refund a card payment
+          so_that: the customer gets the money back
+        scenarios:
+          - scenario: Full refund
+            given:
+              - a paid order
+              - the payment is settled
+            when: I refund the full amount
+            then: the customer sees the refund
+          - scenario: Refund twice
+            given:
+              - a refunded order
+            when: I refund it again
+            then: I see that it is already refunded
+        description: Card payments only.
+        spec: docs/specs/billing.md
+        tags:
+          - type:feature
+`,
+  );
+  const added = (await buildPreview(dir, 'demo')).epics[1]!.stories[1]!;
+  assert.deepEqual([added.format, added.review.verdict], ['user-story', undefined]);
+  assert.equal(
+    added.description,
+    [
+      '- **As a** shop owner',
+      '- **I want to** refund a card payment',
+      '- **so that** the customer gets the money back',
+      '',
+      'Card payments only.',
+      '',
+      '## Acceptance criteria',
+      '',
+      '- [ ] **Scenario:** Full refund',
+      '  - **Given:** a paid order',
+      '  - **and Given:** the payment is settled',
+      '  - **When:** I refund the full amount',
+      '  - **Then:** the customer sees the refund',
+      '- [ ] **Scenario:** Refund twice',
+      '  - **Given:** a refunded order',
+      '  - **When:** I refund it again',
+      '  - **Then:** I see that it is already refunded',
+      '',
+      'Spec: docs/specs/billing.md',
+    ].join('\n'),
+  );
 });
 
 test('suggestKey follows the naming advice and skips taken keys', () => {
