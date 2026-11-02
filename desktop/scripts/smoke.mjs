@@ -2,7 +2,7 @@
 // it copies the committed fixture `scripts/fixture/smoke-taigent-desktop` (or `taiga/<slug>` of the repository with
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
 // user-data folder. It never pushes to Taiga: the native confirm dialog is stubbed to "Huỷ", and "Xem thay đổi trên
-// Taiga" (read-only) runs only when the app reports a login.
+// Taiga" (read-only) runs only when the app reports a login. Terminal steps: scripts/smoke-terminal.mjs.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright-core';
+import { agentPath, descendants, smokeTerminal, waitGone } from './smoke-terminal.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -38,7 +39,7 @@ const executablePath = values.exe ? resolve(values.exe) : createRequire(import.m
 const app = await electron.launch({
   executablePath,
   args: [...(values.exe ? [] : [desktop]), `--user-data-dir=${join(work, 'user-data')}`],
-  env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests },
+  env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests, PATH: await agentPath(work) },
   cwd: repo,
 });
 const log = (...parts) => console.log('[smoke]', ...parts);
@@ -146,6 +147,8 @@ try {
   await page.keyboard.press('k');
   check((await page.getAttribute('#tree .node.selected', 'data-key')) === story, 'k moves back');
 
+  await smokeTerminal(page, { repo, shots, log, check });
+
   await page.waitForFunction(() => document.querySelector('#statusbar')?.textContent?.includes('Taiga'), null, { timeout: 30_000 }).catch(() => undefined);
   const login = await page.evaluate(() => window.taigent.whoami());
   log('login', JSON.stringify({ loggedIn: login.loggedIn, username: login.username, apiUrl: login.apiUrl, message: login.message }));
@@ -161,6 +164,13 @@ try {
   }
   log('screenshots in', shots);
   log('temporary manifests in', manifests);
-} finally {
+} catch (error) {
   await app.close();
+  throw error;
 }
+
+// Quitting kills every process the app started: terminal shells, their children, the pseudo consoles.
+const appTree = descendants(app.process().pid);
+await app.close();
+const survivors = await waitGone(appTree.keys());
+check(survivors.length === 0, `after quitting, none of the app's ${appTree.size} child processes runs (left: ${survivors.map((pid) => `${pid} ${appTree.get(pid)}`).join(', ') || 'none'})`);

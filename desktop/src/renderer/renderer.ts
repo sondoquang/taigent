@@ -19,6 +19,7 @@ import type {
 } from '../shared/api.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, wireNavigation } from './navigation.ts';
+import { wireTerminal } from './terminal.ts';
 
 declare global {
   interface Window {
@@ -714,6 +715,7 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
 
 function wire(): void {
   wireNavigation();
+  wireTerminal(api.terminal, (message) => toast(message, 'error'));
   onSectionChange((section) => {
     // A hidden tree cannot scroll: bring the selected item back into view when Backlog shows again.
     if (section === 'backlog') byId('tree').querySelector('.node.selected')?.scrollIntoView({ block: 'nearest' });
