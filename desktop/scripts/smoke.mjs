@@ -140,7 +140,8 @@ try {
 
   // Approve, then change the story's description as an agent would: the approval turns stale.
   await page.click('.verdict-bar [data-verdict="approved"]');
-  await page.waitForSelector('.verdict-bar .verdict.approve.on');
+  await page.waitForSelector('.verdict-bar .verdict.approve.on, #toast.error');
+  check(await page.isVisible('.verdict-bar .verdict.approve.on'), `the story is marked Đạt${(await page.isVisible('#toast.error')) ? ` (error: ${await page.textContent('#toast')})` : ''}`);
   check((await readFile(reviewFile, 'utf8')).includes('verdict: approved'), 'review.yaml has verdict approved');
   const backlog = await readFile(backlogFile, 'utf8');
   // A Windows checkout (core.autocrlf) has CRLF line endings.
@@ -598,7 +599,14 @@ async function storyFormScenario(page) {
   const validate = taigent('validate', '--project', project);
   check(validate.status === 0, `taigent validate exits 0 (${validate.status}) ${validate.stderr.trim()}`);
   check(previewDescription(storyKey) === source, 'the form preview is exactly the description taigent preview renders');
-  check((await page.innerHTML('#detail-content .markdown')) === html, 'the form preview renders like the review screen (same renderer and sanitizer)');
+  // The detail of the new story renders after the tree shows it (later still on a loaded machine): wait for it.
+  await page
+    .waitForFunction((expected) => document.querySelector('#detail-content .markdown')?.innerHTML === expected, html, { timeout: 15_000 })
+    .catch(() => undefined);
+  check(
+    (await page.innerHTML('#detail-content .markdown')) === html,
+    `the form preview renders like the review screen (same renderer and sanitizer; detail shows ${(await page.textContent('.breadcrumb'))?.trim()})`,
+  );
   check(await page.isVisible('.detail-head .badge.unreviewed'), 'the new story is "Chưa duyệt"');
 
   // A legacy story is edited in the legacy mode: its format stays.
