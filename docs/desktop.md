@@ -14,13 +14,16 @@
   `dist/edit.js` (API sửa manifest, [docs/cli.md § Code map](cli.md#code-map)). Chỉ sửa `backlog.yaml` trong repo, không
   cần mạng; muốn lên Taiga vẫn phải review rồi đẩy như mọi thay đổi khác. Bản xem trước của form story dùng mẫu story
   của lõi (`src/story-template.ts`, cùng hàm với `apply` và `taigent preview`);
+- **tạo và sửa trang wiki**: `readWikiPages`, `saveWikiPage` trong `dist/edit.js`. Chỉ sửa `docs.yaml` và file Markdown
+  của trang trong repo, không cần mạng. Wiki không qua review;
 - **đăng nhập / đăng xuất**: `storeLogin` / `removeLogin` (`dist/login.js`), dùng chung kho thông tin đăng nhập với
   `taigent login`;
-- **trạng thái đăng nhập, xem thay đổi, đẩy lên Taiga, project trên Taiga, ticket của tôi**: chạy CLI `bin/taigent.js`
-  (`whoami --json`, `plan --project <slug> --json`, `apply --project <slug> --yes --json`, `projects --json`,
-  `projects --project <slug> --json`, `bootstrap --project <slug> --dry-run --json` rồi `--yes --json`,
-  `tickets --from <ngày> --to <ngày> --json`, `status`/`comment --project <slug> --json <ref> -- <…>`) bằng chính file
-  thực thi của ứng dụng ở chế độ Node (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là repo đang mở, không qua shell;
+- **trạng thái đăng nhập, xem thay đổi, đẩy lên Taiga, project trên Taiga, đẩy wiki, ticket của tôi**: chạy CLI
+  `bin/taigent.js` (`whoami --json`, `plan --project <slug> --json`, `apply --project <slug> --yes --json`,
+  `projects --json`, `projects --project <slug> --json`, `bootstrap --project <slug> --dry-run --json` rồi `--yes --json`,
+  `upload --project <slug> --dry-run --json` rồi `--yes --json`, `tickets --from <ngày> --to <ngày> --json`,
+  `status`/`comment --project <slug> --json <ref> -- <…>`) bằng chính file thực thi của ứng dụng ở chế độ Node
+  (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là repo đang mở, không qua shell;
 - **form `project.yaml`**: `readProjectSettings` / `saveProjectSettings` trong `dist/project-settings.js`. Form chỉ ghi
   file trong repo, không ghi lên Taiga.
 
@@ -51,8 +54,8 @@ taigent của chính repo này: lõi từ `dist/` (sửa `src/` thì chạy lạ
    được mở luôn. Thư mục manifest theo `TAIGENT_MANIFESTS_DIR` (biến môi trường, rồi tới `.env` của repo), mặc định
    `taiga`, giống CLI.
 
-Ứng dụng theo dõi thư mục `taiga/<slug>/`. Khi agent sửa `backlog.yaml` hoặc trả lời góp ý trong `review.yaml`, màn
-hình tự cập nhật, không cần mở lại.
+Ứng dụng theo dõi thư mục `taiga/<slug>/` và các thư mục con (`pages/`). Khi agent sửa `backlog.yaml`, `docs.yaml`,
+một trang wiki hoặc trả lời góp ý trong `review.yaml`, màn hình tự cập nhật, không cần mở lại.
 
 ## Màn hình
 
@@ -64,8 +67,7 @@ Bố cục gồm bốn phần, từ trên xuống:
   - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
   - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)), **Ticket của tôi** (xem
     [Ticket của tôi](#ticket-của-tôi)) và **Báo cáo** (xem [Báo cáo tiến độ](#báo-cáo-tiến-độ)).
-  - **Wiki**: chưa có nội dung. Mục này chỉ hiện một trạng thái trống ghi rõ là chưa có và cách làm việc đó bằng CLI
-    trong lúc chờ. Không có nút nào.
+  - **Wiki**: các trang của `docs.yaml`, form tạo/sửa trang và nút **Đẩy wiki lên Taiga** (xem [Wiki](#wiki)).
   - **Git**: pull, commit và push thư mục manifest (xem [Git](#git)).
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
   - **Settings**: phiên bản của ứng dụng, taigent, Electron và Node. Chưa có thiết lập nào.
@@ -150,6 +152,34 @@ tả và danh sách tiêu chí chấp nhận (thêm, sửa, xoá). Lưu ở ch�
 chí cũ thành tên của một scenario để bạn điền Given/When/Then, rồi điền *As a / I want to / so that*. Chỉ khi bấm
 **Lưu**, `acceptance_criteria` mới được thay bằng `use_case` + `scenarios`; *Xem thay đổi trên Taiga* (`plan`) khi đó
 báo story được cập nhật `description`. Huỷ form thì story giữ nguyên legacy.
+
+## Wiki
+
+Mục **Wiki** liệt kê các trang của `taiga/<slug>/docs.yaml` (slug, file Markdown, tiêu đề `#` đầu tiên). Wiki không
+qua review: không có verdict, không ghi `review.yaml`.
+
+- **+ Trang wiki** mở form: **slug** và **nội dung Markdown**, kèm bản xem trước dùng cùng renderer và bộ làm sạch
+  DOMPurify như màn hình review. Lưu thì ứng dụng ghi file `taiga/<slug>/pages/<slug trang>.md` và thêm entry
+  `{ slug, file: pages/<slug trang>.md }` vào cuối danh sách `wiki` của `docs.yaml` (tạo file nếu chưa có). Comment và
+  các entry khác giữ nguyên.
+- Slug theo luật của `taigent validate` (chữ thường, số, gạch ngang, ví dụ `spec-auth-login`; không trùng slug có sẵn).
+  Slug sai thì lỗi hiện dưới ô slug kèm rule (`wiki-slug`, `wiki-slug-unique`) và không có gì được ghi. Lỗi có sẵn ở
+  entry khác không chặn lưu. Nếu `pages/<slug trang>.md` đã có mà không nằm trong `docs.yaml`, ứng dụng không ghi đè:
+  chọn slug khác hoặc nhờ agent thêm entry cho file đó.
+- **Sửa** một trang ghi vào đúng file mà entry của nó chỉ tới, kể cả file ở ngoài `taiga/` (ví dụ
+  `../../docs/specs/auth.md`); `docs.yaml` không đổi, file CRLF vẫn giữ CRLF. Slug bị khoá vì trang có thể đã có trên
+  Taiga (upload ghép trang theo slug, đổi slug là tạo trang mới).
+- Đang mở form mà `docs.yaml` hoặc file của trang bị đổi (thường là agent): form báo ngay; Lưu bị từ chối và hộp thoại
+  cho xem phần đã đổi, **Áp lại thay đổi của tôi** ghi phần của bạn lên bản mới, như form backlog.
+- **Đẩy wiki lên Taiga** chạy `taigent upload --project <slug> --dry-run --json` (chỉ đọc Taiga). Không có gì cần đẩy
+  thì dừng ở đó. Có thay đổi thì ứng dụng mở hộp thoại xác nhận liệt kê từng trang wiki và tệp đính kèm sẽ **tạo
+  mới**, **cập nhật** và **bỏ qua** (đã khớp với Taiga). **Bấm "Đẩy wiki lên Taiga" trong hộp thoại này là đồng ý
+  upload**; chỉ sau đó ứng dụng mới chạy `upload --project <slug> --yes --json` và hiện báo cáo. *Huỷ* thì không có gì
+  được ghi lên Taiga.
+- Upload lỗi thì màn hình hiện thông báo tiếng Việt kèm **cách sửa** và nguyên văn lỗi của CLI: trang bị người khác
+  sửa trên Taiga trong lúc đẩy (`conflict`: trang không bị ghi đè, chép phần cần giữ vào file rồi đẩy lại),
+  `docs.yaml` không hợp lệ, chưa đăng nhập hoặc đăng nhập bị từ chối, tệp quá lớn, item mà tệp đính kèm trỏ tới chưa
+  được đẩy, hoặc lỗi Taiga khác. Những gì đã ghi trước lỗi được giữ và lần chạy sau bỏ qua.
 
 ## Đăng nhập Taiga
 
@@ -388,15 +418,15 @@ node scripts/smoke.mjs --exe "release/win-unpacked/Taigent Desktop.exe"   # bả
 
 Cả hai cách dùng cùng fixture có trong repo: `desktop/scripts/fixture/smoke-taigent-desktop/` (project
 `Smoke - Taigent Desktop`: 3 epic, 5 story theo user story format, 1 story legacy đã có trên Taiga theo `state.json`,
-5 task, 1 issue `BUG-STALE-AFTER-RENAME`; `project.yaml` khai báo custom attribute `Mục tiêu quý` cho epic). Đây không
-phải project thật trên Taiga, nên không bootstrap (ngoài `--dry-run`) hay apply nó. Muốn smoke trên manifest của mình thì truyền
-`--project <slug> --story <key>` (chép `taiga/<slug>`); khi đó script bỏ qua phần issue và phần form, vì chúng dùng các
-key của fixture.
+5 task, 1 issue `BUG-STALE-AFTER-RENAME`; `project.yaml` khai báo custom attribute `Mục tiêu quý` cho epic; `docs.yaml`
+có 2 trang wiki dưới `pages/`). Đây không phải project thật trên Taiga, nên không bootstrap (ngoài `--dry-run`), apply
+hay upload nó lên Taiga thật. Muốn smoke trên manifest của mình thì truyền `--project <slug> --story <key>` (chép
+`taiga/<slug>`); khi đó script bỏ qua phần issue, phần form và phần wiki, vì chúng dùng các key và trang của fixture.
 
 Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
 không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng và ứng dụng mở vào mục Backlog, mở repo, chụp
 cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
-đẩy bị chặn, đi qua Wiki, Settings (mỗi mục chỉ có trạng thái trống, không có nút; phím `j` không đổi
+đẩy bị chặn, đi qua Settings (chỉ có trạng thái trống, không có nút; phím `j` không đổi
 mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
 đổi sau khi duyệt*, thử phím `j`/`k`, rồi (chỉ với fixture) mở issue trong nhóm *Issues* của cây, kiểm tra phân loại
 và nhãn *Mới*, đặt *Đạt* và kiểm tra `review.yaml`. Sau đó là phần form: tạo epic (key gợi ý, custom attribute) và task bằng form,
@@ -409,13 +439,20 @@ ngay dưới ô đó (file không đổi), rồi lưu thật; kiểm tra `backlo
 `taigent validate` (exit 0), so bản xem trước của form với mô tả của story trong `taigent preview --json` (phải bằng
 nhau) và với phần mô tả ở màn hình review (cùng HTML). Sau đó sửa story legacy `REVIEW-MARKDOWN` (vẫn là
 `acceptance_criteria`), rồi bấm *Chuyển sang user story format*, điền Given/When/Then, lưu và kiểm tra lại `validate`
-và `preview`. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
+và `preview`. Rồi tới phần wiki: mục Wiki liệt kê 2 trang, form từ chối slug sai
+(rule `wiki-slug`), tạo trang `trang-smoke` (kiểm tra `pages/trang-smoke.md` và entry cuối `docs.yaml`, comment giữ
+nguyên), sửa trang đó (slug bị khoá, chỉ file trang đổi). *Đẩy wiki lên Taiga* chạy với một Taiga giả
+(`test/support/fake-taiga.ts`, trong tiến trình của script; ứng dụng nhận `TAIGA_API_URL`/`TAIGA_USERNAME`/
+`TAIGA_PASSWORD` của nó trong lúc đó): hộp thoại xác nhận liệt kê tạo mới, cập nhật, bỏ qua và được trả lời *Huỷ*
+(Taiga giả không nhận request ghi nào); sai mật khẩu thì hiện thông báo tiếng Việt kèm cách sửa; cuối cùng, chỉ với
+Taiga giả, hộp thoại được trả lời đồng ý trong khi trang bị sửa trên Taiga giữa chừng, và màn hình hiện thông báo
+conflict kèm cách sửa. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
 Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Sau đó script mở Taiga › Project,
 kiểm tra fixture có trong danh sách, mở form `project.yaml`, sửa mô tả, lưu và kiểm tra file giữ comment và tag. Nếu
 đã đăng nhập, script bấm *Bootstrap lên Taiga…*: `bootstrap --dry-run` chạy rồi hộp thoại xác nhận hiện ra. Mọi hộp
-thoại xác nhận (đẩy, bootstrap) luôn được trả lời *Huỷ*. Sau đó script kiểm tra mục Báo cáo. Nếu đã đăng nhập và bạn
-là thành viên ít nhất một project trên Taiga, script mở báo cáo của project đầu tiên (chỉ đọc). Nếu không, script kiểm
-tra ô chọn project trống.
+thoại xác nhận với Taiga thật (đẩy, bootstrap) luôn được trả lời *Huỷ*. Sau đó script kiểm tra mục Báo cáo. Nếu đã
+đăng nhập và bạn là thành viên ít nhất một project trên Taiga, script mở báo cáo của project đầu tiên (chỉ đọc). Nếu
+không, script kiểm tra ô chọn project trống.
 Tiếp theo là **Ticket của tôi** (`scripts/smoke-tickets.mjs`): kiểm tra kỳ mặc định là tuần này (thứ Hai tới Chủ
 nhật). Nếu đã đăng nhập, script đọc ticket thật của tuần này rồi bấm *‹ Tuần trước* và chờ kỳ trước được đọc (chỉ
 đọc); nếu chưa, kiểm tra lỗi *Chưa đăng nhập* kèm cách sửa và kỳ vẫn đổi được. Thao tác ghi chỉ chạy trên FakeTaiga
@@ -431,7 +468,7 @@ nhận file đó; sửa `docs/huong-dan.md` và kiểm tra nó vào danh sách; 
 trên remote, một commit ở máy) rồi bấm Pull, kiểm tra ứng dụng giải thích, mở một tab shell ở repo trong panel terminal,
 và HEAD, trạng thái cùng nội dung working tree không đổi. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
 
-Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form, trước *Xem thay đổi*: panel ẩn lúc mở, bật/tắt bằng
+Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form và phần wiki, trước *Xem thay đổi*: panel ẩn lúc mở, bật/tắt bằng
 `` Ctrl+` `` và nút; mở tab shell, gõ lệnh và thấy output, in tiếng Việt, in chữ đỏ bằng mã ANSI, kéo panel cao lên rồi
 kiểm tra shell thấy đúng số cột và dòng mới; chạy một process con (`ping`), đóng tab rồi kiểm tra shell và process con
 đã dừng. Ứng dụng được mở với `PATH` có một `claude` giả (in thư mục làm việc) đứng đầu và không có thư mục nào chứa
