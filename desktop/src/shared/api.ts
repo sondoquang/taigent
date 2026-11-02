@@ -113,6 +113,43 @@ export type ApplyOutcome =
 
 export type VerdictChoice = Verdict | 'clear';
 
+/** A changed file in the Git section's scope, repo-relative with `/`. */
+export interface GitChange {
+  path: string;
+  state: 'modified' | 'added' | 'deleted' | 'untracked' | 'conflicted';
+}
+
+/** The Git section's view of the opened repository. */
+export interface GitStatus {
+  /** The current branch; undefined on a detached HEAD. */
+  branch?: string;
+  /** `<remote>/<branch>` the section pulls from and pushes to; undefined when the branch tracks none. */
+  upstream?: string;
+  /** Commits not pushed / not pulled yet, against the last fetch of the upstream. */
+  ahead: number;
+  behind: number;
+  /** Repo-relative paths the section may add: the manifests folder and the files its docs.yaml files reference. */
+  scope: string[];
+  /** Changed files within the scope. */
+  changes: GitChange[];
+  /** Changed files outside the scope: never added, committed or pushed by the app. */
+  outside: number;
+}
+
+/** Why a git action stopped before doing anything git could not undo; `message` is Vietnamese. */
+export interface GitStop {
+  reason: 'no-git' | 'not-repo' | 'detached' | 'no-remote' | 'no-upstream' | 'conflict' | 'diverged' | 'behind' | 'outside-commits' | 'failed';
+  message: string;
+  /** git's own output, when a git command failed. */
+  detail?: string;
+  /** Commands to run in a terminal at the repository. */
+  commands: string[];
+  /** True when the app opened the repository for the user to continue in a terminal. */
+  terminal: boolean;
+}
+
+export type GitOutcome = { kind: 'ok'; status: GitStatus; summary?: string } | { kind: 'stopped'; stop: GitStop; status?: GitStatus };
+
 /** backlog.yaml as a form opens it (its digest guards the save), with what the forms offer from project.yaml. */
 export interface BacklogSnapshot {
   file: ManifestFile;
@@ -201,6 +238,14 @@ export interface TaigentApi {
   saveProjectSettings(input: ProjectSettingsInput): Promise<Result<SaveProjectSettingsResult>>;
   /** `bootstrap --dry-run --json`, a native confirmation listing the operations, then `bootstrap --yes --json`. */
   bootstrapProject(slug: string): Promise<Result<BootstrapOutcome>>;
+  /** Status of the opened repository within the Git section's scope. */
+  gitStatus(): Promise<Result<GitOutcome>>;
+  /** `git pull --ff-only`; stops on a diverged history without touching the working tree. */
+  gitPull(): Promise<Result<GitOutcome>>;
+  /** Adds and commits exactly the changed files in scope with `message`, then pushes to the upstream. */
+  gitCommitPush(message: string): Promise<Result<GitOutcome>>;
+  /** Pushes local commits that only touch the scope. */
+  gitPush(): Promise<Result<GitOutcome>>;
 }
 
 export const CHANNELS = {
@@ -224,4 +269,8 @@ export const CHANNELS = {
   readTaigaProject: 'taigent:read-taiga-project',
   saveProjectSettings: 'taigent:save-project-settings',
   bootstrapProject: 'taigent:bootstrap-project',
+  gitStatus: 'taigent:git-status',
+  gitPull: 'taigent:git-pull',
+  gitCommitPush: 'taigent:git-commit-push',
+  gitPush: 'taigent:git-push',
 } as const;

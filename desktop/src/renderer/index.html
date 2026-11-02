@@ -120,13 +120,26 @@
       <section class="screen" id="screen-git" aria-label="Git" hidden>
         <div class="screen-body">
           <h1>Git</h1>
-          <div class="empty-state">
-            <p><strong>Chưa có panel git.</strong></p>
-            <p class="muted">
-              Commit và push <code>taiga/&lt;slug&gt;/</code> (gồm cả <code>review.yaml</code>) bằng git như bình thường để
-              cả team thấy manifest và kết quả review.
-            </p>
+          <p class="muted">
+            Chỉ thao tác trên thư mục manifest (<code>taiga/</code>) và các file mà <code>docs.yaml</code> tham chiếu.
+            Ứng dụng không bao giờ merge, rebase hay force push: khi cần, nó dừng lại, giải thích và mở repo để bạn xử
+            lý trong terminal.
+          </p>
+          <div id="git-overview" class="git-overview"></div>
+          <div class="changes-actions">
+            <button id="git-refresh" class="btn" type="button" disabled>Làm mới</button>
+            <button id="git-pull" class="btn" type="button" disabled>Pull</button>
+            <button id="git-push" class="btn" type="button" disabled>Push</button>
           </div>
+          <h3>File đã đổi trong phạm vi</h3>
+          <ul id="git-files" class="git-files"></ul>
+          <p id="git-files-empty" class="muted" hidden>Không có file nào trong phạm vi đã đổi.</p>
+          <p id="git-outside" class="muted"></p>
+          <form id="git-commit-form" class="git-commit">
+            <input id="git-message" type="text" placeholder="Message của commit" aria-label="Message của commit" />
+            <button id="git-commit-push" class="btn primary" type="submit" disabled>Commit + Push</button>
+          </form>
+          <div id="git-result" class="changes-result" aria-live="polite"></div>
         </div>
       </section>
 

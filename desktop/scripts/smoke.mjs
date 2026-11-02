@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright-core';
+import { smokeGit } from './smoke-git.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -108,7 +109,7 @@ try {
   await page.screenshot({ path: join(shots, '4-push-blocked.png') });
 
   // Switching sections keeps the open project and the selected item; sections without content yet have no controls.
-  for (const section of ['wiki', 'git', 'settings']) {
+  for (const section of ['wiki', 'settings']) {
     await goTo(page, section);
     const controls = await page.locator(`#screen-${section} :is(button, input, select, textarea, a)`).count();
     check(controls === 0, `section ${section} shows an empty state without controls`);
@@ -219,6 +220,7 @@ try {
   } else {
     log('skipped bootstrap: not logged in');
   }
+  await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
   log('screenshots in', shots);
   log('temporary manifests in', manifests);
 } finally {

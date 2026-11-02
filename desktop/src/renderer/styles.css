@@ -1123,3 +1123,43 @@ textarea:focus {
   border-top: 1px solid var(--line);
   margin-top: 16px;
 }
+
+/* ---- git section ---- */
+.git-overview p {
+  margin: 4px 0;
+}
+
+.git-files {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.git-files li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+}
+
+.git-state {
+  min-width: 64px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.git-files li.conflicted .git-state {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.git-commit {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.git-commit input {
+  flex: 1;
+  max-width: 520px;
+}

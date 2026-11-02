@@ -28,6 +28,10 @@ const api: TaigentApi = {
   readTaigaProject: (slug) => ipcRenderer.invoke(CHANNELS.readTaigaProject, slug),
   saveProjectSettings: (input) => ipcRenderer.invoke(CHANNELS.saveProjectSettings, input),
   bootstrapProject: (slug) => ipcRenderer.invoke(CHANNELS.bootstrapProject, slug),
+  gitStatus: () => ipcRenderer.invoke(CHANNELS.gitStatus),
+  gitPull: () => ipcRenderer.invoke(CHANNELS.gitPull),
+  gitCommitPush: (message) => ipcRenderer.invoke(CHANNELS.gitCommitPush, message),
+  gitPush: () => ipcRenderer.invoke(CHANNELS.gitPush),
 };
 
 contextBridge.exposeInMainWorld('taigent', api);
