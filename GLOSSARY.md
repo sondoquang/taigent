@@ -4,10 +4,16 @@ Taigent turns a project's plans into Taiga epics, stories and tasks, and reports
 
 ## Language
 
+### Planning the backlog
+
+**User story**:
+A Taiga story in the backlog, assigned or not: who wants what and why, and the acceptance criteria that prove it is done.
+_Avoid_: Ticket (reserved for a user story assigned to you), card, item
+
 ### Reporting on your work
 
 **Ticket**:
-A Taiga user story assigned to you. Tasks and issues are not tickets.
+A user story assigned to you. Tasks and issues are not tickets.
 _Avoid_: Card, item (for a story); ticket for a task or an issue
 
 **Period's tickets**:
