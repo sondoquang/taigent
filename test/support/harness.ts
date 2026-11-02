@@ -14,7 +14,7 @@ import { isFileNotFound } from '../../src/guards.ts';
 import type { StateFile } from '../../src/manifest/state.ts';
 import { startFakeTaiga, type FakeTaiga } from './fake-taiga.ts';
 
-const BIN = fileURLToPath(new URL('../../bin/taigent.js', import.meta.url));
+export const BIN = fileURLToPath(new URL('../../bin/taigent.js', import.meta.url));
 
 export interface CliResult {
   code: number | null;
@@ -36,7 +36,12 @@ export interface Harness {
   cwd: string;
   /** `<cwd>/taiga`, the default manifests root. */
   manifestsDir: string;
-  /** Env passed to the CLI: TAIGA_API_URL (the fake) + the fake user's credentials. */
+  /** TAIGENT_CONFIG_DIR of every run: a stored login (`taigent login`) lives here, never in the developer's. */
+  configDir: string;
+  /**
+   * Env passed to the CLI: TAIGA_API_URL (the fake) + the fake user's credentials, and a file credential store in
+   * `configDir` so no test reads or writes the OS credential store.
+   */
   env: Record<string, string>;
   writeManifest(slug: string, file: string, content: string): Promise<void>;
   /** Parsed `<manifestsDir>/<slug>/state.json`, or undefined when absent. */
@@ -45,18 +50,23 @@ export interface Harness {
   taigent(args: string[], options?: RunOptions): Promise<CliResult>;
 }
 
-/** Runs `node bin/taigent.js ...args` asynchronously (the fake server lives in this process). */
-export async function runTaigent(args: string[], options: { env: Record<string, string | undefined>; cwd: string }): Promise<CliResult> {
+/** The env of a CLI child process: this process's env without the developer's TAIGA_ and TAIGENT_ variables, plus `overrides`. */
+export function childEnv(overrides: Record<string, string | undefined>): Record<string, string> {
   // Never leak the developer's real Taiga credentials or overrides into a test run.
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !/^(TAIGA_|TAIGENT_)/i.test(name)) env[name] = value;
   }
-  for (const [name, value] of Object.entries(options.env)) {
+  for (const [name, value] of Object.entries(overrides)) {
     if (value === undefined) delete env[name];
     else env[name] = value;
   }
-  const child = spawn(process.execPath, [BIN, ...args], { cwd: options.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  return env;
+}
+
+/** Runs `node bin/taigent.js ...args` asynchronously (the fake server lives in this process). */
+export async function runTaigent(args: string[], options: { env: Record<string, string | undefined>; cwd: string }): Promise<CliResult> {
+  const child = spawn(process.execPath, [BIN, ...args], { cwd: options.cwd, env: childEnv(options.env), stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
@@ -84,13 +94,21 @@ export async function startHarness(t: TestContext): Promise<Harness> {
     await rm(cwd, { recursive: true, force: true });
   });
   const manifestsDir = join(cwd, 'taiga');
-  const env = { TAIGA_API_URL: fake.url, TAIGA_USERNAME: fake.user.username, TAIGA_PASSWORD: fake.user.password };
+  const configDir = join(cwd, '.taigent-config');
+  const env = {
+    TAIGA_API_URL: fake.url,
+    TAIGA_USERNAME: fake.user.username,
+    TAIGA_PASSWORD: fake.user.password,
+    TAIGENT_CONFIG_DIR: configDir,
+    TAIGENT_CREDENTIAL_STORE: 'file',
+  };
   const statePath = (slug: string) => join(manifestsDir, slug, 'state.json');
 
   return {
     fake,
     cwd,
     manifestsDir,
+    configDir,
     env,
     async writeManifest(slug, file, content) {
       await mkdir(join(manifestsDir, slug), { recursive: true });

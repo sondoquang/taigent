@@ -289,7 +289,7 @@ test('an upload interrupted by an expired token is sent again in full after the 
   const result = await h.taigent(['upload', '--project', SLUG, '--yes']);
 
   assert.equal(result.code, 0, result.stderr);
-  // The first attempt got 401; the documented renewal (docs/cli.md §Environment) ran before the retry.
+  // The first attempt got 401; the documented renewal (docs/cli.md §Credentials and environment) ran before the retry.
   assert.ok(h.fake.requests.some((r) => r.path === '/auth/refresh'));
   assert.deepEqual(
     h.fake.state.attachments.map((a) => ({ object_id: a.object_id, content: a.content })),

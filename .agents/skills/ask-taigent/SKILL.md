@@ -16,7 +16,7 @@ Out of scope: general engineering work (specs, tickets, TDD, reviews, bugs). Say
 
 The route most work travels. Every write to Taiga goes **plan → review → apply**: the agent edits a manifest in the repo, a human reviews it, and the `taigent` CLI applies it only after an explicit yes.
 
-1. **`taiga-setup`** once per machine and per project: `TAIGA_*` variables, the `taigent` CLI, the Taiga MCP server. Every other skill sends you back here when one of them is missing.
+1. **`taiga-setup`** once per machine and per project: the `taigent` CLI, the user's Taiga login (`npx taigent login`, typed by the user in their own terminal), the Taiga MCP server. Every other skill sends you back here when one of them is missing.
 2. **`taiga-bootstrap-project`** when the Taiga project does not exist yet, or lacks modules, tags, members or custom attributes: `taiga/<slug>/project.yaml` → dry run → confirm → bootstrap. Re-running only fills gaps.
 3. **`taiga-plan-backlog`** turns a spec, a PRD or a one-line request into `taiga/<slug>/backlog.yaml` (epics, stories, tasks). Files only: it reads Taiga to avoid duplicating hand-made work, and patches the existing manifest in place so every key survives.
 4. **Review**: the human reads `git diff taiga/<slug>/` like a code diff.
@@ -32,7 +32,7 @@ Beside the main flow:
 
 Starting situations, and where each merges onto the flow.
 
-- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npx skills add sondoquang/taigent` for the skills, `npm install -D github:sondoquang/taigent` for the CLI; neither registers the Taiga MCP server. `taiga-setup` checks the variables (environment or `.env`), the CLI and the MCP server, including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
+- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npx skills add sondoquang/taigent` for the skills, `npm install -D github:sondoquang/taigent` for the CLI; neither registers the Taiga MCP server. `taiga-setup` checks the CLI, the login (`taigent whoami`; the user runs `npx taigent login` in their own terminal, which stores a token in the OS credential store, never the password) and the MCP server (`taigent mcp`), including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
 - **Brand-new Taiga project** → `taiga-bootstrap-project`, then `taiga-plan-backlog` and `taiga-upload-docs`.
 - **Project already on Taiga, no manifest yet** → `taiga-plan-backlog`. Hand-made items carry no `src:` tag; it lists them and asks before adding the same work. `taiga-bootstrap-project` completes the existing project when you are its admin.
 - **New or changed requirement** → `taiga-plan-backlog` with the request as the spec, then review and `taiga-apply-backlog`.
@@ -40,7 +40,7 @@ Starting situations, and where each merges onto the flow.
 - **"What are my tickets this week?" or "what did I close last week?"** → `taiga-my-tickets`.
 - **Remove, rename or move items on Taiga** → the CLI never deletes. An item dropped from the manifest becomes an **orphan** that `plan` reports; a moved story keeps its old epic link, reported as `staleLinks`. A human cleans both up on Taiga. Keys never change after apply: a new key is a new item.
 - **Status, assignee, sprint or points** → people set these on Taiga; manifests carry none of them.
-- **A command fails** → branch on its exit code (`docs/cli.md` §Exit codes). Exit 4: the manifest breaks a convention; `taigent validate` lists each problem with its rule. Exit 2 or 5 naming a missing `TAIGA_*` variable or a refused login: `taiga-setup`.
+- **A command fails** → branch on its exit code (`docs/cli.md` §Exit codes). Exit 4: the manifest breaks a convention; `taigent validate` lists each problem with its rule. Exit 2 saying `not logged in`, or exit 5 naming a refused login, `TAIGA_*` variable or expired stored login: `taiga-setup`. Never ask for a password: the user runs `npx taigent login` themselves.
 
 ## How we work
 
@@ -72,4 +72,4 @@ In the taigent repository; `AGENTS.md` and `docs/cli.md` §Skills hold the full 
 - The **Taigent skills** are every `taiga-*` skill plus this one. Edit them in `.agents/skills/`, then run `npx taigent skills sync` to refresh the `.claude/skills/` copies; `npm test` fails while they differ. The other skills are vendored from `mattpocock/skills` (`skills-lock.json`), and taigent leaves them alone.
 - A skill that pre-approves `taigent apply`, `bootstrap` or `upload` is user-only on both agents.
 - Adding, removing or changing a Taigent skill: update this map in the same change.
-- Bumping the `taiga-mcp-server` pin: `.mcp.json`, `.codex/config.toml`, `taiga-setup` and `docs/cli.md` together.
+- Bumping the `taiga-mcp-server` pin: its exact version in `package.json`, then the version named in `taiga-setup`, the `taiga-*` skills' tool notes, `docs/cli.md` and `docs/taiga/conventions.md` §10, together.

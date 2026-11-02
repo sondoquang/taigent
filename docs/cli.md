@@ -14,38 +14,49 @@ npm run taigent -- plan --project my-project      # works in PowerShell and POSI
 npx taigent plan --project my-project             # same, via the package bin
 ```
 
-## Environment
+## Credentials and environment
+
+Every command that talks to Taiga uses, in this order:
+
+1. `TAIGA_TOKEN` and/or `TAIGA_USERNAME` + `TAIGA_PASSWORD`, when set (with `TAIGA_API_URL`): for CI and machines
+   without an OS credential store;
+2. else the **stored login** of [`taigent login`](#login-and-the-mcp-server). A `TAIGA_API_URL` that is set must then
+   be the stored login's URL (exit 2 otherwise);
+3. else exit 2, saying `not logged in to Taiga` and how to log in.
 
 A variable not set (or empty) in the environment is read from `.env` in the working directory, when there is one
-(`KEY=value` lines, the format of `.env.example`); the environment wins. Keep `.env` out of git. It serves the CLI
-only: the Taiga MCP server takes its values from the agent's MCP configuration (`taiga-setup` skill).
+(`KEY=value` lines, the format of `.env.example`); the environment wins. Keep `.env` out of git. `taigent mcp` reads
+the same variables, so `.env` reaches the Taiga MCP server too.
 
 | Variable | Meaning |
 |---|---|
 | `TAIGA_API_URL` | API base URL including `/api/v1`, e.g. `https://taiga.example.com/api/v1` |
-| `TAIGA_USERNAME`, `TAIGA_PASSWORD` | Login (`POST /auth`, type `normal`). Required unless `TAIGA_TOKEN` is set |
+| `TAIGA_USERNAME`, `TAIGA_PASSWORD` | Login (`POST /auth`, type `normal`); also the fallback when `TAIGA_TOKEN` is rejected |
 | `TAIGA_TOKEN` | Access token used instead of username/password (sent as `Authorization: Bearer`) |
 | `TAIGENT_MANIFESTS_DIR` | Manifests root, default `./taiga` (relative to the working directory) |
 | `TAIGENT_RETRY_UNIT_MS` | Milliseconds per second of 429 backoff, default `1000` (tests set it low) |
+| `TAIGENT_CREDENTIAL_STORE` | Where `login` keeps its token: `keyring` (default: Windows Credential Manager, macOS Keychain, Linux Secret Service) or `file` (`credentials.json` in the config directory, mode 0600, plain JSON: for machines without a credential store) |
+| `TAIGENT_CONFIG_DIR` | Config directory of the stored login, default `%APPDATA%\taigent` (Windows), `~/Library/Application Support/taigent` (macOS), `$XDG_CONFIG_HOME/taigent` or `~/.config/taigent` (Linux) |
 
 Authentication and retries (all in `TaigaClient`, so every command gets them):
 
 - **401:** the client renews the access token once and retries the request: `POST /auth/refresh` with the
   refresh token from the login, else (refresh rejected, or `TAIGA_TOKEN` without a refresh token) a new
-  login with `TAIGA_USERNAME`/`TAIGA_PASSWORD` when set. If that is impossible or the retry gets 401 again,
-  the run fails (exit 5) naming the URL and the variable to check (`TAIGA_TOKEN` or
-  `TAIGA_USERNAME and TAIGA_PASSWORD`).
+  login with `TAIGA_USERNAME`/`TAIGA_PASSWORD` when set; with the stored login, the renewal of
+  [Login and the MCP server](#login-and-the-mcp-server). If that is impossible or the retry gets 401 again,
+  the run fails (exit 5) naming the URL and what to fix (`TAIGA_TOKEN`, `TAIGA_USERNAME and TAIGA_PASSWORD`, or
+  `npx taigent login`).
 - **429:** up to 5 retries per request, waiting `Retry-After` (seconds or HTTP date) when Taiga sends it,
   else 1, 2, 4, 8, 16 units; one wait is capped at 60 units (unit = `TAIGENT_RETRY_UNIT_MS`).
-- Missing variables are a configuration error (exit 2) naming them, e.g.
-  `missing environment variable(s): TAIGA_PASSWORD (or set TAIGA_TOKEN instead)`. So is a `TAIGA_API_URL` with
-  credentials in it (`https://user:password@…`): put them in `TAIGA_USERNAME`/`TAIGA_PASSWORD` instead (the message
-  never repeats the URL).
+- A `TAIGA_API_URL` with credentials in it (`https://user:password@…`) is a configuration error (exit 2): put them
+  in `TAIGA_USERNAME`/`TAIGA_PASSWORD` instead (the message never repeats the URL). So is
+  `TAIGA_TOKEN`/`TAIGA_USERNAME`+`TAIGA_PASSWORD` without `TAIGA_API_URL`.
 
 Credentials and tokens are never printed: Taiga error bodies are included in messages, but `TAIGA_PASSWORD`,
-`TAIGA_TOKEN`, the password of a `user:password@` in `TAIGA_API_URL`, and every access/refresh token the client
-obtains are replaced by `[redacted]` in everything the CLI writes: stdout, stderr, `--json` and the stack trace of
-an internal error (exit 1). One `Secrets` registry (`src/secrets.ts`) is shared by the CLI and the client;
+`TAIGA_TOKEN`, the password of a `user:password@` in `TAIGA_API_URL`, the password typed at `login`, the stored
+tokens and every access/refresh token the client obtains are replaced by `[redacted]` in everything the CLI writes:
+stdout, stderr, `--json` and the stack trace of an internal error (exit 1). One `Secrets` registry
+(`src/secrets.ts`) is shared by the CLI, the client, the stored login and the MCP proxy;
 `test/resilience.test.ts` checks every output path, including internal errors and URL credentials.
 
 ## Manifest layout
@@ -162,7 +173,7 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
 
 ## Commands
 
-Common options: `--project <slug>` (required except for `validate`, `tickets` and `skills`), `--json` (machine-readable stdout),
+Common options: `--project <slug>` (required except for `validate`, `tickets`, `skills`, `login`, `logout`, `whoami` and `mcp`), `--json` (machine-readable stdout),
 `--yes`, `--dry-run`, `-h/--help`. `--dry-run` lists the operations a writing command (`bootstrap`, `apply`, `upload`)
 would run and writes nothing, not even `state.json`; it exits 3 when there are changes, 0 otherwise (`apply --dry-run`
 is the same as `plan`). Without `--yes` or `--dry-run`, a writing command prints the same operations, writes nothing
@@ -178,6 +189,8 @@ and exits 2 when there are changes.
   write to Taiga (a failed run resumes where it stopped). It stops at the first error, naming the operation and
   key. Without `--yes` it prints the plan, writes nothing (not even `state.json`) and exits 2 when there are
   changes.
+- `taigent login [--application <id>]`, `taigent logout`, `taigent whoami [--json]`, `taigent mcp`: see
+  [Login and the MCP server](#login-and-the-mcp-server).
 
 `plan --json` prints a `Plan`; operations are `create`, `update`, `link` or `skip`:
 
@@ -214,7 +227,8 @@ summary: { created, updated, linked, unchanged } }`; `result` is `created`, `upd
 `epic` (the epic key) is set on `link` operations, whose `id`/`ref` are the story's.
 
 Errors print `taigent: <message>` on stderr; with `--json`, stdout also gets
-`{ "error": { "kind": "usage" | "validation" | "taiga" | "conflict", "message", "issues"?, "status"?, "key"? } }`.
+`{ "error": { "kind": "usage" | "login" | "validation" | "taiga" | "conflict", "message", "issues"?, "status"?, "key"? } }`
+(`login`: no stored login, or `login` run without a terminal).
 Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1].stories[0].key` / `key-unique`.
 `conflict` means Taiga refused an update because the item changed on Taiga after apply read it (OCC); `key`
 names the item, nothing was overwritten, and re-running `plan` shows the new state.
@@ -434,6 +448,55 @@ previous one (`count`, the `first` and `last` closing instants, and `tickets` as
 than when the work was actually done. A gap over 60 seconds starts a new run; a run of 2 is not listed.
 `notes.missingEffort` lists the tickets with no effort.
 
+## Login and the MCP server
+
+**`taigent login [--application <id>]`** is run by the user, in their own terminal: it refuses to run unless stdin and
+stdout are a terminal, so neither an agent nor a pipe can type the password. It asks for the API URL (or takes
+`TAIGA_API_URL`; a bare `https://host` gets `/api/v1`), the username or email (or takes `TAIGA_USERNAME`) and the
+password, which is never echoed and never read from the environment. It logs in once (`POST /auth`) and stores:
+
+- `<config dir>/login.json`, not secret: `{ apiUrl, username, method, application? }`;
+- one secret in the credential store (`TAIGENT_CREDENTIAL_STORE`), under service `taigent` and account `<apiUrl>`:
+  - default, `method: refresh-token`: Taiga's access/refresh token pair. Taiga rotates refresh tokens (a used one is
+    denylisted) and lets one live 8 days by default, so a login unused for that long must be repeated;
+  - `--application <id>`, `method: application-token`: an application token (`POST /application-tokens/authorize`, then
+    `validate`). It needs an Application that the instance admin created in Django admin (`/admin/` → Applications;
+    Taiga has no API for it); its id is not secret. The token never expires and is revoked by `logout`.
+
+The password is not stored anywhere. A new login replaces the previous one. Wrong credentials exit 5; an unknown
+Application id exits 5 and stores nothing.
+
+Renewal: on a 401 the stored login takes `<config dir>/login.lock` (shared by every taigent process of the user),
+re-reads the store, and adopts the pair another process stored meanwhile; only when the rejected token is still the
+stored one does it call `POST /auth/refresh` and store the new pair. So the CLI and any number of `taigent mcp`
+processes spend one refresh token once. A refresh Taiga refuses exits 5 asking for `taigent login`. An application
+token is not renewed.
+
+**`taigent logout`** deletes `login.json` and the stored secret. With an application token it first deletes it on
+Taiga (`DELETE /application-tokens/{id}`), since Taiga would hand the same one out again; if that fails, the local
+login is removed anyway and the command exits 5. Taiga cannot revoke a refresh token (it has no logout endpoint).
+
+**`taigent whoami [--json]`** checks the credentials of [Credentials and environment](#credentials-and-environment)
+with `GET /users/me`: `{ "apiUrl", "user": { "id", "username" }, "credentials": { "source": "login", "method",
+"store" } | { "source": "environment", "variables" } }`.
+
+**`taigent mcp`** runs the Taiga MCP server (the `taiga-mcp-server` version pinned in `package.json`) in its own
+process, on stdin/stdout, for `.mcp.json` / `.codex/config.toml`; it exits when the agent closes stdin. Nothing goes
+to stdout but MCP; its messages go to stderr. With `TAIGA_USERNAME`/`TAIGA_PASSWORD` set, the server logs in with them
+itself. Otherwise (stored login, or `TAIGA_TOKEN`) the server, which only knows username/password logins, talks to a
+proxy on `127.0.0.1` instead of Taiga:
+
+- the server gets the proxy URL, the stored username and a random proxy password, never a real credential;
+- the proxy answers `POST /auth` with that password by `GET /users/me` on Taiga plus the proxy password as token,
+  and refuses any other username/password with 401: the MCP `authenticate` tool cannot switch accounts (it is banned
+  anyway, conventions §10);
+- every other request must carry the proxy token; the proxy forwards it to Taiga with the stored login's
+  `Authorization` header, renewing it once on 401 as above.
+
+Limits: the credential store keeps the token out of files, not out of reach of other programs running as the same
+user (an agent's shell included), and the proxy accepts any local process that knows the proxy password, which lives
+in the `taigent mcp` process's environment.
+
 ## Skills
 
 The agent skills that drive this CLI, the **Taigent skills**, are every `taiga-*` skill plus the router
@@ -456,7 +519,7 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | Skill | Invocation | Does |
 |---|---|---|
 | `ask-taigent` | User only (as below) | Router: which Taigent skill, workflow step or CLI command fits a situation, the plan → review → apply rules, and how to maintain the skills. Reads only |
-| `taiga-setup` | Model or user | Checks Node.js and the `TAIGA_*` variables (set in the environment, set in `.env`, or missing; never values), `npx --no -- taigent --help`, and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (`claude mcp add -s user taiga …` for Claude Code by default, or the `taiga` entry for `.mcp.json`/`.codex/config.toml` once the user agrees), and installs the skills into another project on request (`npx skills add`) |
+| `taiga-setup` | Model or user | Checks `npx --no -- taigent --help`, the login (`taigent whoami`; the fix is the user running `npx taigent login` in their own terminal), and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (the `taiga` entry for `.mcp.json`/`.codex/config.toml`, running `taigent mcp`, once the user agrees), and installs the skills into another project on request (`npx skills add`) |
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
@@ -489,12 +552,11 @@ npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cit
 types, so `bin/taigent.js` runs `dist/` there and the TypeScript sources everywhere else. Both commands need read
 access to the repository while it is private. The package ships `bin/`, `dist/`, `docs/cli.md` and `docs/taiga/`
 (`files` in `package.json`): the docs the skills cite, read from `node_modules/taigent/`.
-Neither command registers the Taiga MCP server: for Claude Code the user runs
-`claude mcp add -s user taiga -e TAIGA_API_URL=… -e TAIGA_USERNAME=… -e TAIGA_PASSWORD=… -- npx -y taiga-mcp-server@1.9.20`
-once (values stay in their `~/.claude.json`), or the project commits the `.mcp.json` entry of `taiga-setup` and
-each user sets the variables in their environment and approves the server. The CLI reads the variables from the
-environment or from `.env` at the project root. `taiga-status-report` needs only the Taiga MCP server;
-`taiga-my-tickets` needs only the CLI (`taigent tickets`). The `taiga-setup` skill checks all of it and names each fix.
+Neither command logs in or registers the Taiga MCP server. Each user runs `npx taigent login` once, in their own
+terminal, at the project root; the project commits the `.mcp.json` / `.codex/config.toml` entries of `taiga-setup`
+(`node node_modules/taigent/bin/taigent.js mcp`, no secrets) and each user approves the project server once.
+`taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets` needs only the CLI (`taigent tickets`).
+The `taiga-setup` skill checks all of it and names each fix.
 
 ## Exit codes
 
@@ -502,10 +564,10 @@ environment or from `.env` at the project root. `taiga-status-report` needs only
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `skills` outside a repository root |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `skills` outside a repository root |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
 | 4 | Manifest invalid or missing; Taiga was not contacted |
-| 5 | Taiga or network error: HTTP error, unreachable host, login refused, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
+| 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch) |
 
 ## Code map
 
@@ -514,9 +576,11 @@ environment or from `.env` at the project root. `taiga-status-report` needs only
 | CLI | `src/cli.ts` | argv parsing, wiring, output, exit codes (`src/exit-codes.ts`); one review gate (`reviewGate`) and one text form for every plan and report |
 | Manifest | `src/manifest/` | `loadManifests`/`MANIFESTS` registry (`manifests.ts`), `loadBacklog`, `loadDocs`, conventions rules (`conventions.ts`), `readManifestYaml`, `projectLayout`, `readState`/`writeState`, `ManifestError` |
 | Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`): the one item vocabulary outside the client |
-| Secrets | `src/secrets.ts` | `Secrets` (`add`, `redact`): what no output may show, shared by the CLI (environment) and the client (tokens) |
+| Secrets | `src/secrets.ts` | `Secrets` (`add`, `redact`): what no output may show, shared by the CLI (environment, typed password), the client and the stored login (tokens) and the MCP proxy |
+| Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
+| MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listAssignedStories` for `tickets`), the only place that maps item types to Taiga's endpoint and field names (`TAIGA_ITEM`), `TaigaError`, `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listAssignedStories` for `tickets`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types to Taiga's endpoint and field names (`TAIGA_ITEM`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `describePlanOperation`, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
@@ -539,7 +603,10 @@ dependency order (`context.loaded` holds the manifests loaded before it, `contex
 `npm test` (Node's built-in runner) and `npm run typecheck`. Tests only go through the CLI seam:
 `test/support/harness.ts` (`startHarness(t)`) spawns `bin/taigent.js` in a temp working directory against
 `test/support/fake-taiga.ts` (`startFakeTaiga()`), an in-process fake of the Taiga API that validates
-payloads like Taiga (and additionally rejects unknown fields). Extend the fake rather than mocking modules.
+payloads like Taiga (and additionally rejects unknown fields). Extend the fake rather than mocking modules. Every run
+gets `TAIGENT_CONFIG_DIR` = `h.configDir` (in the temp directory) and `TAIGENT_CREDENTIAL_STORE=file`, so no test
+touches the developer's stored login or OS credential store; `test/login.test.ts` stores a login with `storeLogin`
+(what `taigent login` runs after its terminal prompts) and drives `taigent mcp` over MCP JSON-RPC on stdin/stdout.
 
 Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
 
@@ -569,7 +636,7 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   uploads; POST /auth bodies hold the password, never print them), `at` the `performance.now()` of arrival. Assert
   outcomes on `fake.state`; use `fake.requests` only for what is a contract: the payload of a documented call (e.g.
   PATCH carries `version`), "no write" / "no request" checks, and the auth and retry behaviour documented under
-  Environment (401 → `/auth/refresh` → new login order, at most 5 retries per 429, `Retry-After` waits via `at`).
+  Credentials and environment (401 → `/auth/refresh` → new login order, at most 5 retries per 429, `Retry-After` waits via `at`).
 - Failure injection: `fake.intercept({ method, path, status, body?, bodyFrom?, headers?, after?, times? })` answers the
   matching request(s) with a canned reply (`path` a string or RegExp below `/api/v1`; `bodyFrom(request)` builds the body
   from the recorded request, e.g. to echo credentials; `headers` e.g. `retry-after`; `after` lets that many through
@@ -578,7 +645,11 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
 - Tokens: `fake.issueToken()` returns a valid access token without a login (for `TAIGA_TOKEN`);
   `fake.expireTokens({ after?, refresh? })` expires all access tokens after `after` more authenticated requests (and
   revokes refresh tokens with `refresh: true`); `fake.issuedTokens` lists every access and refresh token issued, for
-  leak checks.
+  leak checks (application tokens included).
+- Application tokens: `fake.addApplication(name)` registers an Application (as an admin does in Django admin);
+  `POST /application-tokens/authorize` / `validate`, `GET /application-tokens?application=` and
+  `DELETE /application-tokens/{id}` behave like taiga-back, `Authorization: Application <token>` authenticates, and
+  `fake.state.applications` / `applicationTokens` hold them.
 - `fake.settings`: `projectSlugPrefix = true` mimics DEFAULT_PROJECT_SLUG_PREFIX; `maxBodyBytes = n` answers any larger
   request body with nginx's HTML 413 page, like Taiga's reverse proxy (`client_max_body_size`).
 

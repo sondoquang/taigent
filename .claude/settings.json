@@ -1,0 +1,5 @@
+{
+  "permissions": {
+    "deny": ["mcp__taiga__authenticate"]
+  }
+}

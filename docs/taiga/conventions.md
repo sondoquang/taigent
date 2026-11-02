@@ -185,8 +185,8 @@ Slug chuẩn:
 
 ## 10. Tool MCP bị cấm
 
-Các tool sau của `taiga-mcp-server@1.9.20` đang hỏng. Agent **không được gọi** chúng; skill và wrapper headless
-không đưa chúng vào allowlist.
+Các tool sau của `taiga-mcp-server@1.9.20` đang hỏng hoặc nguy hiểm. Agent **không được gọi** chúng; skill và wrapper
+headless không đưa chúng vào allowlist.
 
 | Tool | Lý do | Dùng thay |
 |---|---|---|
@@ -194,6 +194,7 @@ không đưa chúng vào allowlist.
 | `batchCreateUserStories`, `batchCreateTasks`, `batchCreateIssues` | Gửi `projectId` thay cho `project`, `userStoryId` thay cho `user_story`, `points` dạng số thay cho dict, nên dễ bị Taiga trả 400. Item tạo ra cũng không có tag `src:<key>`, nên chạy lại sẽ tạo trùng. | `backlog.yaml` + `taigent apply` |
 | `downloadAttachment` cho story/task | Luôn gọi `/issues/attachments/{id}`, nên với attachment của story/task sẽ lỗi hoặc tải nhầm attachment của issue khác. | Đọc link `url` của attachment từ `listAttachments` |
 | `deleteAttachment` cho story/task | Luôn gọi `/issues/attachments/{id}`, nên có thể **xoá nhầm** attachment của một issue. Hơn nữa quy trình không xoá dữ liệu trên Taiga. | Xoá tay trên Taiga, sau khi người quyết định |
+| `authenticate` | Nhận `username`/`password` làm tham số: mật khẩu agent truyền vào sẽ nằm trong transcript, và tool đổi tài khoản của cả server. Qua `taigent mcp`, server đã đăng nhập sẵn bằng login của người dùng và từ chối mọi thông tin đăng nhập khác. | Người dùng tự chạy `npx taigent login` trong terminal của mình |
 
 Ngoài danh sách cấm, các tool MCP **ghi** khác (`createEpic`, `createUserStory`, `createTask`, `updateEpic`,
 `createWikiPage`, `updateWikiPage`, `uploadAttachment`…) cũng không dùng cho backlog và tài liệu. Chúng không gắn

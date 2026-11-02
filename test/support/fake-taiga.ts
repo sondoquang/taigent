@@ -4,9 +4,11 @@
 // instead of mocking internal modules.
 //
 // Fidelity rules (mirroring taiga-back):
-// - Every route lives under /api/v1; everything except POST /auth and POST /auth/refresh needs
-//   `Authorization: Bearer <token>`. Access tokens can be expired on demand (`expireTokens`); refresh
-//   tokens rotate on every `/auth/refresh`, like taiga-back's SIMPLE_JWT settings.
+// - Every route lives under /api/v1; everything except POST /auth, POST /auth/refresh and POST
+//   /application-tokens/validate needs `Authorization: Bearer <token>` or `Application <application token>`. Access
+//   tokens can be expired on demand (`expireTokens`); refresh tokens rotate on every `/auth/refresh`, like
+//   taiga-back's SIMPLE_JWT settings. Application tokens never expire; one per (user, application), handed out again
+//   until deleted (taiga-back `external_apps`).
 // - Lists are paginated (30 per page, `x-pagination-*` headers) unless `x-disable-pagination` is sent.
 // - Tags are stored lowercased and returned as `[name, color|null]` pairs. The epic, user story and task lists
 //   filter by `tags=a,b` (items carrying any listed tag, exact match), like taiga-back's TagsFilter.
@@ -20,7 +22,7 @@
 //   created, like taiga-back's post_save signal. Its `attributes_values` keys are attribute ids as strings, a
 //   PATCH replaces the whole object, and it has its own OCC `version`.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -177,6 +179,22 @@ export interface FakeEpicRelatedUserStory {
   order: number;
 }
 
+/** An Application (taiga-back `external_apps.Application`), created by an instance admin in Django admin. */
+export interface FakeApplication {
+  id: string;
+  name: string;
+}
+
+/** A user's token for one application ("application token detail" in the Taiga API docs). */
+export interface FakeApplicationToken {
+  id: number;
+  user: number;
+  application: string;
+  auth_code: string | null;
+  state: string | null;
+  token: string | null;
+}
+
 export type FakeItem = FakeEpic | FakeUserStory | FakeTask;
 
 /** URL segment of the attachment endpoints (`/{type}/attachments`), one per content type. */
@@ -230,6 +248,8 @@ export interface FakeState {
   memberships: FakeMembership[];
   wikiPages: FakeWikiPage[];
   attachments: FakeAttachment[];
+  applications: FakeApplication[];
+  applicationTokens: FakeApplicationToken[];
 }
 
 export interface RecordedRequest {
@@ -295,6 +315,8 @@ export interface FakeTaiga {
     tagsColors?: Record<string, string | null>;
   }): FakeProject;
   addEpic(input: FakeItemInput): FakeEpic;
+  /** Registers an Application, as the instance admin does in Django admin. */
+  addApplication(name: string): FakeApplication;
   addUser(input: { username: string; email?: string }): FakeUser;
   addCustomAttribute(input: { itemType: FakeCustomAttributeType; project: number; name: string; description?: string; type?: string }): FakeCustomAttribute;
   /** Sets an item's custom attribute values like a Taiga user would (replaces them, bumps `version`). */
@@ -502,6 +524,8 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     memberships: [],
     wikiPages: [],
     attachments: [],
+    applications: [],
+    applicationTokens: [],
   };
   const settings: FakeTaiga['settings'] = { projectSlugPrefix: false };
   const requests: RecordedRequest[] = [];
@@ -1286,9 +1310,67 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return undefined;
   }
 
+  // taiga-back external_apps (api.py, services.py): authorize needs a user token, validate needs none, a user lists
+  // and deletes only their own tokens.
+  function validateApplicationToken(body: unknown): Reply {
+    const data = requireObject(body);
+    const found = state.applicationTokens.find(
+      (t) => t.application === data.application && t.auth_code !== null && t.auth_code === data.auth_code && t.state === data.state,
+    );
+    if (!found) throw notFound();
+    found.auth_code = null;
+    if (found.token === null) {
+      found.token = `application-${found.user}-${++tokenSeq}`;
+      issuedTokens.push(found.token);
+    }
+    return { status: 200, body: { token: found.token } };
+  }
+
+  function routeApplicationTokens(req: IncomingMessage, method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
+    if (method === 'POST' && path === '/application-tokens/authorize') {
+      const data = requireObject(body);
+      const application = state.applications.find((a) => a.id === data.application);
+      if (!application) throw notFound();
+      let token = state.applicationTokens.find((t) => t.user === userId && t.application === application.id);
+      if (!token) {
+        token = { id: nextId++, user: userId, application: application.id, auth_code: null, state: null, token: null };
+        state.applicationTokens.push(token);
+      }
+      token.auth_code = randomUUID();
+      token.state = typeof data.state === 'string' ? data.state : null;
+      return { status: 200, body: { state: token.state, auth_code: token.auth_code, next_url: `https://app.example.test/?auth_code=${token.auth_code}` } };
+    }
+    if (method === 'GET' && path === '/application-tokens') {
+      const application = query.get('application');
+      const own = state.applicationTokens.filter((t) => t.user === userId && (application === null || t.application === application));
+      return paginate(req, query, own.map((t) => ({
+        id: t.id,
+        user: t.user,
+        application: { id: t.application, name: state.applications.find((a) => a.id === t.application)?.name ?? null },
+        auth_code: t.auth_code,
+        next_url: null,
+      })));
+    }
+    const one = /^\/application-tokens\/(\d+)$/.exec(path);
+    if (one && method === 'DELETE') {
+      const index = state.applicationTokens.findIndex((t) => t.id === Number(one[1]));
+      if (index === -1) throw notFound();
+      if (state.applicationTokens[index]!.user !== userId) throw permissionDenied();
+      state.applicationTokens.splice(index, 1);
+      return { status: 204, body: undefined };
+    }
+    return undefined;
+  }
+
   function authenticate(req: IncomingMessage): number {
-    const match = /^Bearer (.+)$/.exec(req.headers.authorization ?? '');
-    const userId = match ? tokens.get(match[1]!) : undefined;
+    const header = req.headers.authorization ?? '';
+    const bearer = /^Bearer (.+)$/.exec(header);
+    const application = /^Application (.+)$/.exec(header);
+    const userId = bearer
+      ? tokens.get(bearer[1]!)
+      : application
+        ? state.applicationTokens.find((t) => t.token !== null && t.token === application[1])?.user
+        : undefined;
     if (userId === undefined) {
       throw new HttpError(401, { _error_message: 'Invalid token', _error_type: 'taiga.base.exceptions.NotAuthenticated' });
     }
@@ -1325,6 +1407,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     }
 
     if (method === 'POST' && path === '/auth/refresh') return refreshAuth(body);
+    if (method === 'POST' && path === '/application-tokens/validate') return validateApplicationToken(body);
 
     applyPendingExpiry();
     const userId = authenticate(req);
@@ -1362,7 +1445,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     if (attachmentReply) return attachmentReply;
     const valuesReply = routeAttributeValues(method, path, body, userId);
     if (valuesReply) return valuesReply;
-    const reply = routeStoriesAndTasks(req, method, path, query, body, userId);
+    const reply = routeStoriesAndTasks(req, method, path, query, body, userId) ?? routeApplicationTokens(req, method, path, query, body, userId);
     if (reply) return reply;
     throw notFound();
   }
@@ -1531,6 +1614,11 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     user,
     addProject,
     addEpic,
+    addApplication: (name) => {
+      const application = { id: randomUUID(), name };
+      state.applications.push(application);
+      return application;
+    },
     settings,
     addUser,
     addCustomAttribute,

@@ -1,7 +1,8 @@
 // Taiga client: owns all HTTP to the Taiga REST API (https://docs.taiga.io/api.html).
 // Knows Taiga endpoints only, never manifests. Every request disables pagination, renews the access
-// token once on 401 (`/auth/refresh`, else a new login) and backs off on 429.
+// token once on 401 (`/auth/refresh`, else a new login, or the authorizer of a stored login) and backs off on 429.
 
+import { randomUUID } from 'node:crypto';
 import { openAsBlob } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
@@ -34,8 +35,8 @@ export class TaigaConflictError extends TaigaError {
   }
 }
 
-/** Which secret Taiga rejected; lets the CLI name the variable to check. */
-export type TaigaCredentialKind = 'token' | 'password';
+/** Which secret Taiga rejected; lets the CLI name what to fix (a variable, or `taigent login`). */
+export type TaigaCredentialKind = 'token' | 'password' | 'login';
 
 /** Authentication failed and could not be recovered (login refused, or a token that can't be renewed). */
 export class TaigaAuthError extends TaigaError {
@@ -48,13 +49,37 @@ export class TaigaAuthError extends TaigaError {
   }
 }
 
+/**
+ * Supplies the Authorization header of every request and renews it after a 401: a stored `taigent login`
+ * (refresh or application token), or a fixed token.
+ */
+export interface TaigaAuthorizer {
+  /** What a rejection is about, for the error the client throws. */
+  readonly credential: TaigaCredentialKind;
+  /** The current header value: `Bearer <token>` or `Application <token>`. */
+  authorization(): string;
+  /**
+   * Called after Taiga answered 401 to `rejected` (the header that was sent). True when a newer header is available;
+   * false, or a TaigaAuthError, when the credential cannot be renewed.
+   */
+  renew(rejected: string): Promise<boolean>;
+}
+
+/** The access/refresh token pair of a login (`POST /auth`) or a refresh (`POST /auth/refresh`). */
+export interface TaigaTokenPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
 export interface TaigaConnectOptions {
   /** Base API URL including `/api/v1`, as in TAIGA_API_URL. */
   apiUrl: string;
-  /** Access token used as-is (no login). Without it, `credentials` are required. */
+  /** Access token used as-is (no login). Without it, `credentials` or `authorizer` are required. */
   token?: string;
   /** Username/password for `POST /auth`; also used to log in again when a token can't be refreshed. */
   credentials?: { username: string; password: string };
+  /** Supplies and renews the Authorization header instead of `token`/`credentials` (a stored `taigent login`). */
+  authorizer?: TaigaAuthorizer;
   /** Milliseconds per second of 429 backoff (default 1000); tests shrink it. */
   retryUnitMs?: number;
   /**
@@ -423,6 +448,7 @@ function parseAttachment(raw: unknown): TaigaAttachment {
 export class TaigaClient {
   readonly apiUrl: string;
   readonly #credentials: TaigaConnectOptions['credentials'];
+  readonly #authorizer: TaigaAuthorizer | undefined;
   readonly #retryUnitMs: number;
   #token: string | undefined;
   #refresh: string | undefined;
@@ -431,20 +457,55 @@ export class TaigaClient {
   private constructor(options: TaigaConnectOptions) {
     this.apiUrl = options.apiUrl.replace(/\/+$/, '');
     this.#credentials = options.credentials;
+    this.#authorizer = options.authorizer;
     this.#retryUnitMs = options.retryUnitMs ?? 1000;
     this.#secrets = options.secrets ?? new Secrets();
     if (options.credentials) this.#secrets.add(options.credentials.password);
     if (options.token) this.#setTokens(options.token, undefined);
   }
 
-  /** Uses `token` as-is, or logs in with `credentials` (`POST /auth`, type `normal`). */
+  /** Uses `authorizer`, or `token` as-is, or logs in with `credentials` (`POST /auth`, type `normal`). */
   static async connect(options: TaigaConnectOptions): Promise<TaigaClient> {
     const client = new TaigaClient(options);
-    if (client.#token === undefined) {
-      if (!client.#credentials) throw new TypeError('TaigaClient.connect needs a token or credentials');
+    if (client.#authorizer === undefined && client.#token === undefined) {
+      if (!client.#credentials) throw new TypeError('TaigaClient.connect needs an authorizer, a token or credentials');
       await client.#login();
     }
     return client;
+  }
+
+  /** `POST /auth` with a username/password: the token pair to store for `taigent login`. Keeps nothing. */
+  static async login(options: { apiUrl: string; credentials: { username: string; password: string }; secrets?: Secrets }): Promise<TaigaTokenPair> {
+    const client = new TaigaClient(options);
+    await client.#login();
+    return client.#tokenPair('login');
+  }
+
+  /**
+   * `POST /auth/refresh`: the next token pair of a stored login. Taiga rotates refresh tokens, so the one passed in
+   * is spent. An expired or revoked one is a TaigaAuthError of kind `login`.
+   */
+  static async refresh(options: { apiUrl: string; refreshToken: string; secrets?: Secrets }): Promise<TaigaTokenPair> {
+    const client = new TaigaClient(options);
+    client.#secrets.add(options.refreshToken);
+    let raw: unknown;
+    try {
+      raw = await client.#request('POST', '/auth/refresh', { body: { refresh: options.refreshToken }, reauthenticate: false });
+    } catch (error) {
+      if (error instanceof TaigaError && (error.status === 400 || error.status === 401)) {
+        throw new TaigaAuthError('login', `the stored login to ${client.apiUrl} has expired or was revoked: ${error.message}`, error.status);
+      }
+      throw error;
+    }
+    client.#adoptTokens(raw, 'token refresh');
+    return client.#tokenPair('token refresh');
+  }
+
+  #tokenPair(what: string): TaigaTokenPair {
+    if (this.#refresh === undefined) {
+      throw new TaigaError(`${what} at ${this.apiUrl} returned no refresh token (Taiga 6.3 or later is needed)`);
+    }
+    return { accessToken: this.#token!, refreshToken: this.#refresh };
   }
 
   #setTokens(token: string, refresh: string | undefined): void {
@@ -574,6 +635,37 @@ export class TaigaClient {
       username: field(raw, 'username', 'string', 'user'),
       email: typeof raw.email === 'string' ? raw.email : null,
     };
+  }
+
+  /**
+   * An application token for the logged-in user (`POST /application-tokens/authorize`, then `validate`). It never
+   * expires; Taiga keeps one per user and application and hands the same one out until it is deleted.
+   */
+  async createApplicationToken(applicationId: string): Promise<string> {
+    const state = randomUUID();
+    let authorized: Record<string, unknown>;
+    try {
+      authorized = record(await this.#request('POST', '/application-tokens/authorize', { body: { application: applicationId, state } }), 'application authorization');
+    } catch (error) {
+      if (error instanceof TaigaError && error.status === 404) {
+        throw new TaigaError(`application "${applicationId}" not found on ${this.apiUrl}: ask the instance admin for the Application id`, 404);
+      }
+      throw error;
+    }
+    const authCode = field<string>(authorized, 'auth_code', 'string', 'application authorization');
+    const body = { application: applicationId, auth_code: authCode, state };
+    const token = field<string>(record(await this.#request('POST', '/application-tokens/validate', { body }), 'application token'), 'token', 'string', 'application token');
+    this.#secrets.add(token);
+    return token;
+  }
+
+  /** Deletes the user's application tokens of one application (`DELETE /application-tokens/{id}`); returns how many. */
+  async deleteApplicationTokens(applicationId: string): Promise<number> {
+    const tokens = list(await this.#request('GET', '/application-tokens', { query: { application: applicationId } }), 'application token list');
+    for (const token of tokens) {
+      await this.#request('DELETE', `/application-tokens/${field<number>(record(token, 'application token'), 'id', 'number', 'application token')}`);
+    }
+    return tokens.length;
   }
 
   /** Every user story assigned to `userId`, open and closed, in every project the user sees or in `projectId` only. */
@@ -711,18 +803,19 @@ export class TaigaClient {
   async #request(method: string, path: string, options: RequestOptions = {}): Promise<unknown> {
     let renewed = false;
     for (let throttled = 0; ; ) {
-      const response = await this.#send(method, path, options);
+      const authorization = this.#authorizer ? this.#authorizer.authorization() : this.#token && `Bearer ${this.#token}`;
+      const response = await this.#send(method, path, options, authorization || undefined);
       if (response.status === 429 && throttled < MAX_THROTTLE_RETRIES) {
         await sleep(this.#backoffMs(response.retryAfter, throttled++));
         continue;
       }
       if (response.status === 401 && options.reauthenticate !== false) {
-        if (!renewed && (await this.#renewToken())) {
+        if (!renewed && (await (this.#authorizer ? this.#authorizer.renew(authorization || '') : this.#renewToken()))) {
           renewed = true;
           continue;
         }
         throw new TaigaAuthError(
-          this.#credentials ? 'password' : 'token',
+          this.#authorizer ? this.#authorizer.credential : this.#credentials ? 'password' : 'token',
           `Taiga at ${this.apiUrl} rejected the access token: ${this.#failure(method, path, response)}`,
           response.status,
         );
@@ -740,11 +833,11 @@ export class TaigaClient {
     }
   }
 
-  async #send(method: string, path: string, options: RequestOptions): Promise<RawResponse> {
+  async #send(method: string, path: string, options: RequestOptions, authorization: string | undefined): Promise<RawResponse> {
     const url = new URL(this.apiUrl + path);
     for (const [name, value] of Object.entries(options.query ?? {})) url.searchParams.set(name, String(value));
     const headers: Record<string, string> = { accept: 'application/json', 'x-disable-pagination': 'True' };
-    if (this.#token) headers.authorization = `Bearer ${this.#token}`;
+    if (authorization) headers.authorization = authorization;
     if (options.body !== undefined) headers['content-type'] = 'application/json';
 
     try {

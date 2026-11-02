@@ -19,8 +19,8 @@ npx skills add sondoquang/taigent
 npm install -D github:sondoquang/taigent
 ```
 
-Then, to check the
-`TAIGA_*` variables, the CLI and the Taiga MCP server, run the `taiga-setup` skill (`/taiga-setup` in Claude Code,
+Then, to check the CLI, the Taiga login (`npx taigent login`, run once in your own terminal) and the Taiga MCP
+server, run the `taiga-setup` skill (`/taiga-setup` in Claude Code,
 `$taiga-setup` in Codex); details in
 [docs/cli.md § Using the skills in another project](docs/cli.md#using-the-skills-in-another-project). Not sure
 which skill or step fits? Ask `ask-taigent` (`/ask-taigent`, `$ask-taigent`).

@@ -10,7 +10,7 @@ Report the **Period's tickets** (`GLOSSARY.md`) of the user the `taigent` CLI lo
 
 ## 1. Check the setup
 
-The project root's `package.json` has `taigent` as `name` or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The CLI reads the `TAIGA_*` variables from the environment or from `.env` on its own.
+The project root's `package.json` has `taigent` as `name` or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The CLI uses the user's stored login (`taigent login`), or `TAIGA_*` variables, on its own.
 
 Done when `package.json` names `taigent`.
 
@@ -26,7 +26,7 @@ Done when you have both days and, where the words were ambiguous, the reading yo
 
 ## 3. Run `taigent tickets`
 
-Run `npx taigent tickets --from <first day> --to <last day> --json`, alone in its own shell call; add `--project <slug>` when the user named one project. Exit 2 or 5: show the error and stop; for a missing `TAIGA_*` variable or a refused login, name `taiga-setup` as the fix.
+Run `npx taigent tickets --from <first day> --to <last day> --json`, alone in its own shell call; add `--project <slug>` when the user named one project. Exit 2 or 5: show the error and stop; for `not logged in`, an expired stored login or a refused login, name `taiga-setup` as the fix.
 
 Done when you hold its JSON.
 

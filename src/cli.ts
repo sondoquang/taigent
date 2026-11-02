@@ -10,12 +10,15 @@ import { errorMessage } from './guards.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
+import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
+import { serveMcp, startProxy } from './mcp.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
 import { buildPlan, describePlanOperation, type Plan } from './planner.ts';
+import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { readBacklogRemote } from './remote.ts';
 import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
-import { TaigaAuthError, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
+import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
 import { dayRange, formatTicketsText, parseDay, readTickets } from './tickets.ts';
 import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
 
@@ -30,26 +33,40 @@ Commands:
   tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
   skills sync   Copy the Taigent skills (taiga-*, ask-taigent) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
+  login     Log in once, in your own terminal: the password is exchanged for a token kept in the OS credential
+            store (Windows Credential Manager, macOS Keychain, Linux Secret Service), never stored itself
+  logout    Delete the stored login (an application token is deleted on Taiga too)
+  whoami    Show the Taiga user the credentials act as (TAIGA_* or the stored login), checked against Taiga
+  mcp       Run the Taiga MCP server on stdin/stdout for an agent (.mcp.json, .codex/config.toml)
 
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
+  --application <id>  login: store an application token of this Application (created by the instance admin)
+                    instead of a refresh token
   --json            Machine-readable output on stdout
   --yes             Confirm writes (bootstrap, apply, upload)
   --dry-run         List the operations without writing anything (exit 3 when there are changes)
   -h, --help        Show this help
 
+Credentials: TAIGA_USERNAME + TAIGA_PASSWORD or TAIGA_TOKEN when set, else the stored login (taigent login).
 Environment (a variable not set in the environment is read from ./.env):
-  TAIGA_API_URL                    Taiga API base URL (includes /api/v1)
+  TAIGA_API_URL                    Taiga API base URL (includes /api/v1); with a stored login, must match it if set
   TAIGA_USERNAME, TAIGA_PASSWORD   Login; also the fallback when TAIGA_TOKEN is rejected
   TAIGA_TOKEN                      Access token used instead of username/password
   TAIGENT_MANIFESTS_DIR            Manifests root (default: ./taiga)
   TAIGENT_RETRY_UNIT_MS            Milliseconds per second of 429 backoff (default: 1000)
+  TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
+                                   directory, for machines without an OS credential store)
+  TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
 
-Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes),
+Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in),
             3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'skills'] as const;
+const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+/** Commands that work without --project. */
+const PROJECTLESS: readonly Command[] = ['validate', 'skills', 'tickets', 'login', 'logout', 'whoami', 'mcp'];
+
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
@@ -61,13 +78,15 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 interface Options {
   command: Command;
-  /** Required by every command except `validate`, `skills` and the range commands. */
+  /** Required by every command except those in PROJECTLESS. */
   project?: string;
   /** Range commands (`tickets`): first and last day, YYYY-MM-DD. */
   from?: string;
   to?: string;
   /** `skills` subcommand. */
   skillsAction?: SkillsAction;
+  /** `login`: Application id for an application token. */
+  application?: string;
   json: boolean;
   yes: boolean;
   dryRun: boolean;
@@ -100,6 +119,7 @@ function parseOptions(argv: string[]): Options | 'help' {
         project: { type: 'string' },
         from: { type: 'string' },
         to: { type: 'string' },
+        application: { type: 'string' },
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
@@ -122,10 +142,12 @@ function parseOptions(argv: string[]): Options | 'help' {
   }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
-    if (command !== 'validate' && command !== 'skills' && command !== 'tickets') throw new UsageError('--project <slug> is required');
+    if (!PROJECTLESS.includes(command as Command)) throw new UsageError('--project <slug> is required');
   } else if (!SLUG_PATTERN.test(values.project)) {
     throw new UsageError(`invalid project slug "${values.project}"`);
   }
+  if (values.application !== undefined && command !== 'login') throw new UsageError('--application applies only to login');
+  if (values.application === '') throw new UsageError('--application needs the Application id');
   if (command === 'tickets') {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
@@ -142,6 +164,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     from: values.from,
     to: values.to,
     skillsAction,
+    application: values.application,
     json: values.json,
     yes: values.yes,
     dryRun: values['dry-run'],
@@ -186,23 +209,40 @@ function environmentSecrets(env: NodeJS.ProcessEnv): Secrets {
   return secrets;
 }
 
+/** Where a run's Taiga credentials come from. */
+type Auth =
+  | { source: 'environment'; apiUrl: string; token?: string; credentials?: { username: string; password: string } }
+  | { source: 'login'; apiUrl: string; session: StoredSession };
+
 /**
- * Connects to Taiga from the environment: TAIGA_TOKEN when set (username/password, if also set, are
- * the fallback when Taiga rejects it), else a TAIGA_USERNAME/TAIGA_PASSWORD login.
+ * TAIGA_TOKEN or TAIGA_USERNAME/TAIGA_PASSWORD when set (environment or .env; with both, the password is the
+ * fallback when Taiga rejects the token), else the stored login of `taigent login`.
  */
-async function connectTaiga({ env, secrets }: Run): Promise<TaigaClient> {
-  const [apiUrl] = requireEnv(env, ['TAIGA_API_URL']);
-  const url = URL.canParse(apiUrl!) ? new URL(apiUrl!) : undefined;
-  if (url?.username || url?.password) {
-    throw new UsageError('TAIGA_API_URL must not contain credentials (user:password@); set TAIGA_USERNAME and TAIGA_PASSWORD (or TAIGA_TOKEN) instead');
-  }
+async function resolveAuth({ env, secrets }: Run): Promise<Auth> {
   const token = env.TAIGA_TOKEN || undefined;
-  const missing = ['TAIGA_USERNAME', 'TAIGA_PASSWORD'].filter((name) => !env[name]);
-  if (!token && missing.length > 0) {
-    throw new UsageError(`missing environment variable(s): ${missing.join(', ')} (or set TAIGA_TOKEN instead)`);
+  const credentials = env.TAIGA_USERNAME && env.TAIGA_PASSWORD ? { username: env.TAIGA_USERNAME, password: env.TAIGA_PASSWORD } : undefined;
+  if (token || credentials) {
+    const [apiUrl] = requireEnv(env, ['TAIGA_API_URL']);
+    const url = URL.canParse(apiUrl!) ? new URL(apiUrl!) : undefined;
+    if (url?.username || url?.password) {
+      throw new UsageError('TAIGA_API_URL must not contain credentials (user:password@); set TAIGA_USERNAME and TAIGA_PASSWORD (or TAIGA_TOKEN) instead');
+    }
+    return { source: 'environment', apiUrl: apiUrl!, token, credentials };
   }
-  const credentials = missing.length === 0 ? { username: env.TAIGA_USERNAME!, password: env.TAIGA_PASSWORD! } : undefined;
-  return TaigaClient.connect({ apiUrl: apiUrl!, token, credentials, retryUnitMs: retryUnitMs(env), secrets });
+  const session = await StoredSession.open(env, secrets);
+  if (!session) throw new LoginError(`not logged in to Taiga: ${LOGIN_HINT}, or set TAIGA_USERNAME and TAIGA_PASSWORD (or TAIGA_TOKEN)`);
+  const wanted = env.TAIGA_API_URL;
+  if (wanted && normalizeApiUrl(wanted) !== session.record.apiUrl) {
+    throw new LoginError(`TAIGA_API_URL is ${wanted}, but the stored login is for ${session.record.apiUrl}: ${LOGIN_HINT} to log in to ${wanted}, or unset TAIGA_API_URL`);
+  }
+  return { source: 'login', apiUrl: session.record.apiUrl, session };
+}
+
+async function connectTaiga(run: Run, auth?: Auth): Promise<TaigaClient> {
+  const resolved = auth ?? (await resolveAuth(run));
+  const common = { apiUrl: resolved.apiUrl, retryUnitMs: retryUnitMs(run.env), secrets: run.secrets };
+  if (resolved.source === 'login') return TaigaClient.connect({ ...common, authorizer: resolved.session });
+  return TaigaClient.connect({ ...common, token: resolved.token, credentials: resolved.credentials });
 }
 
 /** TAIGENT_RETRY_UNIT_MS: milliseconds per second of 429 backoff (default 1000). */
@@ -426,6 +466,102 @@ async function runTickets(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** The URL typed at `taigent login`: http(s), no credentials; a bare host gets Taiga's `/api/v1`. */
+function loginApiUrl(raw: string): string {
+  if (!URL.canParse(raw)) throw new UsageError(`"${raw}" is not a URL (e.g. https://taiga.example.com/api/v1)`);
+  const url = new URL(raw);
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new UsageError(`the Taiga API URL must start with https:// or http://, got "${raw}"`);
+  if (url.username || url.password) throw new UsageError('the Taiga API URL must not contain credentials (user:password@)');
+  return normalizeApiUrl(`${url.origin}${url.pathname === '/' ? '/api/v1' : url.pathname}`);
+}
+
+/**
+ * `login`: asks for the password in the user's terminal and stores a token instead (src/login.ts). The URL and the
+ * username come from TAIGA_API_URL / TAIGA_USERNAME when set; the password is never read from the environment.
+ */
+async function runLogin(run: Run): Promise<number> {
+  const { env, options, secrets } = run;
+  if (!isTerminal()) {
+    throw new LoginError('taigent login reads your password from a terminal: run `npx taigent login` in your own terminal window, not through an agent or a pipe');
+  }
+  if (env.TAIGA_API_URL) print(run, `Taiga API URL: ${env.TAIGA_API_URL} (from TAIGA_API_URL)\n`);
+  const apiUrl = loginApiUrl(env.TAIGA_API_URL || (await ask('Taiga API URL (e.g. https://taiga.example.com/api/v1): ')));
+  if (env.TAIGA_USERNAME) print(run, `Username: ${env.TAIGA_USERNAME} (from TAIGA_USERNAME)\n`);
+  const username = env.TAIGA_USERNAME || (await ask('Username or email: '));
+  if (!username) throw new UsageError('no username entered');
+  const password = await askHidden('Password (not shown): ');
+  if (!password) throw new UsageError('no password entered');
+  secrets.add(password);
+
+  let stored;
+  try {
+    stored = await storeLogin({ env, apiUrl, username, password, application: options.application, secrets });
+  } catch (error) {
+    if (error instanceof TaigaAuthError && error.credential === 'password') {
+      throw new TaigaError(`Taiga at ${apiUrl} refused the username or password`, error.status);
+    }
+    throw error;
+  }
+  const what =
+    stored.record.method === 'application-token'
+      ? `an application token of Application ${stored.record.application}`
+      : 'a refresh token (log in again when taigent has not been used for its lifetime, 8 days by default)';
+  print(run, `Logged in to ${apiUrl} as ${username}.\nStored ${what} in ${stored.storeLabel}; your password was not stored.\n`);
+  return ExitCode.Ok;
+}
+
+/** `logout`: deletes the stored login; an application token is deleted on Taiga too. */
+async function runLogout(run: Run): Promise<number> {
+  const removed = await removeLogin(run.env, run.secrets);
+  if (!removed) {
+    print(run, 'Not logged in: there is no stored login to remove.\n');
+    return ExitCode.Ok;
+  }
+  const { record, revoked } = removed;
+  const onTaiga =
+    record.method === 'application-token'
+      ? ` Deleted ${revoked} application token(s) on Taiga.`
+      : ' Taiga cannot revoke a refresh token: the deleted one would stop working after its lifetime (8 days by default).';
+  print(run, `Removed the login to ${record.apiUrl} as ${record.username}.${onTaiga}\n`);
+  return ExitCode.Ok;
+}
+
+/** `whoami`: which Taiga user the credentials of this run act as, checked with `GET /users/me`. */
+async function runWhoami(run: Run): Promise<number> {
+  const auth = await resolveAuth(run);
+  const me = await (await connectTaiga(run, auth)).getMe();
+  const [credentials, described] =
+    auth.source === 'login'
+      ? [{ source: 'login', method: auth.session.record.method, store: auth.session.storeLabel }, `stored login (${auth.session.record.method}, in ${auth.session.storeLabel})`]
+      : [{ source: 'environment', variables: auth.credentials ? 'TAIGA_USERNAME, TAIGA_PASSWORD' : 'TAIGA_TOKEN' }, `environment (${auth.credentials ? 'TAIGA_USERNAME, TAIGA_PASSWORD' : 'TAIGA_TOKEN'})`];
+  emit(run, { apiUrl: auth.apiUrl, user: { id: me.id, username: me.username }, credentials }, () =>
+    `Taiga: ${auth.apiUrl}\nUser: ${me.username} (id ${me.id})\nCredentials: ${described}\n`,
+  );
+  return ExitCode.Ok;
+}
+
+/**
+ * `mcp`: the Taiga MCP server on stdin/stdout. With TAIGA_USERNAME/TAIGA_PASSWORD it logs in itself; with the stored
+ * login or TAIGA_TOKEN it goes through the local proxy of src/mcp.ts and never sees a real credential.
+ */
+async function runMcp(run: Run): Promise<number> {
+  const auth = await resolveAuth(run);
+  if (auth.source === 'environment' && auth.credentials) {
+    await serveMcp({ TAIGA_API_URL: auth.apiUrl, TAIGA_USERNAME: auth.credentials.username, TAIGA_PASSWORD: auth.credentials.password });
+    return ExitCode.Ok;
+  }
+  const authorizer: TaigaAuthorizer =
+    auth.source === 'login' ? auth.session : { credential: 'token', authorization: () => `Bearer ${auth.token!}`, renew: async () => false };
+  const proxy = await startProxy({ apiUrl: auth.apiUrl, authorizer, secrets: run.secrets, log: (text) => printError(run.secrets, text) });
+  try {
+    const username = auth.source === 'login' ? auth.session.record.username : 'taigent';
+    await serveMcp({ TAIGA_API_URL: proxy.url, TAIGA_USERNAME: username, TAIGA_PASSWORD: proxy.password });
+  } finally {
+    await proxy.close();
+  }
+  return ExitCode.Ok;
+}
+
 function dispatch(run: Run): Promise<number> {
   switch (run.options.command) {
     case 'validate':
@@ -441,6 +577,14 @@ function dispatch(run: Run): Promise<number> {
     case 'plan':
     case 'apply':
       return runPlan(run);
+    case 'login':
+      return runLogin(run);
+    case 'logout':
+      return runLogout(run);
+    case 'whoami':
+      return runWhoami(run);
+    case 'mcp':
+      return runMcp(run);
   }
 }
 
@@ -481,9 +625,11 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (error instanceof UploadTooLargeError) {
       return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
     }
+    if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
+    if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
     if (error instanceof TaigaAuthError) {
-      const check = error.credential === 'token' ? 'TAIGA_TOKEN' : 'TAIGA_USERNAME and TAIGA_PASSWORD';
-      const hinted = new TaigaAuthError(error.credential, `${error.message} (check ${check})`, error.status);
+      const hint = { token: 'check TAIGA_TOKEN', password: 'check TAIGA_USERNAME and TAIGA_PASSWORD', login: LOGIN_HINT }[error.credential];
+      const hinted = new TaigaAuthError(error.credential, `${error.message} (${hint})`, error.status);
       return fail(secrets, ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
     }
     if (error instanceof TaigaError) return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
