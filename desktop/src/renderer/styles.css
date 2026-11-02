@@ -456,6 +456,20 @@ textarea:focus {
   color: var(--muted);
 }
 
+.type-issue {
+  background: #fdecea;
+  color: #b3261e;
+}
+
+.tree-group {
+  margin: 12px 0 2px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .badges {
   display: inline-flex;
   gap: 4px;

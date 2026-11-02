@@ -1,5 +1,5 @@
 # Fixture of the desktop smoke (desktop/scripts/smoke.mjs): stories in user story format, one legacy story already
-# on Taiga (state.json), and tasks. The smoke copies this folder to a temporary directory before touching it.
+# on Taiga (state.json), tasks and one issue. The smoke copies this folder to a temporary directory before touching it.
 epics:
   - key: REVIEW
     subject: "Duyệt backlog trước khi đẩy lên Taiga"
@@ -127,3 +127,11 @@ epics:
           - key: SMOKE-FIXTURE-COPY
             subject: "Chép fixture sang thư mục tạm"
             description: "Done khi: smoke chỉ ghi vào thư mục tạm và user-data tạm."
+issues:
+  - key: BUG-STALE-AFTER-RENAME
+    subject: "Nhãn Đã đổi sau khi duyệt không hiện khi chỉ đổi tag"
+    description: "Bước tái hiện: duyệt Đạt một story, thêm một tag vào story đó trong backlog.yaml. Kỳ vọng: story hiện Đã đổi sau khi duyệt."
+    type: Bug
+    severity: Normal
+    priority: High
+    tags: [area:review]

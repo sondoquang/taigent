@@ -209,7 +209,8 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
     });
   const attributes = type === 'epic' ? [...declared, ...undeclared] : [];
 
-  const taken = new Set(allItems(view).map((item) => item.key).filter((itemKey) => itemKey !== original?.key));
+  // Issues share the key space with epics, stories and tasks.
+  const taken = new Set([...allItems(view), ...view.preview.issues].map((item) => item.key).filter((itemKey) => itemKey !== original?.key));
   const refreshKey = () => {
     if (!form || locked) return;
     if (!form.keyTouched) key.value = suggestKey(subject.value, type === 'task' ? (parentSelect ? parentSelect.value : parentKey) : undefined, taken);

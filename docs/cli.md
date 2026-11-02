@@ -346,14 +346,17 @@ never writes to Taiga, and `plan`/`apply` ignore `review.yaml`: apply still need
 
 `taigent preview --project <slug> [--out <file>] [--json]` reads `backlog.yaml` (required; the whole project
 directory is validated like `plan`), `state.json` and `review.yaml`, offline (no `TAIGA_*` variable, no login). The
-text form is one Markdown page: a summary table (epics, stories, tasks, new / on Taiga, approved, changes requested,
-not reviewed, stale, open comments), then each epic → story → task with its tags, custom attributes, Taiga ref
-(from `state.json`), review status and comments, and its description exactly as apply writes it (a story's
-includes its acceptance criteria and spec link). `--json` prints the `Preview` object of `src/review.ts`
-(`{ project: { slug, name? }, summary, epics: [{ …item, stories: [{ …item, format, spec, tasks }] }] }`, `format`
-being `user-story` or `legacy`,
+text form is one Markdown page: a summary table (epics, stories, tasks, issues, new / on Taiga, approved, changes
+requested, not reviewed, stale, open comments), then each epic → story → task, then an **Issues** section with each
+issue's type, severity and priority; every item with its tags, custom attributes, Taiga ref (from `state.json`),
+review status and comments, and its description exactly as apply writes it (a story's includes its acceptance
+criteria and spec link). `--json` prints the `Preview` object of `src/review.ts`
+(`{ project: { slug, name? }, summary, epics: [{ …item, stories: [{ …item, format, spec, tasks }] }], issues: [{ …item,
+values: { type, severity, priority } }] }`, `format` being `user-story` or `legacy`, `values` the names as in the
+manifest,
 each item `{ type, key, subject, description, tags, customAttributes, parent?, applied?: { id, ref }, digest,
-review: { verdict?, stale, by?, at?, comments, openComments } }`). `--out <file>` writes the page (or the JSON) to
+review: { verdict?, stale, by?, at?, comments, openComments } }`; `summary` counts `epics`, `stories`, `tasks` and
+`issues`, and the review states over all of them). `--out <file>` writes the page (or the JSON) to
 that file instead and prints `Preview written to <file>` (`{ "out": "<file>" }` with `--json`). Exit 0; 4 when a
 manifest or `review.yaml` is invalid.
 
@@ -376,13 +379,15 @@ items:
 ```
 
 An item's **digest** is the SHA-256 of what apply writes for it: subject, description as written (a story's with
-its acceptance criteria and spec), tags (lowercased, order-insensitive), custom attributes and parent key. A verdict
+its acceptance criteria and spec), tags (lowercased, order-insensitive), custom attributes, parent key and, for an
+issue, its type, severity and priority names. A verdict
 whose digest differs from the item's current one is **stale**: the item changed after it was reviewed, so it counts
 as stale, not as approved. Editing `review.yaml` never changes a digest. Files are written with sorted keys
 (`saveReview`); items with neither a verdict nor a comment are dropped.
 
 `validate` reports, besides the generic `type`, `required` and `known-field` rules: `key-format` and `key-reference`
-for item keys (a key the backlog does not declare, e.g. after the item was removed or renamed: move or delete its
+for item keys (epics, stories, tasks and issues: `reviewKeys(backlog)`; a key the backlog does not declare, e.g.
+after the item was removed or renamed: move or delete its
 entry), `review-verdict` (a verdict other than `approved`/`changes`) and `review-comment-unique` (a duplicate
 comment id within an item). `preview` itself tolerates unknown keys and lists them in `summary.unknownReviewKeys`.
 
@@ -831,7 +836,7 @@ skill checks all of it and names each fix.
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links, issue values (when the backlog has issues) and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)`, `storyDescription(story)` (the story template, shared with preview) |
-| Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, pure `setVerdict`/`addComment`, `itemDigest`, `buildPreview(dir, slug)` → `Preview`, `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |
+| Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, `reviewKeys(backlog)` (the keys `review.yaml` may name), pure `setVerdict`/`addComment`, `itemDigest`, `buildPreview(dir, slug)` → `Preview` (epic tree + `issues`), `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |
 | Manifest edit | `src/edit.ts` | the library Taigent Desktop's forms write `backlog.yaml` with: `readManifestFile(dir, 'backlog')` → `{ file, text, digest }` (SHA-256 of the file); `saveItem(dir, { baseDigest, original?, item })` adds or edits an epic/story/task (`item` = `{ type, key, parent?, fields }`; a new key renames, a new parent moves the item with its children); `removeItem(dir, { baseDigest, type, key })` removes any item (an issue too) with its children and returns `removed` and `orphaned` (those in state.json). Every write returns `EditResult`: `saved` (new `digest`), `conflict` (the file no longer has `baseDigest`; `current` is the file now, nothing written) or `invalid` (`issues` with `path` + `rule`: the `checkBacklog` issues under the edited item only, `key-unique` (issues included), `key-reference` for a missing item or parent, `key-locked` for a new key on an item in state.json). Edits go through yaml's Document API, so comments, order, quoting, flow style and line ends of untouched nodes stay; the file is written atomically; review.yaml is never touched (an edited item's verdict turns stale through its digest). Where each item type sits and its field order is the `KINDS` table; the issue form adds its input to `BacklogItem`, docs.yaml entries add a file to `EDITABLE_FILES` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
