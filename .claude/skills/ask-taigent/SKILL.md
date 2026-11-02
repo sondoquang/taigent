@@ -24,6 +24,7 @@ The route most work travels. Every write to Taiga goes **plan → review → app
 
 Beside the main flow:
 
+- **`taiga-create-user-story`**: one user story in the Mike Cohn + Gherkin format (conventions §6) under an existing epic: draft → duplicate check → pick the epic → `backlog.yaml` → `taigent plan` → confirm → `taigent apply --yes`. Hands over to `taiga-plan-backlog` when no epic fits, and to `taiga-apply-backlog` when the plan holds other changes.
 - **`taiga-upload-docs`**: specs, ADRs, guides and meeting notes as wiki pages and attachments, declared in `taiga/<slug>/docs.yaml`, after bootstrap (and after the backlog when attachments target item keys).
 - **`taiga-status-report`**: progress by sprint and by epic, or one quick count or lookup. Read-only through the MCP server, any time.
 - **`taiga-my-tickets`**: your tickets (user stories assigned to you) in a period, this week by default: closed, due and still open, with due status and effort. Read-only through `taigent tickets`, any time.
@@ -36,6 +37,7 @@ Starting situations, and where each merges onto the flow.
 - **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npx skills add sondoquang/taigent` for the skills, `npm install -D github:sondoquang/taigent` for the CLI; neither registers the Taiga MCP server. `taiga-setup` checks the CLI, the login (`taigent whoami`; the user runs `npx taigent login` in their own terminal, which stores a token in the OS credential store, never the password) and the MCP server (`taigent mcp`), including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
 - **Brand-new Taiga project** → `taiga-bootstrap-project`, then `taiga-plan-backlog` and `taiga-upload-docs`.
 - **Project already on Taiga, no manifest yet** → `taiga-plan-backlog`. Hand-made items carry no `src:` tag; it lists them and asks before adding the same work. `taiga-bootstrap-project` completes the existing project when you are its admin.
+- **Add one user story under an existing epic** → `taiga-create-user-story`.
 - **New or changed requirement** → `taiga-plan-backlog` with the request as the spec, then review and `taiga-apply-backlog`.
 - **"How far along are we?" or "how many …?"** → `taiga-status-report`.
 - **"What are my tickets this week?" or "what did I close last week?"** → `taiga-my-tickets`.
@@ -50,7 +52,7 @@ Starting situations, and where each merges onto the flow.
 The rules every skill above follows; `docs/taiga/conventions.md` holds them in full.
 
 - **Writes go only through the `taigent` CLI.** Taiga MCP is for reading, reports and comments (§1). Some MCP tools are broken and **banned**; the others that write skip the `src:<key>` tag that prevents duplicates (§10).
-- **`--yes` only after an explicit confirmation** of the exact plan or dry run shown, re-planned just before applying. The writing skills (`taiga-apply-backlog`, `taiga-bootstrap-project`, `taiga-upload-docs`) run only when you invoke them. `taigent status`/`comment` take no `--yes`: they edit one of your own tickets that the request names.
+- **`--yes` only after an explicit confirmation** of the exact plan or dry run shown, re-planned just before applying. The writing skills (`taiga-apply-backlog`, `taiga-create-user-story`, `taiga-bootstrap-project`, `taiga-upload-docs`) run only when you invoke them. `taigent status`/`comment` take no `--yes`: they edit one of your own tickets that the request names.
 - **Manifests follow the conventions**: project name and slug (§2), template and modules (§3), prefixed tags (§4), item keys (§5), story and task templates (§6), wiki slugs (§8), attachment names (§9). `taigent validate` checks §2–§5 and §8–§9 offline; §6 is on the author. Reports use the exact status names of §7.
 - **Run `npx taigent` from the project root** whose `package.json` is taigent's own or lists `taigent` as a dependency; elsewhere npx would fetch an unrelated package.
 
@@ -60,9 +62,9 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 
 | Command | Step | Driven by |
 |---|---|---|
-| `taigent validate --project <slug>` | End of every manifest edit; offline | plan-backlog, bootstrap-project, upload-docs |
-| `taigent plan --project <slug>` | Review: what apply would change; read-only | plan-backlog (`--json`), apply-backlog |
-| `taigent apply --project <slug> --yes` | Apply `backlog.yaml` | apply-backlog |
+| `taigent validate --project <slug>` | End of every manifest edit; offline | plan-backlog, create-user-story, bootstrap-project, upload-docs |
+| `taigent plan --project <slug>` | Review: what apply would change; read-only | plan-backlog (`--json`), create-user-story, apply-backlog |
+| `taigent apply --project <slug> --yes` | Apply `backlog.yaml` | apply-backlog, create-user-story |
 | `taigent bootstrap --project <slug> --dry-run\|--yes` | Create or complete the project from `project.yaml` | bootstrap-project |
 | `taigent upload --project <slug> --dry-run\|--yes` | Wiki pages and attachments from `docs.yaml` | upload-docs |
 | `taigent tickets --from <day> --to <day> [--project <slug>]` | Your tickets closed or due in those days and every open one, with due status and effort; read-only | my-tickets, update-ticket |
