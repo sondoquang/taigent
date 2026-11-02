@@ -20,6 +20,7 @@ import { buildPlan, describePlanOperation, LegacyStoryCreateError, UnknownIssueV
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { formatProjectDetailText, formatProjectsText, readProjectDetail, readProjects } from './projects.ts';
+import { formatProjectReportText, readProjectReport } from './report.ts';
 import { readBacklogRemote } from './remote.ts';
 import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE, reviewKeys } from './review.ts';
 import { Secrets } from './secrets.ts';
@@ -43,6 +44,8 @@ Commands:
   tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
   projects  List the Taiga projects you are a member of, with admin rights and whether taiga/<slug>/ exists; with
             --project, that project's issue types, severities and priorities (read-only)
+  report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
+            stories in no sprint (read-only)
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
@@ -84,7 +87,7 @@ Environment (a variable not set in the environment is read from ./.env):
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in),
             3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'report', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
@@ -594,6 +597,13 @@ async function runProjects(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `report`: the project's progress by sprint and by epic, and its stories in no sprint. Read-only. */
+async function runReport(run: Run): Promise<number> {
+  const report = await readProjectReport(await connectTaiga(run), run.options.project!);
+  emit(run, report, () => formatProjectReportText(report));
+  return ExitCode.Ok;
+}
+
 /** `status`: move one of the user's tickets to a status, at once (the request is the confirmation). */
 async function runStatus(run: Run): Promise<number> {
   const { options } = run;
@@ -747,6 +757,8 @@ function dispatch(run: Run): Promise<number> {
       return runTickets(run);
     case 'projects':
       return runProjects(run);
+    case 'report':
+      return runReport(run);
     case 'status':
       return runStatus(run);
     case 'comment':

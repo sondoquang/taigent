@@ -373,6 +373,40 @@ export interface TaigaAssignedStory {
   totalPoints: number | null;
 }
 
+/** A user story of a project as `report` reads it (`GET /userstories?project=`). */
+export interface TaigaStory {
+  id: number;
+  ref: number;
+  subject: string;
+  status: string;
+  isClosed: boolean;
+  isBlocked: boolean;
+  /** The sprint (milestone) id, null for a story in no sprint. */
+  milestone: number | null;
+  totalPoints: number | null;
+}
+
+/** A sprint (`GET /milestones?project=`): its days, whether it is closed, and its stories' points. */
+export interface TaigaMilestone {
+  id: number;
+  name: string;
+  /** First and last day, YYYY-MM-DD. */
+  start: string;
+  finish: string;
+  closed: boolean;
+  /** Points of its stories (`total_points`) and of its closed ones (`closed_points`). */
+  totalPoints: number;
+  closedPoints: number;
+}
+
+/** A sprint's counts (`GET /milestones/{id}/stats`): stories closed and tasks whose status is closed. */
+export interface TaigaMilestoneStats {
+  totalStories: number;
+  doneStories: number;
+  totalTasks: number;
+  doneTasks: number;
+}
+
 /** A user story status of one project (`GET /userstory-statuses?project=`), e.g. `Done` with `is_closed`. */
 export interface TaigaStoryStatus {
   id: number;
@@ -409,6 +443,35 @@ function parseAssignedStory(raw: unknown): TaigaAssignedStory {
     dueDate: typeof r.due_date === 'string' ? r.due_date : null,
     closedAt: typeof r.finish_date === 'string' ? r.finish_date : null,
     totalPoints: typeof r.total_points === 'number' ? r.total_points : null,
+  };
+}
+
+function parseStory(raw: unknown): TaigaStory {
+  const what = 'user story';
+  const r = record(raw, what);
+  return {
+    id: field(r, 'id', 'number', what),
+    ref: field(r, 'ref', 'number', what),
+    subject: field(r, 'subject', 'string', what),
+    status: field(record(r.status_extra_info, `${what}.status_extra_info`), 'name', 'string', `${what} status`),
+    isClosed: field(r, 'is_closed', 'boolean', what),
+    isBlocked: r.is_blocked === true,
+    milestone: typeof r.milestone === 'number' ? r.milestone : null,
+    totalPoints: typeof r.total_points === 'number' ? r.total_points : null,
+  };
+}
+
+function parseMilestone(raw: unknown): TaigaMilestone {
+  const what = 'milestone';
+  const r = record(raw, what);
+  return {
+    id: field(r, 'id', 'number', what),
+    name: field(r, 'name', 'string', what),
+    start: field(r, 'estimated_start', 'string', what),
+    finish: field(r, 'estimated_finish', 'string', what),
+    closed: r.closed === true,
+    totalPoints: typeof r.total_points === 'number' ? r.total_points : 0,
+    closedPoints: typeof r.closed_points === 'number' ? r.closed_points : 0,
   };
 }
 
@@ -767,6 +830,28 @@ export class TaigaClient {
         isClosed: field(r, 'is_closed', 'boolean', 'user story status'),
       };
     });
+  }
+
+  /** Every user story of a project, open and closed, with its sprint, block flag and points. */
+  async listStories(projectId: number): Promise<TaigaStory[]> {
+    const { collection, what } = TAIGA_ITEM.story;
+    return parseList(await this.#request('GET', `/${collection}`, { query: { project: projectId } }), what, parseStory);
+  }
+
+  /** Every sprint of a project, open and closed, in Taiga's order. */
+  async listMilestones(projectId: number): Promise<TaigaMilestone[]> {
+    return parseList(await this.#request('GET', '/milestones', { query: { project: projectId } }), 'milestone', parseMilestone);
+  }
+
+  async getMilestoneStats(milestoneId: number): Promise<TaigaMilestoneStats> {
+    const what = 'milestone stats';
+    const r = record(await this.#request('GET', `/milestones/${milestoneId}/stats`), what);
+    return {
+      totalStories: field(r, 'total_userstories', 'number', what),
+      doneStories: field(r, 'completed_userstories', 'number', what),
+      totalTasks: field(r, 'total_tasks', 'number', what),
+      doneTasks: field(r, 'completed_tasks', 'number', what),
+    };
   }
 
   /** Changes a story's status and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
