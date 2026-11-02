@@ -129,7 +129,8 @@ for stories already on Taiga:
 list of at least one non-empty string, and non-empty `when` and `then` strings (a list is a `type` error). Missing
 or empty values are `required`, wrong types `type`, unknown fields `known-field`. Rule **`story-format`** reports a
 story with `use_case` but no `scenarios` (or the reverse), and a story mixing `acceptance_criteria` with `use_case`
-or `scenarios`.
+or `scenarios`. Whether a story is new is only known on Taiga, so `validate` accepts the legacy format; `plan` and
+`apply` refuse to create it (see [Reconciliation](#reconciliation)).
 
 A story's Taiga description is rendered from a template; its parts are joined by one blank line and empty parts are
 left out. User story format:
@@ -199,7 +200,11 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
 ## Reconciliation
 
 - **Create**: missing items, in dependency order: each epic, then each of its stories, the story's epic link,
-  and the story's tasks (created with `user_story` = the parent story).
+  and the story's tasks (created with `user_story` = the parent story). A new story must use the user story format:
+  after reading Taiga, `plan` and `apply` exit 4 (kind `validation`) if any story to create lacks `use_case` and
+  `scenarios`, with one issue `{file, path: epics[i].stories[j], rule: story-format}` per such story, and write
+  nothing. A story is new when no story on Taiga carries its `src:<key>` tag; `state.json` plays no part. Updates
+  and skips of legacy-format stories already on Taiga are unaffected: their template renders byte for byte as before.
 - **Link**: a story is linked to its epic with `POST /epics/{id}/related_userstories`, after
   `GET /epics/{id}/related_userstories` (read for every epic with a `src:` tag) shows the link is missing. Existing
   links are never removed.
@@ -221,9 +226,9 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
   by plan for existing items, so a value changed on Taiga meanwhile is a `conflict`). Taiga replaces the whole
   object, so apply sends the current values plus the manifest's: values of undeclared attributes stay, and removing
   a value from the manifest does not clear it on Taiga. New items get their values right after creation.
-  An attribute name the project does not define fails `plan`/`apply` before any write, with exit 5 (Taiga was
-  contacted to learn the names, so it is not a manifest error, exit 4), listing every unknown name with its key
-  and the names that exist.
+  An attribute name the project does not define fails `plan`/`apply` before any write, with exit 5 (the manifest is
+  valid; the project lacks the attribute, so it is not exit 4), listing every unknown name with its key and the
+  names that exist.
 - **Orphans**: items carrying a `src:` tag whose key is no longer in the manifest are listed by `plan` and never
   deleted. They are not changes (they do not make `plan` exit 3).
 
@@ -291,7 +296,8 @@ Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1]
 `conflict` means Taiga refused an update because the item changed on Taiga after apply read it (OCC); `key`
 names the item, nothing was overwritten, and re-running `plan` shows the new state.
 The text form is `<file>: <path>: <message> [<rule>]`. `plan`/`apply` validate the whole project directory the
-same way (and require `backlog.yaml`) before contacting Taiga.
+same way (and require `backlog.yaml`) before contacting Taiga; after reading Taiga they also refuse to create a
+legacy-format story (rule `story-format`, see [Reconciliation](#reconciliation)), still before any write.
 
 ## Bootstrap
 
@@ -699,7 +705,7 @@ The `taiga-setup` skill checks all of it and names each fix.
 | 1 | Internal error (bug) |
 | 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
-| 4 | Manifest invalid or missing; Taiga was not contacted |
+| 4 | Manifest invalid or missing (including a new story without `use_case`/`scenarios`, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
 
 ## Code map

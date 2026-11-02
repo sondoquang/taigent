@@ -41,9 +41,16 @@ const BACKLOG = `epics:
     stories:
       - key: ${KEY.story}
         subject: Smoke ${RUN} story
+        use_case:
+          as_a: taigent maintainer
+          i_want_to: create a story on a real Taiga
+          so_that: I know apply works against the live API
         description: Created by the taigent live smoke test. Safe to delete.
-        acceptance_criteria:
-          - The story is linked to its epic
+        scenarios:
+          - scenario: Story linked to its epic
+            given: [the smoke backlog is applied]
+            when: the smoke test reads the epic's related stories
+            then: this story is among them
         tags: [type:chore]
         tasks:
           - key: ${KEY.task}

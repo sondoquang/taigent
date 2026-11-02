@@ -2,6 +2,7 @@
 
 import { ITEM_TYPES, type ItemType } from './items.ts';
 import type { AttributeValue, Backlog, StorySpec } from './manifest/backlog.ts';
+import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { summarize, type Action, type PlanSummary } from './operations.ts';
 import { TaigaError, type TaigaAttributeValues, type TaigaCustomAttribute, type TaigaItem, type TaigaTask } from './taiga/client.ts';
 
@@ -168,6 +169,8 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   const manifestTags: Record<ItemType, Set<string>> = { epic: new Set(), story: new Set(), task: new Set() };
   const operations: Operation[] = [];
   const unknownAttributes: string[] = [];
+  // Stories the plan would create in the legacy format: only known once Taiga is read (`src:` tags, not state.json).
+  const legacyCreates: ManifestIssue[] = [];
 
   type Spec = { key: string; subject: string; tags: string[]; customAttributes: Record<string, AttributeValue> };
 
@@ -238,10 +241,18 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   // Dependency order: each epic, then each of its stories followed by its epic link and its tasks.
   const storiesById = new Map(remote.stories.map((story) => [story.id, story]));
   const staleLinks: StaleLink[] = [];
-  for (const epic of backlog.epics) {
+  for (const [e, epic] of backlog.epics.entries()) {
     const remoteEpic = reconcile('epic', epic, epic.description);
-    for (const story of epic.stories) {
+    for (const [s, story] of epic.stories.entries()) {
       const remoteStory = reconcile('story', story, storyDescription(story), epic.key);
+      if (!remoteStory && !story.useCase) {
+        legacyCreates.push({
+          file: backlog.file,
+          path: `epics[${e}].stories[${s}]`,
+          rule: 'story-format',
+          message: `new story ${story.key} must use use_case and scenarios (conventions §6); the legacy format is only kept for stories already on Taiga`,
+        });
+      }
       const linked = remoteEpic && remoteStory && remote.epicStories.get(remoteEpic.id)?.includes(remoteStory.id);
       if (!linked) operations.push({ action: 'link', type: 'story', key: story.key, epic: epic.key });
       // Links of this story to other taigent-managed epics (it moved epics in the manifest) are reported, never removed.
@@ -260,6 +271,8 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
       for (const task of story.tasks) reconcile('task', task, task.description, story.key, inOtherStory);
     }
   }
+
+  if (legacyCreates.length > 0) throw new ManifestError(legacyCreates);
 
   if (unknownAttributes.length > 0) {
     throw new TaigaError(
