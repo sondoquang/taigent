@@ -24,8 +24,9 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
 3. **Apply (chỉ sau khi người dùng đồng ý tường minh).** `taigent apply --project <slug> --yes`, rồi commit
    `state.json` cùng manifest. Agent **không bao giờ** tự thêm `--yes` khi người dùng chưa đồng ý.
 
-`plan` và `apply` từ chối manifest sai quy ước với exit 4 và không gọi Taiga. Chạy lại `apply` luôn an toàn:
-item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
+`plan` và `apply` từ chối manifest sai quy ước với exit 4 và không ghi gì lên Taiga. Riêng rule `story-format` cho
+story sắp được tạo (§6.2) được kiểm sau khi đọc Taiga, vì chỉ Taiga biết story nào là mới. Chạy lại `apply` luôn an
+toàn: item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
 
 Ngoại lệ duy nhất của quy trình trên là sửa **ticket của chính mình** (user story được giao cho mình):
 `taigent status` (đổi status) và `taigent comment` (thêm comment) ghi ngay, không cần `--yes`, vì chính yêu cầu của
@@ -112,7 +113,7 @@ Mục này là nguồn chuẩn duy nhất cho user story của Taigent. Chuẩn 
 want to / so that") kết hợp tiêu chí chấp nhận **Gherkin** (Scenario / Given / When / Then). Đọc mục này là đủ
 để viết đúng chuẩn, không cần cài skill nào khác.
 
-### 6.1 Story dạng mới (bắt buộc cho mọi story mới)
+### 6.1 User story format (bắt buộc cho mọi story mới)
 
 **Story** (`epics[].stories[]`): `key`, `subject`, `use_case`, `scenarios`, `description` (tuỳ chọn), `spec`
 (link hoặc đường dẫn tới spec/PRD), `tags`, `tasks`, `custom_attributes`. Nhãn (`As a`, `Scenario`, `Given`…)
@@ -195,11 +196,11 @@ Mỗi scenario là một checkbox để QA viết test case và tick khi đã ki
 - Cần nhiều hơn một When hoặc một Then trong một scenario → có nhiều story, tách ra.
 - Use case chứa nhiều mục tiêu (nhiều "và" trong I want to, hay một danh sách tính năng) → mỗi mục tiêu một story.
 - Các scenario của một story cùng phục vụ một Use case; scenario theo đuổi mục tiêu khác thì thành story riêng.
-- Mỗi story sau khi tách vẫn phải độc lập, có giá trị và kiểm thử được (INVEST).
+- Mỗi story sau khi tách vẫn phải độc lập, có giá trị và kiểm thử được.
 
-### 6.2 Dạng cũ (chỉ cho story đã có trên Taiga)
+### 6.2 Legacy format (chỉ cho story đã có trên Taiga)
 
-Story đã có trên Taiga (có tag `src:<key>`) được giữ dạng cũ: `description` là câu `Là <vai trò>, tôi muốn
+Story đã có trên Taiga (có tag `src:<key>`) được giữ legacy format: `description` là câu `Là <vai trò>, tôi muốn
 <mục tiêu>, để <lợi ích>.` (kèm ngữ cảnh) và `acceptance_criteria` là danh sách câu kiểm được. `apply` ghép:
 
 ```markdown
@@ -213,8 +214,8 @@ Là người dùng, tôi muốn đăng nhập bằng email, để truy cập d�
 Spec: docs/specs/auth.md
 ```
 
-Không dùng dạng cũ cho story mới: `plan` và `apply` thoát exit 4 (rule `story-format`) khi một story sắp được
-tạo không có `use_case`/`scenarios`. Story cũ chỉ được chuyển sang dạng mới khi người dùng yêu cầu; khi đó
+Không dùng legacy format cho story mới: `plan` và `apply` thoát exit 4 (rule `story-format`) khi một story sắp được
+tạo không có `use_case`/`scenarios`. Story cũ chỉ được chuyển sang user story format khi người dùng yêu cầu; khi đó
 `apply` cập nhật `description` của nó như một thay đổi bình thường.
 
 ### 6.3 Task, epic và custom attributes
@@ -238,7 +239,6 @@ chỉ ghi các attribute có trong manifest; giá trị người khác đặt ch
 
 - Mike Cohn, *User Stories Applied* (2004): format As a / I want to / so that.
 - Gherkin (Cucumber): Given / When / Then.
-- INVEST (Independent, Negotiable, Valuable, Estimable, Small, Testable).
 - Skill `user-story` trong [deanpeters/product-manager-skills](https://github.com/deanpeters/product-manager-skills).
 
 ## 7. Ánh xạ status mặc định

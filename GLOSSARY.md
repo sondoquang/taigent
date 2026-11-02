@@ -10,6 +10,14 @@ Taigent turns a project's plans into Taiga epics, stories and tasks, and reports
 A Taiga story in the backlog, assigned or not: who wants what and why, and the acceptance criteria that prove it is done.
 _Avoid_: Ticket (reserved for a user story assigned to you), card, item
 
+**User story format**:
+The shape every new user story takes: a Mike Cohn use case (As a / I want to / so that) and one or more Gherkin scenarios (Given / When / Then) as its acceptance criteria.
+_Avoid_: New format, Cohn format
+
+**Legacy format**:
+The earlier shape of a user story, free text with a list of acceptance criteria, kept only for user stories already on Taiga.
+_Avoid_: Old format
+
 ### Reporting on your work
 
 **Ticket**:
