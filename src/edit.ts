@@ -291,6 +291,56 @@ function render(doc: Document, source: string): string {
   return source.includes('\r\n') ? text.replace(/\n/g, '\r\n') : text;
 }
 
+// ---- Reads --------------------------------------------------------------------------------------
+
+/** A scalar as form text; a missing value, or one of the wrong shape (validate reports it), reads as empty. */
+function scalarText(value: unknown): string {
+  return value === undefined || value === null || typeof value === 'object' ? '' : String(value);
+}
+
+function textList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(scalarText) : [];
+}
+
+function attributeMap(value: unknown): Record<string, AttributeValue> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, AttributeValue] => ['string', 'number', 'boolean'].includes(typeof entry[1])));
+}
+
+/**
+ * The item `key` of `type` in the backlog text `text`, with every field its form edits (an absent one empty), so
+ * saving it back unchanged changes nothing. A story comes in its own format: `useCase` + `scenarios` (user story
+ * format) or `acceptanceCriteria` (legacy). Undefined when there is no such item. Pure.
+ */
+export function readItem(text: string, type: BacklogItem['type'], key: string): BacklogItem | undefined {
+  const root = parseDocument(text).contents;
+  if (!isMap(root)) return undefined;
+  const entry = entries(root).find((candidate) => candidate.type === type && candidate.key === key);
+  if (!entry) return undefined;
+  const raw = entry.node.toJSON() as Record<string, unknown>;
+  const fields: StoryFields = {
+    subject: scalarText(raw.subject),
+    description: scalarText(raw.description),
+    tags: textList(raw.tags),
+    customAttributes: attributeMap(raw.custom_attributes),
+  };
+  if (type === 'epic') return { type, key, fields };
+  const parent = scalarText(entry.parent?.key);
+  if (type === 'task') return { type, key, parent, fields };
+  fields.spec = scalarText(raw.spec);
+  if (raw.use_case === undefined && raw.scenarios === undefined) {
+    fields.acceptanceCriteria = textList(raw.acceptance_criteria);
+    return { type, key, parent, fields };
+  }
+  const useCase = (typeof raw.use_case === 'object' && raw.use_case !== null ? raw.use_case : {}) as Record<string, unknown>;
+  fields.useCase = { asA: scalarText(useCase.as_a), iWantTo: scalarText(useCase.i_want_to), soThat: scalarText(useCase.so_that) };
+  fields.scenarios = (Array.isArray(raw.scenarios) ? raw.scenarios : []).map((scenario: unknown) => {
+    const fieldsOf = (typeof scenario === 'object' && scenario !== null ? scenario : {}) as Record<string, unknown>;
+    return { scenario: scalarText(fieldsOf.scenario), given: textList(fieldsOf.given), when: scalarText(fieldsOf.when), then: scalarText(fieldsOf.then) };
+  });
+  return { type, key, parent, fields };
+}
+
 // ---- Writes -------------------------------------------------------------------------------------
 
 type Opened =

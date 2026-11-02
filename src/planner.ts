@@ -7,9 +7,9 @@ import {
   type AttributeValue,
   type Backlog,
   type LegacyStoryCreate,
-  type StorySpec,
   type UnknownIssueValue,
 } from './manifest/backlog.ts';
+import { storyDescription } from './story-template.ts';
 import { summarize, type Action, type PlanSummary } from './operations.ts';
 import {
   TaigaError,
@@ -181,33 +181,6 @@ export function describePlanOperation(op: Operation): string {
     case 'skip':
       return `${op.type} ${op.key}  (#${op.ref}, id ${op.id}, unchanged)`;
   }
-}
-
-/**
- * Story description. The user story format renders the use case, the free text, one checkbox per scenario with its
- * Given/When/Then, then the spec link. The legacy format keeps its template byte for byte: free text, acceptance
- * criteria as a checklist, then the spec link. Exported so `taigent preview` (src/review.ts) shows exactly the text
- * apply writes.
- */
-export function storyDescription(story: StorySpec): string {
-  const parts: string[] = [];
-  let checklist: string[];
-  if (story.format === 'user-story') {
-    const { asA, iWantTo, soThat } = story.useCase;
-    parts.push([`- **As a** ${asA}`, `- **I want to** ${iWantTo}`, `- **so that** ${soThat}`].join('\n'));
-    checklist = story.scenarios.flatMap(({ scenario, given, when, then }) => [
-      `- [ ] **Scenario:** ${scenario}`,
-      ...given.map((condition, i) => `  - **${i === 0 ? 'Given' : 'and Given'}:** ${condition}`),
-      `  - **When:** ${when}`,
-      `  - **Then:** ${then}`,
-    ]);
-  } else {
-    checklist = story.acceptanceCriteria.map((criterion) => `- [ ] ${criterion}`);
-  }
-  if (story.description.trim() !== '') parts.push(story.description.trimEnd());
-  if (checklist.length > 0) parts.push(['## Acceptance criteria', '', ...checklist].join('\n'));
-  if (story.spec !== '') parts.push(`Spec: ${story.spec}`);
-  return parts.join('\n\n');
 }
 
 /** The manifest key of an item, from its first `src:` tag (Taiga lowercases tags; keys are uppercase). */

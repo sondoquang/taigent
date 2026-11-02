@@ -192,6 +192,14 @@ export interface BacklogSnapshot {
   file: ManifestFile;
   /** Custom attributes project.yaml declares, per item type; empty without a valid project.yaml. */
   attributes: Record<ItemType, CustomAttributeSpec[]>;
+  /** The item `readBacklog` was asked for, with every field its form edits (`readItem` of the edit API). */
+  item?: BacklogItem;
+}
+
+/** An item of backlog.yaml a form edits. */
+export interface ItemRef {
+  type: BacklogItem['type'];
+  key: string;
 }
 
 /** A save through the manifest edit API (`src/edit.ts`); once saved, `view` is the project read again. */
@@ -262,8 +270,8 @@ export interface TaigentApi {
   /** Subscribes to live refreshes of the open project; returns the unsubscribe function. */
   onProjectChanged(listener: (view: Result<ProjectView>) => void): () => void;
   terminal: TerminalApi;
-  /** Reads backlog.yaml for a form. */
-  readBacklog(slug: string): Promise<Result<BacklogSnapshot>>;
+  /** Reads backlog.yaml for a form, with the fields of item `item` when given (absent when it is not there). */
+  readBacklog(slug: string, item?: ItemRef): Promise<Result<BacklogSnapshot>>;
   /** Adds or edits an item; refused (`conflict`) when backlog.yaml is no longer the file `baseDigest` names. */
   saveItem(slug: string, request: SaveItemRequest): Promise<Result<SaveOutcome>>;
   /** Removes an item with its children (a story's tasks); items on Taiga stay there as orphans. */
