@@ -8,7 +8,9 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
+import type * as EditModule from '../../../src/edit.ts';
 import type * as LoginModule from '../../../src/login.ts';
+import type * as ProjectModule from '../../../src/manifest/project.ts';
 import type * as ReviewModule from '../../../src/review.ts';
 import type * as SecretsModule from '../../../src/secrets.ts';
 import type * as ClientModule from '../../../src/taiga/client.ts';
@@ -29,6 +31,8 @@ export function taigentVersion(): string {
 
 export interface Core {
   review: typeof ReviewModule;
+  edit: typeof EditModule;
+  project: typeof ProjectModule;
   login: typeof LoginModule;
   secrets: typeof SecretsModule;
   client: typeof ClientModule;
@@ -42,13 +46,15 @@ export function loadCore(): Promise<Core> {
     const dist = join(taigentRoot(), 'dist');
     const load = (file: string) => import(pathToFileURL(join(dist, file)).href);
     try {
-      const [review, login, secrets, client] = await Promise.all([
+      const [review, edit, project, login, secrets, client] = await Promise.all([
         load('review.js'),
+        load('edit.js'),
+        load('manifest/project.js'),
         load('login.js'),
         load('secrets.js'),
         load('taiga/client.js'),
       ]);
-      return { review, login, secrets, client } as Core;
+      return { review, edit, project, login, secrets, client } as Core;
     } catch (error) {
       core = undefined;
       throw new Error(

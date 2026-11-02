@@ -13,11 +13,13 @@ import {
   type LoginInput,
   type LoginStatus,
   type Plan,
+  type RemoveItemRequest,
   type RepoInfo,
   type Result,
+  type SaveItemRequest,
   type VerdictChoice,
 } from '../shared/api.ts';
-import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, toFailure } from './project.ts';
+import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
 import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
@@ -271,6 +273,9 @@ function registerIpc(): void {
   handle(CHANNELS.openExternal, async (url: string) => {
     if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) await shell.openExternal(url);
   });
+  handle(CHANNELS.readBacklog, async (slug: string) => readBacklog(requireRepo(), slug));
+  handle(CHANNELS.saveItem, async (slug: string, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
+  handle(CHANNELS.removeItem, async (slug: string, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
   handle(CHANNELS.gitStatus, async () => gitStatus(requireRepo()));
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));

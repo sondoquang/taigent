@@ -147,6 +147,9 @@ try {
   await page.keyboard.press('k');
   check((await page.getAttribute('#tree .node.selected', 'data-key')) === story, 'k moves back');
 
+  if (values.project) log('skipped forms: they use the keys of the fixture');
+  else await formScenario(page);
+
   await page.waitForFunction(() => document.querySelector('#statusbar')?.textContent?.includes('Taiga'), null, { timeout: 30_000 }).catch(() => undefined);
   const login = await page.evaluate(() => window.taigent.whoami());
   log('login', JSON.stringify({ loggedIn: login.loggedIn, username: login.username, apiUrl: login.apiUrl, message: login.message }));
@@ -155,7 +158,7 @@ try {
     await page.click('#plan-btn');
     await page.waitForSelector('#changes-result h2', { timeout: 120_000 });
     log('plan result:', (await page.textContent('#changes-result h2'))?.trim());
-    await page.screenshot({ path: join(shots, '6-plan.png') });
+    await page.screenshot({ path: join(shots, '9-plan.png') });
     await goTo(page, 'backlog');
   } else {
     log('skipped plan: not logged in');
@@ -165,4 +168,81 @@ try {
   log('temporary manifests in', manifests);
 } finally {
   await app.close();
+}
+
+/**
+ * Forms: an epic and a task written to backlog.yaml (new items are "Chưa duyệt"), the key lock of an item already on
+ * Taiga, a save refused because an agent edited backlog.yaml while the form was open, and the removal warning.
+ */
+async function formScenario(page) {
+  await page.click('#add-epic');
+  await page.waitForSelector('#item-form[open]');
+  await page.fill('#form-subject', 'Soạn backlog bằng form');
+  const epicKey = await page.inputValue('#form-key');
+  check(epicKey === 'SOAN-BACKLOG', `epic key suggested from the subject (${epicKey})`);
+  await page.fill('#form-description', 'BA/PO thêm và sửa epic, story, task mà không phải sửa YAML.');
+  await page.fill('#form-tags', 'type:feature, area:review');
+  await page.fill('#item-form [data-attribute="Mục tiêu quý"]', 'Q4');
+  await page.screenshot({ path: join(shots, '6-epic-form.png') });
+  await page.click('#form-save');
+  await page.waitForSelector(`#tree .node[data-key="${epicKey}"]`);
+  let text = await readFile(backlogFile, 'utf8');
+  check(new RegExp(`- key: ${epicKey}\\r?\\n +subject: Soạn backlog bằng form`).test(text) && text.includes('Mục tiêu quý: Q4'), 'backlog.yaml has the new epic and its custom attribute');
+  check(text.includes('# Legacy format: kept because the story is already on Taiga'), 'backlog.yaml keeps its comments');
+  check(await page.isVisible('.detail-head .badge.unreviewed'), 'the new epic is "Chưa duyệt"');
+
+  await page.click('#tree .node[data-key="REVIEW-APPROVE"]');
+  await page.click('.detail-head [data-action="add-task"]');
+  await page.waitForSelector('#item-form[open]');
+  await page.fill('#form-subject', 'Kiểm tra form task');
+  const taskKey = await page.inputValue('#form-key');
+  check(taskKey === 'REVIEW-APPROVE-KIEM-TRA', `task key suggested under its story (${taskKey})`);
+  await page.fill('#form-description', 'Done khi: task tạo bằng form nằm dưới story của nó trong backlog.yaml.');
+  await page.click('#form-save');
+  await page.waitForSelector(`#tree .node[data-key="${taskKey}"]`);
+  text = await readFile(backlogFile, 'utf8');
+  const taskAt = text.indexOf(`- key: ${taskKey}`);
+  check(text.indexOf('- key: REVIEW-APPROVE-STALE') < taskAt && taskAt < text.indexOf('- key: REVIEW-MARKDOWN'), 'backlog.yaml has the new task under REVIEW-APPROVE');
+  check(await page.isVisible('.detail-head .badge.unreviewed'), 'the new task is "Chưa duyệt"');
+
+  await page.click('#tree .node[data-key="REVIEW"]');
+  await page.click('.detail-head [data-action="edit"]');
+  await page.waitForSelector('#item-form[open]');
+  check(await page.isDisabled('#form-key'), 'the key of an epic already on Taiga is locked');
+  await page.click('#form-cancel');
+
+  await page.click(`#tree .node[data-key="${taskKey}"]`);
+  await page.click('.detail-head [data-action="edit"]');
+  await page.waitForSelector('#item-form[open]');
+  await page.fill('#form-subject', 'Kiểm tra form task (đã sửa)');
+  const byAgent = (await readFile(backlogFile, 'utf8')).replace('subject: "Hạ tầng smoke test của desktop"', 'subject: "Hạ tầng smoke test của desktop (agent sửa)"');
+  await writeFile(backlogFile, byAgent);
+  await page.waitForSelector('#form-stale:not([hidden])', { timeout: 10_000 });
+  log('ok - the open form notices that backlog.yaml changed');
+  await page.click('#form-save');
+  await page.waitForSelector('#conflict-dialog[open]');
+  check((await page.textContent('#conflict-diff'))?.includes('(agent sửa)'), "the conflict dialog shows the agent's change");
+  check((await readFile(backlogFile, 'utf8')) === byAgent, "the save is refused: backlog.yaml is still the agent's version");
+  await page.screenshot({ path: join(shots, '7-conflict.png') });
+  await page.click('#conflict-reapply');
+  await page.waitForSelector('#item-form', { state: 'hidden' });
+  text = await readFile(backlogFile, 'utf8');
+  check(text.includes('(agent sửa)') && text.includes('Kiểm tra form task (đã sửa)'), "re-applied on the agent's version: backlog.yaml has both changes");
+
+  await page.click('#tree .node[data-key="REVIEW-MARKDOWN"]');
+  await page.click('.detail-head [data-action="remove"]');
+  await page.waitForSelector('#remove-dialog[open]');
+  const orphans = await page.textContent('#remove-orphans');
+  check(orphans?.includes('mồ côi') && orphans.includes('REVIEW-MARKDOWN'), 'removing a story already on Taiga warns that it becomes an orphan');
+  await page.screenshot({ path: join(shots, '8-remove-warning.png') });
+  await page.click('#remove-cancel');
+  check((await readFile(backlogFile, 'utf8')).includes('- key: REVIEW-MARKDOWN'), 'cancelling keeps the story');
+
+  await page.click(`#tree .node[data-key="${taskKey}"]`);
+  await page.click('.detail-head [data-action="remove"]');
+  await page.waitForSelector('#remove-dialog[open]');
+  check(!(await page.isVisible('#remove-orphans')), 'no orphan warning for an item not on Taiga');
+  await page.click('#remove-confirm');
+  await page.waitForSelector(`#tree .node[data-key="${taskKey}"]`, { state: 'detached' });
+  check(!(await readFile(backlogFile, 'utf8')).includes(taskKey), 'the task is removed from backlog.yaml');
 }

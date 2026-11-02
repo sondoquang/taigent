@@ -2,19 +2,12 @@
 // Push and Push. Every git command runs in the main process (src/main/git.ts); this module only shows outcomes.
 
 import type { Failure, GitChange, GitOutcome, GitStatus, Result, TaigentApi } from '../shared/api.ts';
+import { byId, h } from './dom.ts';
 import { currentSection, onSectionChange } from './navigation.ts';
-
-type Child = string | false | undefined | null | Node;
-type ElementBuilder = <K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props?: Record<string, string | boolean | ((event: Event) => void)>,
-  ...children: Child[]
-) => HTMLElementTagNameMap[K];
 
 /** What the section borrows from renderer.ts. */
 export interface GitDeps {
   api: TaigentApi;
-  h: ElementBuilder;
   failureBlock(failure: Failure): HTMLElement;
   toast(message: string, kind?: 'info' | 'error'): void;
   hasRepo(): boolean;
@@ -32,25 +25,16 @@ let deps: GitDeps | undefined;
 let busy = false;
 let status: GitStatus | undefined;
 
-function element<T extends HTMLElement>(id: string): T {
-  const found = document.getElementById(id);
-  if (!found) throw new Error(`missing #${id}`);
-  // index.html declares every id this module asks for, with the element type the caller names.
-  const typed = found as T;
-  return typed;
-}
-
 function renderButtons(): void {
   const off = busy || !deps?.hasRepo();
-  for (const id of ['git-refresh', 'git-pull', 'git-push', 'git-commit-push']) element<HTMLButtonElement>(id).disabled = off;
+  for (const id of ['git-refresh', 'git-pull', 'git-push', 'git-commit-push']) byId<HTMLButtonElement>(id).disabled = off;
 }
 
 function renderStatus(): void {
-  const { h } = deps!;
-  const overview = element('git-overview');
-  const files = element('git-files');
-  const outside = element('git-outside');
-  element('git-files-empty').hidden = !status || status.changes.length > 0;
+  const overview = byId('git-overview');
+  const files = byId('git-files');
+  const outside = byId('git-outside');
+  byId('git-files-empty').hidden = !status || status.changes.length > 0;
   if (!status) {
     files.replaceChildren();
     outside.textContent = '';
@@ -82,8 +66,8 @@ function renderStatus(): void {
 }
 
 function showOutcome(title: string, result: Result<GitOutcome>): void {
-  const { h, failureBlock } = deps!;
-  const target = element('git-result');
+  const { failureBlock } = deps!;
+  const target = byId('git-result');
   const time = h('p', { class: 'muted' }, new Date().toLocaleTimeString('vi-VN'));
   if (!result.ok) {
     target.replaceChildren(h('h2', {}, title), time, failureBlock(result));
@@ -116,7 +100,7 @@ async function act(title: string, call: () => Promise<Result<GitOutcome>>): Prom
   if (!deps || busy || !deps.hasRepo()) return;
   busy = true;
   renderButtons();
-  element('git-result').replaceChildren(deps.h('p', { class: 'muted' }, `Đang chạy ${title}…`));
+  byId('git-result').replaceChildren(h('p', { class: 'muted' }, `Đang chạy ${title}…`));
   try {
     const result = await call();
     showOutcome(title, result);
@@ -150,7 +134,7 @@ export async function refreshGit(): Promise<void> {
 /** Another repository opened: forgets the last outcome, which belonged to the previous one, and reads again. */
 export function gitRepoChanged(): void {
   if (!deps) return;
-  element('git-result').replaceChildren();
+  byId('git-result').replaceChildren();
   void refreshGit();
 }
 
@@ -160,12 +144,12 @@ export function wireGit(borrowed: GitDeps): void {
   onSectionChange((section) => {
     if (section === 'git') void refreshGit();
   });
-  element('git-refresh').addEventListener('click', () => void act('Làm mới', () => api.gitStatus()));
-  element('git-pull').addEventListener('click', () => void act('Pull', () => api.gitPull()));
-  element('git-push').addEventListener('click', () => void act('Push', () => api.gitPush()));
-  element<HTMLFormElement>('git-commit-form').addEventListener('submit', (event) => {
+  byId('git-refresh').addEventListener('click', () => void act('Làm mới', () => api.gitStatus()));
+  byId('git-pull').addEventListener('click', () => void act('Pull', () => api.gitPull()));
+  byId('git-push').addEventListener('click', () => void act('Push', () => api.gitPush()));
+  byId<HTMLFormElement>('git-commit-form').addEventListener('submit', (event) => {
     event.preventDefault();
-    const message = element<HTMLInputElement>('git-message');
+    const message = byId<HTMLInputElement>('git-message');
     void act('Commit + Push', () => api.gitCommitPush(message.value)).then(() => {
       if (status && status.changes.length === 0) message.value = '';
     });

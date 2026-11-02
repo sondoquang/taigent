@@ -21,6 +21,9 @@ const api: TaigentApi = {
     ipcRenderer.on(CHANNELS.projectChanged, handler);
     return () => ipcRenderer.off(CHANNELS.projectChanged, handler);
   },
+  readBacklog: (slug) => ipcRenderer.invoke(CHANNELS.readBacklog, slug),
+  saveItem: (slug, request) => ipcRenderer.invoke(CHANNELS.saveItem, slug, request),
+  removeItem: (slug, request) => ipcRenderer.invoke(CHANNELS.removeItem, slug, request),
   gitStatus: () => ipcRenderer.invoke(CHANNELS.gitStatus),
   gitPull: () => ipcRenderer.invoke(CHANNELS.gitPull),
   gitCommitPush: (message) => ipcRenderer.invoke(CHANNELS.gitCommitPush, message),
