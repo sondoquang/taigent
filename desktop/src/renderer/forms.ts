@@ -1,9 +1,10 @@
-// Forms that write backlog.yaml through the manifest edit API (`src/edit.ts`, via `window.taigent`): the epic, story
-// and task forms (the story's own parts are in story-form.ts), the item actions (edit, add story or task, remove),
+// Forms that write backlog.yaml through the manifest edit API (`src/edit.ts`, via `window.taigent`): the epic, story,
+// task and issue forms (the story's own parts are in story-form.ts), the item actions (edit, add story or task, remove),
 // the conflict dialog when backlog.yaml changed since a form opened, and the removal warning for items already on
 // Taiga. Forms never write review.yaml: a new item is "Chưa duyệt", an edited item that had a verdict turns "Đã đổi
 // sau khi duyệt" through its digest.
 
+import { ISSUE_VALUE_FIELDS, type IssueValueField } from '../../../src/items.ts';
 import { suggestKey } from '../../../src/manifest/conventions.ts';
 import type {
   BacklogSnapshot,
@@ -19,6 +20,7 @@ import type {
 } from '../shared/api.ts';
 import { changeHunks, lineDiff } from './diff.ts';
 import { byId, h } from './dom.ts';
+import { renderMarkdown } from './markdown.ts';
 import { storyEditor, type StoryEditor } from './story-form.ts';
 
 /** What the forms need from the main renderer. */
@@ -31,7 +33,7 @@ export interface FormsHost {
   failureBlock(failure: Failure): HTMLElement;
 }
 
-type FormType = 'epic' | 'story' | 'task';
+type FormType = 'epic' | 'story' | 'task' | 'issue';
 
 interface OpenForm {
   type: FormType;
@@ -45,13 +47,20 @@ interface OpenForm {
   story?: StoryEditor;
 }
 
-const TYPE_LABEL: Record<FormType, string> = { epic: 'Epic', story: 'Story', task: 'Task' };
+const TYPE_LABEL: Record<FormType, string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
 
 const KEY_HINT: Record<FormType, string> = {
   epic: 'Gợi ý theo quy ước: tên mảng việc, ví dụ AUTH.',
   story: 'Gợi ý theo quy ước: <EPIC>-<việc>, ví dụ AUTH-LOGIN.',
   task: 'Gợi ý theo quy ước: <STORY>-<bước>, ví dụ AUTH-LOGIN-API.',
+  issue: 'Gợi ý theo quy ước: tên ngắn của triệu chứng, ví dụ LOGIN-500.',
 };
+
+/** The description a new issue starts from: the template of conventions §6.4 (labels stay in English). */
+const ISSUE_TEMPLATE = '## Steps to reproduce\n\n1. \n\n## Expected\n\n\n\n## Actual\n\n';
+
+const ISSUE_VALUE_LABEL: Record<IssueValueField, string> = { type: 'Loại (type)', severity: 'Mức độ (severity)', priority: 'Ưu tiên (priority)' };
+const TAIGA_VALUES = { type: 'issueTypes', severity: 'severities', priority: 'priorities' } as const;
 
 let host: FormsHost | undefined;
 let form: OpenForm | undefined;
@@ -125,13 +134,18 @@ export function itemActions(item: PreviewItem): HTMLElement {
   return h(
     'div',
     { class: 'item-actions' },
-    type !== 'issue' && h('button', { type: 'button', class: 'btn small', 'data-action': 'edit', onclick: () => void openForm(type, item) }, 'Sửa'),
+    h('button', { type: 'button', class: 'btn small', 'data-action': 'edit', onclick: () => void openForm(type, item) }, 'Sửa'),
     type === 'epic' &&
       h('button', { type: 'button', class: 'btn small', 'data-action': 'add-story', onclick: () => void openForm('story', undefined, item.key) }, '+ Story'),
     type === 'story' &&
       h('button', { type: 'button', class: 'btn small', 'data-action': 'add-task', onclick: () => void openForm('task', undefined, item.key) }, '+ Task'),
     h('button', { type: 'button', class: 'btn small ghost', 'data-action': 'remove', onclick: () => void confirmRemove(item) }, 'Xoá'),
   );
+}
+
+/** The "+ Issue" button of the tree's Issues group: issues sit outside the epic tree. */
+export function addIssueButton(): HTMLElement {
+  return h('button', { type: 'button', class: 'btn small', id: 'add-issue', onclick: () => void openForm('issue') }, '+ Issue');
 }
 
 /** When backlog.yaml changes under an open form (an agent edited it), the form says so; saving then shows the change. */
@@ -178,15 +192,19 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
     toast('Chọn dự án trước.', 'error');
     return;
   }
-  // A story's form edits its manifest fields (use case, scenarios…), not the description the preview composes.
-  const snapshot = await api.readBacklog(view.slug, type === 'story' && original ? { type, key: original.key } : undefined);
+  // A story's form edits its manifest fields (use case, scenarios…), not the description the preview composes; an
+  // issue's form edits its type, severity and priority as backlog.yaml names them.
+  const edited = (type === 'story' || type === 'issue') && original ? { type, key: original.key } : undefined;
+  const snapshot = await api.readBacklog(view.slug, edited);
   if (!snapshot.ok) {
     toast(snapshot.message, 'error');
     return;
   }
-  const stored = snapshot.value.item?.type === 'story' ? snapshot.value.item.fields : undefined;
-  if (type === 'story' && original && !stored) {
-    toast(`Không tìm thấy story ${original.key} trong backlog.yaml.`, 'error');
+  const read = snapshot.value.item;
+  const stored = read?.type === 'story' ? read.fields : undefined;
+  const storedIssue = read?.type === 'issue' ? read.fields : undefined;
+  if (edited && !read) {
+    toast(`Không tìm thấy ${type} ${edited.key} trong backlog.yaml.`, 'error');
     return;
   }
   form = { type, slug: view.slug, base: snapshot.value, keyTouched: original !== undefined, ...(original && { original }) };
@@ -202,8 +220,8 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   );
   const subject = h('input', { id: 'form-subject', type: 'text', autocomplete: 'off' });
   subject.value = original?.subject ?? '';
-  const description = h('textarea', { id: 'form-description', rows: type === 'epic' ? '5' : type === 'story' ? '3' : '4' });
-  description.value = (stored ? stored.description : original?.description) ?? (type === 'task' ? 'Done khi: ' : '');
+  const description = h('textarea', { id: 'form-description', rows: type === 'epic' ? '5' : type === 'story' ? '3' : type === 'issue' ? '10' : '4' });
+  description.value = (stored ?? storedIssue)?.description ?? original?.description ?? (type === 'task' ? 'Done khi: ' : type === 'issue' ? ISSUE_TEMPLATE : '');
   const tags = h('input', { id: 'form-tags', type: 'text', autocomplete: 'off', placeholder: 'type:feature, area:auth' });
   tags.value = (original?.tags ?? []).join(', ');
   const specInput = type === 'story' && h('input', { id: 'form-spec', type: 'text', autocomplete: 'off', placeholder: 'docs/specs/auth.md hoặc link' });
@@ -215,9 +233,22 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
       ? view.preview.epics.map((epic) => ({ key: epic.key, label: `${epic.key}: ${epic.subject}` }))
       : view.preview.epics.flatMap((epic) => epic.stories.map((story) => ({ key: story.key, label: parentLabel(view, story.key) })));
   const parentSelect =
-    type !== 'epic' && h('select', { id: 'form-parent' }, ...parents.map((option) => h('option', { value: option.key, selected: option.key === parentKey }, option.label)));
+    (type === 'story' || type === 'task') &&
+    h('select', { id: 'form-parent' }, ...parents.map((option) => h('option', { value: option.key, selected: option.key === parentKey }, option.label)));
 
-  // Custom attributes (epics and stories): those project.yaml declares for the type, then any other the item has.
+  // Issue values: free text until `taigent projects --project <slug> --json` lists the project's values (logged in,
+  // project on Taiga); then dropdowns. A free-text name that Taiga does not define is reported by plan (`issue-value`).
+  const issueValues =
+    type === 'issue'
+      ? ISSUE_VALUE_FIELDS.map((name) => {
+          const input = h('input', { id: `form-${name}`, type: 'text', autocomplete: 'off', 'data-issue-value': name });
+          input.value = storedIssue?.[name] ?? '';
+          return field(name, ISSUE_VALUE_LABEL[name], input);
+        })
+      : [];
+  const valuesHint = type === 'issue' && h('p', { class: 'hint', id: 'form-values-hint' }, 'Đang đọc type, severity, priority của project trên Taiga…');
+
+  // Custom attributes (epics, stories, issues): those project.yaml declares for the type, then any other the item has.
   const declared = type === 'task' ? [] : snapshot.value.attributes[type];
   const existing = original?.customAttributes ?? {};
   const undeclared = Object.keys(existing)
@@ -228,7 +259,11 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
     });
   const attributes = type === 'task' ? [] : [...declared, ...undeclared];
 
-  const refreshPreview = () => form?.story?.refresh({ description: description.value.trim(), spec: specInput ? specInput.value.trim() : '' });
+  const issuePreview = type === 'issue' ? markdownPreview() : undefined;
+  const refreshPreview = () => {
+    form?.story?.refresh({ description: description.value.trim(), spec: specInput ? specInput.value.trim() : '' });
+    issuePreview?.refresh(description.value.trim());
+  };
   const story =
     type === 'story'
       ? storyEditor(
@@ -242,7 +277,7 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   const taken = new Set([...allItems(view), ...view.preview.issues].map((item) => item.key).filter((itemKey) => itemKey !== original?.key));
   const refreshKey = () => {
     if (!form || locked) return;
-    if (!form.keyTouched) key.value = suggestKey(subject.value, type === 'epic' ? undefined : parentSelect ? parentSelect.value : parentKey, taken);
+    if (!form.keyTouched) key.value = suggestKey(subject.value, parentSelect ? parentSelect.value : type === 'task' || type === 'story' ? parentKey : undefined, taken);
     const duplicate = taken.has(key.value.trim());
     keyHint.classList.toggle('error', duplicate);
     keyHint.textContent = duplicate ? `Key ${key.value.trim()} đã có trong backlog: chọn key khác.` : KEY_HINT[type];
@@ -255,7 +290,7 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   if (parentSelect) parentSelect.addEventListener('change', refreshKey);
 
   const body = byId<HTMLFormElement>('item-form-body');
-  body.classList.toggle('with-preview', story !== undefined);
+  body.classList.toggle('with-preview', story !== undefined || issuePreview !== undefined);
   body.replaceChildren(
     h(
       'div',
@@ -266,7 +301,13 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
       field('subject', 'Tiêu đề', subject),
       field('key', 'Key', key, keyHint),
       story?.element,
-      field('description', type === 'task' ? 'Định nghĩa done' : type === 'story' ? 'Mô tả thêm (Markdown, tuỳ chọn)' : 'Mô tả (Markdown)', description),
+      field(
+        'description',
+        type === 'task' ? 'Định nghĩa done' : type === 'story' ? 'Mô tả thêm (Markdown, tuỳ chọn)' : type === 'issue' ? 'Mô tả (Markdown: bước tái hiện, mong đợi, thực tế)' : 'Mô tả (Markdown)',
+        description,
+      ),
+      ...issueValues,
+      valuesHint,
       specInput && field('spec', 'Spec (đường dẫn hoặc link, tuỳ chọn)', specInput),
       field('tags', 'Tag (cách nhau bằng dấu phẩy)', tags),
       attributes.length > 0 &&
@@ -289,7 +330,7 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
         h('button', { type: 'submit', class: 'btn primary', id: 'form-save' }, 'Lưu vào backlog.yaml'),
       ),
     ),
-    ...(story ? [story.preview] : []),
+    ...(story ? [story.preview] : issuePreview ? [issuePreview.element] : []),
   );
   body.onsubmit = (event) => {
     event.preventDefault();
@@ -300,6 +341,52 @@ async function openForm(type: FormType, original?: PreviewItem, parent?: string)
   refreshKey();
   refreshPreview();
   subject.focus();
+  if (type === 'issue') void loadIssueValues(view.slug);
+}
+
+/** A Markdown preview of the issue description, rendered like the review screen (markdown.ts). */
+function markdownPreview(): { element: HTMLElement; refresh(text: string): void } {
+  const body = h('div', { class: 'markdown', id: 'form-preview-body' });
+  const element = h(
+    'aside',
+    { class: 'form-preview', id: 'form-preview' },
+    h('h3', {}, 'Xem trước'),
+    h('p', { class: 'hint' }, 'Mô tả đúng như apply sẽ ghi lên Taiga.'),
+    body,
+  );
+  return { element, refresh: (text) => body.replaceChildren(renderMarkdown(text)) };
+}
+
+/**
+ * Turns the issue value inputs into dropdowns of the project's values on Taiga (Taiga's order), keeping a current
+ * value Taiga does not define as an extra option; without them (not logged in, project not on Taiga) the inputs stay
+ * free text and the hint says why.
+ */
+async function loadIssueValues(slug: string): Promise<void> {
+  const open = form;
+  const detail = await requireHost().api.readTaigaProject(slug);
+  if (form !== open || !open) return;
+  const hint = byId('form-values-hint');
+  const taiga = detail.ok ? detail.value.taiga : undefined;
+  if (!taiga) {
+    const why = detail.ok ? detail.value.taigaMessage : detail.message;
+    hint.textContent = `Nhập tự do${why ? ` (${why})` : ''}: "Xem thay đổi trên Taiga" (plan) sẽ kiểm tên với project.`;
+    return;
+  }
+  for (const name of ISSUE_VALUE_FIELDS) {
+    const input = byId<HTMLInputElement>(`form-${name}`);
+    const current = input.value.trim();
+    const names: readonly string[] = taiga[TAIGA_VALUES[name]];
+    const select = h(
+      'select',
+      { id: `form-${name}`, 'data-issue-value': name },
+      h('option', { value: '', selected: current === '' }, '— chọn —'),
+      ...names.map((value) => h('option', { value, selected: value === current }, value)),
+      current !== '' && !names.includes(current) && h('option', { value: current, selected: true }, `${current} (không có trên Taiga)`),
+    );
+    input.replaceWith(select);
+  }
+  hint.textContent = 'Giá trị của project trên Taiga (taigent projects --project <slug> --json).';
 }
 
 function attributeValues(): Record<string, string | number | boolean> {
@@ -327,6 +414,11 @@ function formRequest(open: OpenForm): SaveItemRequest {
   };
   const original = open.original ? { original: open.original.key } : {};
   if (open.type === 'epic') return { baseDigest: open.base.file.digest, ...original, item: { type: 'epic', key, fields: { ...fields, customAttributes: attributeValues() } } };
+  if (open.type === 'issue') {
+    const value = (name: IssueValueField) => byId<HTMLInputElement | HTMLSelectElement>(`form-${name}`).value.trim();
+    const issue = { ...fields, type: value('type'), severity: value('severity'), priority: value('priority'), customAttributes: attributeValues() };
+    return { baseDigest: open.base.file.digest, ...original, item: { type: 'issue', key, fields: issue } };
+  }
   const parent = byId<HTMLSelectElement>('form-parent').value;
   if (open.type === 'story') {
     const story = { ...fields, spec: byId<HTMLInputElement>('form-spec').value.trim(), customAttributes: attributeValues(), ...open.story!.format() };
@@ -346,7 +438,7 @@ function showIssues(issues: ManifestIssue[]): void {
   }
   const general: ManifestIssue[] = [];
   for (const issue of issues) {
-    let at = issue.path.replace(/^epics\[\d+\](?:\.stories\[\d+\](?:\.tasks\[\d+\])?)?\.?/, '');
+    let at = issue.path.replace(/^(?:issues\[\d+\]|epics\[\d+\](?:\.stories\[\d+\](?:\.tasks\[\d+\])?)?)\.?/, '');
     let error: HTMLElement | null = null;
     while (at !== '' && !error) {
       const name = CSS.escape(at);

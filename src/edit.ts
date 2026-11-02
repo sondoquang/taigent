@@ -14,7 +14,7 @@ import { dirname, join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { type Document, isCollection, isMap, isNode, isScalar, isSeq, parse, parseDocument, visit, type YAMLMap, type YAMLSeq } from 'yaml';
 import { errorMessage, isFileNotFound, isRecord } from './guards.ts';
-import { ITEM_TYPES, type ItemType } from './items.ts';
+import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type ItemType } from './items.ts';
 import { type AttributeValue, BACKLOG_FILE, checkBacklog, type Scenario, type UseCase } from './manifest/backlog.ts';
 import { KEY_PATTERN } from './manifest/conventions.ts';
 import { checkDocs, DOCS_FILE } from './manifest/docs.ts';
@@ -57,11 +57,19 @@ export interface StoryFields extends ItemFields {
   acceptanceCriteria?: string[];
 }
 
-/** An item as a form saves it: stories and tasks name the key of their parent (epic, story). */
+/** Issue fields: `type`, `severity` and `priority` name the project's own values on Taiga (plan checks them). */
+export interface IssueFields extends ItemFields {
+  type?: string;
+  severity?: string;
+  priority?: string;
+}
+
+/** An item as a form saves it: stories and tasks name the key of their parent (epic, story); issues have none. */
 export type BacklogItem =
   | { type: 'epic'; key: string; fields: ItemFields }
   | { type: 'story'; key: string; parent: string; fields: StoryFields }
-  | { type: 'task'; key: string; parent: string; fields: ItemFields };
+  | { type: 'task'; key: string; parent: string; fields: ItemFields }
+  | { type: 'issue'; key: string; fields: IssueFields };
 
 export interface SaveItemRequest {
   /** `digest` of the file the form was opened on. */
@@ -130,7 +138,6 @@ const KINDS: Record<ItemType, ItemKind> = {
     order: ['key', 'subject', 'use_case', 'scenarios', 'acceptance_criteria', 'description', 'spec', 'tags', 'custom_attributes', 'tasks'],
   },
   task: { list: 'tasks', parent: 'story', order: ['key', 'subject', 'description', 'tags', 'custom_attributes'] },
-  // Issues share the key space and can be removed; the form input for them (`BacklogItem`) comes with the issue form.
   issue: { list: 'issues', order: ['key', 'subject', 'description', 'type', 'severity', 'priority', 'tags', 'custom_attributes'] },
 };
 
@@ -154,6 +161,9 @@ const FIELD_NAMES: Record<string, string> = {
   useCase: 'use_case',
   scenarios: 'scenarios',
   acceptanceCriteria: 'acceptance_criteria',
+  type: 'type',
+  severity: 'severity',
+  priority: 'priority',
 };
 
 function sha256(text: string): string {
@@ -379,6 +389,11 @@ export function readItem(text: string, type: BacklogItem['type'], key: string): 
     customAttributes: attributeMap(raw.custom_attributes),
   };
   if (type === 'epic') return { type, key, fields };
+  if (type === 'issue') {
+    const issueFields: IssueFields = fields;
+    for (const field of ISSUE_VALUE_FIELDS) issueFields[field] = scalarText(raw[field]);
+    return { type, key, fields: issueFields };
+  }
   const parent = scalarText(entry.parent?.key);
   if (type === 'task') return { type, key, parent, fields };
   fields.spec = scalarText(raw.spec);

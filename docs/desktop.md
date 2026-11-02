@@ -10,7 +10,7 @@
 - **xem trước, duyệt, góp ý**: `buildPreview`, `setVerdict`, `addComment`, `saveReview` trong `dist/review.js`.
   Không cần mạng, không cần đăng nhập. Kết quả ghi vào `taiga/<slug>/review.yaml`
   ([docs/cli.md § Review](cli.md#review));
-- **thêm, sửa, xoá epic, story và task bằng form**: `readManifestFile`, `readItem`, `saveItem`, `removeItem` trong
+- **thêm, sửa, xoá epic, story, task và issue bằng form**: `readManifestFile`, `readItem`, `saveItem`, `removeItem` trong
   `dist/edit.js` (API sửa manifest, [docs/cli.md § Code map](cli.md#code-map)). Chỉ sửa `backlog.yaml` trong repo, không
   cần mạng; muốn lên Taiga vẫn phải review rồi đẩy như mọi thay đổi khác. Bản xem trước của form story dùng mẫu story
   của lõi (`src/story-template.ts`, cùng hàm với `apply` và `taigent preview`);
@@ -153,7 +153,7 @@ Mục **Backlog** gồm:
    **Đã đổi sau khi duyệt** và không còn tính là *Đạt*. Hãy xem lại rồi bấm **Đạt** lần nữa.
 4. Commit `taiga/<slug>/review.yaml` cùng manifest (mục **Git**, xem [Git](#git)) để cả team thấy kết quả review.
 
-## Thêm, sửa, xoá epic, story và task
+## Thêm, sửa, xoá epic, story, task và issue
 
 Form chỉ sửa `taiga/<slug>/backlog.yaml` trong repo. Không có gì được ghi lên Taiga cho tới khi bạn review rồi bấm
 **Đẩy lên Taiga**.
@@ -163,7 +163,8 @@ Form chỉ sửa `taiga/<slug>/backlog.yaml` trong repo. Không có gì được
 - Ở một epic, **+ Story** mở form story (xem [Form story](#form-story)).
 - Ở một story, **+ Task** mở form task: story cha, tiêu đề, key, định nghĩa done, tag. Đổi story cha trong form là
   chuyển task sang story đó.
-- Ở một epic, story hoặc task, **Sửa** mở lại form với nội dung hiện có.
+- Ở nhóm **Issues** của cây, **+ Issue** mở form issue (xem [Form issue](#form-issue)).
+- Ở một epic, story, task hoặc issue, **Sửa** mở lại form với nội dung hiện có.
 - **Key** được gợi ý theo quy ước khi bạn gõ tiêu đề: epic là vài chữ đầu của tiêu đề (`SOAN-BACKLOG`), story là
   `<EPIC>-<việc>`, task là `<STORY>-<bước>`. Bạn sửa được key; trùng key có sẵn thì form báo ngay. Item đã có trên
   Taiga (`state.json`) bị khoá key, vì đổi key là tạo item mới và biến item cũ thành mồ côi.
@@ -205,6 +206,24 @@ tả và danh sách tiêu chí chấp nhận (thêm, sửa, xoá). Lưu ở ch�
 chí cũ thành tên của một scenario để bạn điền Given/When/Then, rồi điền *As a / I want to / so that*. Chỉ khi bấm
 **Lưu**, `acceptance_criteria` mới được thay bằng `use_case` + `scenarios`; *Xem thay đổi trên Taiga* (`plan`) khi đó
 báo story được cập nhật `description`. Huỷ form thì story giữ nguyên legacy.
+
+### Form issue
+
+Form issue có hai cột: bên trái là các ô, bên phải là **Xem trước** (mô tả Markdown, cùng renderer và DOMPurify như
+màn hình review). Các field theo [conventions §6.4](taiga/conventions.md#64-issue):
+
+- Tiêu đề (triệu chứng, không phải cách sửa) và key (gợi ý từ tiêu đề; issue dùng chung không gian key với epic,
+  story, task).
+- **Mô tả**: issue mới được điền sẵn mẫu `## Steps to reproduce` / `## Expected` / `## Actual`. Với Question hay
+  Enhancement, xoá các phần không hợp và viết một đoạn.
+- **Loại (type)**, **Mức độ (severity)**, **Ưu tiên (priority)**: form đọc các giá trị của project bằng `taigent
+  projects --project <slug> --json`. Khi đã đăng nhập và project có trên Taiga, ba ô thành dropdown theo đúng thứ tự
+  trên Taiga (giá trị hiện có mà Taiga không định nghĩa vẫn được giữ, kèm nhãn *không có trên Taiga*). Khi chưa đăng
+  nhập hoặc project chưa có trên Taiga, ba ô cho nhập tự do; *Xem thay đổi trên Taiga* (`plan`) kiểm tên với project
+  (rule `issue-value`). Cả ba đều bắt buộc.
+- Tag và custom attribute mà `project.yaml` khai báo cho issue (`custom_attributes.issue`).
+
+Issue mới ở trạng thái *Chưa duyệt*, như mọi item tạo bằng form.
 
 ## Wiki
 
@@ -495,7 +514,10 @@ ngay dưới ô đó (file không đổi), rồi lưu thật; kiểm tra `backlo
 `taigent validate` (exit 0), so bản xem trước của form với mô tả của story trong `taigent preview --json` (phải bằng
 nhau) và với phần mô tả ở màn hình review (cùng HTML). Sau đó sửa story legacy `REVIEW-MARKDOWN` (vẫn là
 `acceptance_criteria`), rồi bấm *Chuyển sang user story format*, điền Given/When/Then, lưu và kiểm tra lại `validate`
-và `preview`. Rồi tới phần wiki: mục Wiki liệt kê 2 trang, form từ chối slug sai
+và `preview`. Cuối phần form là form issue: bấm *+ Issue* trong nhóm Issues, kiểm tra mô tả có sẵn mẫu Steps to
+reproduce / Expected / Actual và ba ô type, severity, priority nhập tự do (fixture không có trên Taiga), điền, xem
+bản xem trước Markdown, lưu, kiểm tra `backlog.yaml` đúng schema, `taigent validate` exit 0 và issue mới *Chưa
+duyệt*; rồi bấm *Sửa*, kiểm tra form mở đúng giá trị đã lưu và lưu lại. Rồi tới phần wiki: mục Wiki liệt kê 2 trang, form từ chối slug sai
 (rule `wiki-slug`), tạo trang `trang-smoke` (kiểm tra `pages/trang-smoke.md` và entry cuối `docs.yaml`, comment giữ
 nguyên), sửa trang đó (slug bị khoá, chỉ file trang đổi). *Đẩy wiki lên Taiga* chạy với một Taiga giả
 (`test/support/fake-taiga.ts`, trong tiến trình của script; ứng dụng nhận `TAIGA_API_URL`/`TAIGA_USERNAME`/
@@ -503,7 +525,10 @@ nguyên), sửa trang đó (slug bị khoá, chỉ file trang đổi). *Đẩy w
 (Taiga giả không nhận request ghi nào); sai mật khẩu thì hiện thông báo tiếng Việt kèm cách sửa; cuối cùng, chỉ với
 Taiga giả, hộp thoại được trả lời đồng ý trong khi trang bị sửa trên Taiga giữa chừng, và màn hình hiện thông báo
 conflict kèm cách sửa. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
-Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Sau đó script mở Taiga › Project,
+Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`), rồi tạo tạm một `backlog.yaml`
+trống cho project Taiga đầu tiên bạn là thành viên, mở form issue của project đó và kiểm tra ba dropdown type,
+severity, priority có đúng các giá trị trong `taigent projects --project <slug> --json` (bấm *Huỷ*, không lưu gì; thư
+mục tạm được xoá và fixture được mở lại). Sau đó script mở Taiga › Project,
 kiểm tra fixture có trong danh sách, mở form `project.yaml`, sửa mô tả, lưu và kiểm tra file giữ comment và tag. Nếu
 đã đăng nhập, script bấm *Bootstrap lên Taiga…*: `bootstrap --dry-run` chạy rồi hộp thoại xác nhận hiện ra. Mọi hộp
 thoại xác nhận với Taiga thật (đẩy, bootstrap) luôn được trả lời *Huỷ*. Sau đó script kiểm tra mục Báo cáo. Nếu đã

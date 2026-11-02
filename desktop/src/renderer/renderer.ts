@@ -19,7 +19,7 @@ import type {
   VerdictChoice,
 } from '../shared/api.ts';
 import { byId, h } from './dom.ts';
-import { itemActions, mountForms } from './forms.ts';
+import { addIssueButton, itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
 import { mountTaigaProjects } from './taiga-projects.ts';
@@ -225,28 +225,29 @@ function renderTree(): void {
     return;
   }
   const nodes = visibleNodes(view, state.filter);
+  // The Issues group follows the epic tree, with its "+ Issue" button even when the project has no issue yet.
+  const group = h('div', { class: 'tree-group' }, h('span', {}, `Issues (${view.preview.issues.length})`), addIssueButton());
   if (nodes.length === 0) {
-    tree.replaceChildren(h('div', { class: 'empty small' }, 'Không có mục nào khớp bộ lọc.'));
+    tree.replaceChildren(h('div', { class: 'empty small' }, state.filter === 'all' ? 'Backlog chưa có mục nào.' : 'Không có mục nào khớp bộ lọc.'), group);
     return;
   }
   const firstIssue = nodes.findIndex((node) => node.item.type === 'issue');
-  tree.replaceChildren(
-    ...nodes.flatMap((node, index) => [
-      ...(index === firstIssue ? [h('div', { class: 'tree-group' }, `Issues (${view.preview.issues.length})`)] : []),
-      h(
-        'button',
-        {
-          type: 'button',
-          class: `node depth-${node.depth} ${node.item.key === state.selected ? 'selected' : ''} ${matches(node.item, state.filter) ? '' : 'context'}`,
-          'data-key': node.item.key,
-          onclick: () => select(node.item.key),
-        },
-        h('span', { class: `type type-${node.item.type}` }, TYPE_LABEL[node.item.type]),
-        h('span', { class: 'subject' }, node.item.subject),
-        badges(node.item, true),
-      ),
-    ]),
+  const rows: HTMLElement[] = nodes.map((node) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        class: `node depth-${node.depth} ${node.item.key === state.selected ? 'selected' : ''} ${matches(node.item, state.filter) ? '' : 'context'}`,
+        'data-key': node.item.key,
+        onclick: () => select(node.item.key),
+      },
+      h('span', { class: `type type-${node.item.type}` }, TYPE_LABEL[node.item.type]),
+      h('span', { class: 'subject' }, node.item.subject),
+      badges(node.item, true),
+    ),
   );
+  rows.splice(firstIssue === -1 ? rows.length : firstIssue, 0, group);
+  tree.replaceChildren(...rows);
   tree.querySelector('.node.selected')?.scrollIntoView({ block: 'nearest' });
 }
 
