@@ -1,5 +1,6 @@
 // The opened repository: the remembered folder, its environment (`.env` completes process.env, as the CLI does),
-// where its manifests live and which projects they hold.
+// where its manifests live and which projects they hold. Also the app settings file (userData `settings.json`): the
+// remembered folder and the agent of the headless buttons.
 
 import { readFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -7,31 +8,53 @@ import { userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { app } from 'electron';
-import type { ProjectEntry, RepoInfo } from '../shared/api.ts';
+import { HEADLESS_AGENTS, type HeadlessAgent, type ProjectEntry, type RepoInfo } from '../shared/api.ts';
 import { loadCore } from './taigent.ts';
 
 const SETTINGS_FILE = 'settings.json';
 
 interface Settings {
   lastRepo?: string;
+  headlessAgent?: HeadlessAgent;
 }
 
 async function readSettings(): Promise<Settings> {
+  const settings: Settings = {};
   try {
     const parsed: unknown = JSON.parse(await readFile(join(app.getPath('userData'), SETTINGS_FILE), 'utf8'));
-    if (parsed && typeof parsed === 'object' && 'lastRepo' in parsed && typeof parsed.lastRepo === 'string') {
-      return { lastRepo: parsed.lastRepo };
+    if (parsed && typeof parsed === 'object') {
+      if ('lastRepo' in parsed && typeof parsed.lastRepo === 'string') settings.lastRepo = parsed.lastRepo;
+      const agent = 'headlessAgent' in parsed ? HEADLESS_AGENTS.find((known) => known === parsed.headlessAgent) : undefined;
+      if (agent) settings.headlessAgent = agent;
     }
   } catch {
     // no settings yet
   }
-  return {};
+  return settings;
+}
+
+/** Writes `change` over the stored settings, keeping the others. */
+async function updateSettings(change: Settings): Promise<void> {
+  const settings = { ...(await readSettings()), ...change };
+  const dir = app.getPath('userData');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, SETTINGS_FILE), `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 export async function rememberRepo(root: string): Promise<void> {
-  const dir = app.getPath('userData');
-  await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, SETTINGS_FILE), `${JSON.stringify({ lastRepo: root } satisfies Settings, null, 2)}\n`);
+  await updateSettings({ lastRepo: root });
+}
+
+/** The agent of the headless buttons; claude until Settings picks another. */
+export async function headlessAgent(): Promise<HeadlessAgent> {
+  return (await readSettings()).headlessAgent ?? 'claude';
+}
+
+export async function setHeadlessAgent(agent: unknown): Promise<HeadlessAgent> {
+  const known = HEADLESS_AGENTS.find((candidate) => candidate === agent);
+  if (!known) throw new Error(`Agent không hợp lệ: ${String(agent)} (chỉ claude hoặc codex).`);
+  await updateSettings({ headlessAgent: known });
+  return known;
 }
 
 /** The remembered repository, when it still exists. */

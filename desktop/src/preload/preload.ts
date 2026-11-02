@@ -1,7 +1,7 @@
 // Sandboxed preload: exposes the typed `window.taigent` API and nothing else of Electron or Node.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import { CHANNELS, type ProjectView, type Result, type TaigentApi, type TerminalExit, type TerminalTab } from '../shared/api.ts';
+import { CHANNELS, type ProjectView, type Result, type SkillRunEnd, type TaigentApi, type TerminalExit, type TerminalTab } from '../shared/api.ts';
 
 /** Subscribes `listener` to a main → renderer event; returns the unsubscribe function. */
 function subscribe<A extends unknown[]>(channel: string, listener: (...args: A) => void): () => void {
@@ -39,6 +39,10 @@ const api: TaigentApi = {
   gitPull: () => ipcRenderer.invoke(CHANNELS.gitPull),
   gitCommitPush: (message) => ipcRenderer.invoke(CHANNELS.gitCommitPush, message),
   gitPush: () => ipcRenderer.invoke(CHANNELS.gitPush),
+  headlessAgent: () => ipcRenderer.invoke(CHANNELS.headlessAgent),
+  setHeadlessAgent: (agent) => ipcRenderer.invoke(CHANNELS.setHeadlessAgent, agent),
+  runSkill: (request) => ipcRenderer.invoke(CHANNELS.runSkill, request),
+  onSkillRunEnded: (listener) => subscribe<[SkillRunEnd]>(CHANNELS.skillRunEnded, listener),
   terminal: {
     open: (kind) => ipcRenderer.invoke(CHANNELS.terminalOpen, kind),
     write: (id, data) => ipcRenderer.send(CHANNELS.terminalWrite, id, data),

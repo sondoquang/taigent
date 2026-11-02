@@ -25,6 +25,7 @@ import { currentSection, onSectionChange, showSection, wireNavigation } from './
 import { mountTaigaProjects } from './taiga-projects.ts';
 import { gitRepoChanged, wireGit } from './git.ts';
 import { wireTerminal } from './terminal.ts';
+import { mountHeadless, renderHeadless } from './headless.ts';
 
 declare global {
   interface Window {
@@ -455,6 +456,7 @@ function render(): void {
   renderDetail();
   renderChanges();
   renderButtons();
+  renderHeadless();
 }
 
 // ---- actions --------------------------------------------------------------------------------------------------
@@ -800,6 +802,21 @@ function wire(): void {
     failureBlock,
   });
   wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
+  mountHeadless({
+    api,
+    repo: () => state.repo,
+    view: () => state.view,
+    toast,
+    async refresh() {
+      // The watcher already showed the agent's edits; a project the run created joins the picker here.
+      const repo = await api.refreshRepo();
+      if (repo.ok) state.repo = repo.value;
+      const only = state.repo?.projects.length === 1 ? state.repo.projects[0] : undefined;
+      if (state.view) applyView(await api.openProject(state.view.slug));
+      else if (only) await openProject(only.slug);
+      else render();
+    },
+  });
 }
 
 async function start(): Promise<void> {

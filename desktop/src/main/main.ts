@@ -22,11 +22,12 @@ import {
   type VerdictChoice,
 } from '../shared/api.ts';
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
-import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
+import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, setHeadlessAgent } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
+import { runSkill } from './headless.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -292,6 +293,13 @@ function registerIpc(): void {
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
   handle(CHANNELS.gitPush, async () => gitPush(requireRepo()));
+  handle(CHANNELS.headlessAgent, headlessAgent);
+  handle(CHANNELS.setHeadlessAgent, async (agent: unknown) => ({ ok: true, value: await setHeadlessAgent(agent) }));
+  handle(CHANNELS.runSkill, async (request: unknown) =>
+    runSkill(requireRepo(), request, window!, (end) => {
+      if (window && !window.isDestroyed()) window.webContents.send(CHANNELS.skillRunEnded, end);
+    }),
+  );
 }
 
 app.enableSandbox();
