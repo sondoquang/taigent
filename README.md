@@ -16,7 +16,7 @@ npx skills add sondoquang/taigent
 npm install -D github:sondoquang/taigent
 ```
 
-The first command adds the eight Taigent skills to `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code);
+The first command adds the nine Taigent skills to `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code);
 pick your agents when it asks. The second installs the `taigent` CLI and the Taiga MCP server into `node_modules`
 (nothing system-wide) and creates `package.json` if the project has none.
 
@@ -76,8 +76,97 @@ server: three `ok` means you are done. Anything else comes with the fix.
 
 ### 5. Try it
 
-Ask for your tickets with `/taiga-my-tickets` (e.g. `/taiga-my-tickets October`). Not sure which skill fits? Ask
-`/ask-taigent` (`$ask-taigent` in Codex).
+Ask for your tickets with `/taiga-my-tickets` (e.g. `/taiga-my-tickets October`), or close one with "close #84"
+(`taiga-update-ticket`). Not sure which skill fits? Ask `/ask-taigent` (`$ask-taigent` in Codex).
+
+### 6. Optional: your tickets on Telegram
+
+In a private chat with your own Telegram bot you get your week's tickets on Monday at 08:30, your day's tickets every
+weekday at 08:35, and at 16:45 an end-of-day reminder of the open tickets due today or earlier. Answer it with
+"đóng hết" or "đóng #84" and they move to `Done` right away. The bot acts with your Taiga login, so it is one bot per
+person. Nothing to deploy: it runs on your machine, so messages go out while the machine is on, and the bot answers
+while the session of step d is open. Steps 1–4 done (`taiga` connected in `/mcp`)? Start here, in the project root.
+
+**a. Install Bun**, which runs the Telegram plugin, then open a new terminal and check `bun --version`:
+
+```powershell
+powershell -c "irm bun.sh/install.ps1 | iex"     # Windows
+```
+
+```sh
+curl -fsSL https://bun.sh/install | bash          # macOS, Linux
+```
+
+**b. Create your bot.** In Telegram, open [@BotFather](https://t.me/BotFather), send `/newbot`, give it a name and a
+username ending in `bot`. Copy the token it replies (`123456789:AA…`) and keep it to yourself.
+
+**c. Install the Telegram plugin.** Start `claude` and type (choose the user scope when asked):
+
+```text
+/plugin install telegram@claude-plugins-official
+/telegram:configure 123456789:AA...
+```
+
+`Marketplace "claude-plugins-official" not found`: run `/plugin marketplace add anthropics/claude-plugins-official`
+first. Then exit `claude`.
+
+**d. Start the chat session** and pair your Telegram account:
+
+```sh
+claude --channels plugin:telegram@claude-plugins-official
+```
+
+Send any message to your bot: it replies with a 6-character code. Back in `claude`, type `/telegram:access pair
+<code>`, then `/telegram:access policy allowlist` so nobody else can use it. Leave this terminal open.
+
+**e. Let chats run without prompts.** Add these rules to the project's `.claude/settings.json` (the taigent repository
+has them already):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx taigent tickets *)", "Bash(npx taigent status *)", "Bash(npx taigent comment *)",
+      "PowerShell(npx taigent tickets *)", "PowerShell(npx taigent status *)", "PowerShell(npx taigent comment *)"
+    ]
+  }
+}
+```
+
+The bot's first answer asks, in the terminal, to allow the plugin's `reply` tool: pick the option that stops asking.
+
+**f. Try it.** In another terminal, in the project root:
+
+```sh
+npx taigent notify eod --dry-run   # prints the end-of-day reminder, sends nothing
+npx taigent notify day             # sends your day's tickets to Telegram
+```
+
+Then write to the bot, e.g. "ticket nào đến hạn hôm nay?" or "đóng #84".
+
+**g. Schedule the messages.** Windows, in PowerShell, from the project root (the tasks run as you while you are
+logged on):
+
+```powershell
+$weekdays = 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'
+$runs = @{ week = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 08:30
+           day  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At 08:35
+           eod  = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At 16:45 }
+foreach ($kind in $runs.Keys) {
+  $action = New-ScheduledTaskAction -Execute 'npx.cmd' -Argument "taigent notify $kind" -WorkingDirectory (Get-Location).Path
+  Register-ScheduledTask -TaskName "taigent notify $kind" -Trigger $runs[$kind] -Action $action
+}
+```
+
+`Get-ScheduledTask -TaskName 'taigent notify*'` lists the three tasks; `Unregister-ScheduledTask -TaskName 'taigent
+notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron has no desktop session: log in with
+`TAIGENT_CREDENTIAL_STORE=file`):
+
+```text
+30 8 * * 1    cd /path/to/project && npx taigent notify week
+35 8 * * 1-5  cd /path/to/project && npx taigent notify day
+45 16 * * 1-5 cd /path/to/project && npx taigent notify eod
+```
 
 ### If something goes wrong
 
@@ -91,6 +180,11 @@ Ask for your tickets with `/taiga-my-tickets` (e.g. `/taiga-my-tickets October`)
 | `/mcp` has no `taiga`, or shows it pending | Check `.mcp.json` is in the project root, restart `claude` there and accept `taiga` |
 | You declined `taiga` earlier | `claude mcp reset-project-choices`, then restart `claude` and accept it |
 | `taiga` failed to connect | Run `npx taigent mcp` in a terminal: its error names the problem (Ctrl+C to stop) |
+| `no Telegram bot token` | Step 6c (`/telegram:configure <token>`) |
+| `no paired Telegram user` | Step 6d: message the bot, then `/telegram:access pair <code>` |
+| `Telegram refused the message … chat not found` | Send your bot a message first: a bot cannot start a chat |
+| The bot does not answer in Telegram | The session of step 6d is closed: start it again in the project root |
+| `--channels` is not available | Claude Code needs a claude.ai or Console login; on Team/Enterprise plans an admin enables channels |
 
 ### Good to know
 

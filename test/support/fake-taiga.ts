@@ -179,6 +179,25 @@ export interface FakeEpicRelatedUserStory {
   order: number;
 }
 
+/** A user story status of a project ("user story status detail" in the Taiga API docs). */
+export interface FakeStoryStatus {
+  id: number;
+  project: number;
+  name: string;
+  slug: string;
+  order: number;
+  is_closed: boolean;
+  is_archived: boolean;
+}
+
+/** A comment added with `PATCH /userstories/{id}` (`comment` field); taiga-back keeps it in the item's history. */
+export interface FakeComment {
+  itemType: FakeCustomAttributeType;
+  item: number;
+  user: number;
+  comment: string;
+}
+
 /** An Application (taiga-back `external_apps.Application`), created by an instance admin in Django admin. */
 export interface FakeApplication {
   id: string;
@@ -241,6 +260,8 @@ export interface FakeState {
   userStories: FakeUserStory[];
   tasks: FakeTask[];
   epicRelatedUserStories: FakeEpicRelatedUserStory[];
+  storyStatuses: FakeStoryStatus[];
+  comments: FakeComment[];
   templates: FakeTemplate[];
   roles: FakeRole[];
   customAttributes: FakeCustomAttribute[];
@@ -377,7 +398,7 @@ const EPIC_FIELDS: Record<string, true> = {
 const USER_STORY_FIELDS: Record<string, true> = {
   assigned_to: true, backlog_order: true, blocked_note: true, client_requirement: true, description: true,
   is_blocked: true, is_closed: true, kanban_order: true, milestone: true, points: true, project: true,
-  sprint_order: true, status: true, subject: true, tags: true, team_requirement: true, watchers: true,
+  sprint_order: true, status: true, subject: true, tags: true, team_requirement: true, watchers: true, comment: true,
 };
 
 const TASK_FIELDS: Record<string, true> = {
@@ -502,6 +523,8 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     userStories: [],
     tasks: [],
     epicRelatedUserStories: [],
+    storyStatuses: [],
+    comments: [],
     templates: [
       {
         id: 1,
@@ -585,6 +608,21 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return state.roles.find((r) => r.project === projectId && (r.name === nameOrSlug || r.slug === nameOrSlug));
   }
 
+  /** The user story statuses of the default templates (scrum and kanban alike), as taiga-back creates them with a project. */
+  function addStoryStatuses(project: FakeProject): void {
+    const statuses: [name: string, slug: string, closed: boolean][] = [
+      ['New', 'new', false],
+      ['Ready', 'ready', false],
+      ['In progress', 'in-progress', false],
+      ['Ready for test', 'ready-for-test', false],
+      ['Done', 'done', true],
+      ['Archived', 'archived', true],
+    ];
+    statuses.forEach(([name, slug, closed], index) => {
+      state.storyStatuses.push({ id: ++nextId, project: project.id, name, slug, order: index + 1, is_closed: closed, is_archived: slug === 'archived' });
+    });
+  }
+
   function addProject(input: Parameters<FakeTaiga['addProject']>[0]): FakeProject {
     const members = input.members ?? [user.id];
     const project: FakeProject = {
@@ -602,6 +640,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     };
     state.projects.push(project);
     addRoles(project, SCRUM_ROLES);
+    addStoryStatuses(project);
     for (const member of members) addMembership({ project: project.id, role: 'product-owner', user: member });
     return project;
   }
@@ -794,6 +833,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     };
     state.projects.push(project);
     addRoles(project, template!.roles);
+    addStoryStatuses(project);
     addMembership({ project: project.id, role: template!.roles[0]!.slug, user: userId });
     return { status: 201, body: projectJson(project, userId) };
   }
@@ -1180,6 +1220,27 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   /**
+   * PATCH /userstories/{id}: like patchItem, plus what taiga-back does with a story's `status` (closing or reopening
+   * it, `finish_date` set on closing) and a `comment` (kept in the history, not on the story; the save still bumps
+   * `version`).
+   */
+  function patchStory(story: FakeUserStory, body: unknown, userId: number): Json {
+    const { data, tags } = validateItemPayload(body, USER_STORY_FIELDS, userId, story);
+    const status = data.status === undefined ? undefined : state.storyStatuses.find((s) => s.id === data.status && s.project === story.project);
+    if (data.status !== undefined && !status) throw fieldErrors({ status: [`Invalid pk "${String(data.status)}" - object does not exist.`] });
+    checkVersion(story, data);
+    const { version: _version, comment, ...changes } = data;
+    if (tags !== undefined) changes.tags = tags;
+    if (status) {
+      const finishDate = status.is_closed ? (story.is_closed ? story.finish_date : new Date().toISOString()) : null;
+      Object.assign(changes, { status_name: status.name, is_closed: status.is_closed, finish_date: finishDate });
+    }
+    saveEdit(story, changes);
+    if (typeof comment === 'string' && comment !== '') state.comments.push({ itemType: 'userstory', item: story.id, user: userId, comment });
+    return itemJson(story);
+  }
+
+  /**
    * An item as taiga-back serializes it: tags as [name, color] pairs, plus the embedded project and status
    * (`project_extra_info`, `status_extra_info`). Status names follow the default templates: a closed story is `Done`,
    * a closed task `Closed`, anything open `New`; a story's `status_name` overrides them.
@@ -1219,6 +1280,14 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   function routeStoriesAndTasks(req: IncomingMessage, method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
+    if (method === 'GET' && path === '/userstory-statuses') {
+      const projectId = queryNumber(query, 'project');
+      const statuses = state.storyStatuses
+        .filter((s) => visibleProject(s.project, userId) && (projectId === undefined || s.project === projectId))
+        .sort((a, b) => a.order - b.order);
+      return paginate(req, query, statuses);
+    }
+
     if (path === '/userstories') {
       if (method === 'GET') {
         const projectId = queryNumber(query, 'project');
@@ -1276,6 +1345,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       const { itemType, fields } = ITEM_KINDS[itemPath[1] as ItemSegment];
       const item = itemsOf(itemType).find((i) => i.id === Number(itemPath[2]) && visibleProject(i.project, userId));
       if (!item) throw notFound();
+      if (itemType === 'userstory') return { status: 200, body: patchStory(item as FakeUserStory, body, userId) };
       return { status: 200, body: patchItem(item, body, fields, userId) };
     }
 

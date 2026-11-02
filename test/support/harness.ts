@@ -50,12 +50,12 @@ export interface Harness {
   taigent(args: string[], options?: RunOptions): Promise<CliResult>;
 }
 
-/** The env of a CLI child process: this process's env without the developer's TAIGA_ and TAIGENT_ variables, plus `overrides`. */
+/** The env of a CLI child process: this process's env without the developer's Taiga, taigent and Telegram variables, plus `overrides`. */
 export function childEnv(overrides: Record<string, string | undefined>): Record<string, string> {
-  // Never leak the developer's real Taiga credentials or overrides into a test run.
+  // Never leak the developer's real Taiga credentials, bot token or overrides into a test run.
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined && !/^(TAIGA_|TAIGENT_)/i.test(name)) env[name] = value;
+    if (value !== undefined && !/^(TAIGA_|TAIGENT_|TELEGRAM_|CLAUDE_CONFIG_DIR$)/i.test(name)) env[name] = value;
   }
   for (const [name, value] of Object.entries(overrides)) {
     if (value === undefined) delete env[name];

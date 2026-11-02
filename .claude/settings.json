@@ -1,5 +1,13 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(npx taigent tickets *)",
+      "Bash(npx taigent status *)",
+      "Bash(npx taigent comment *)",
+      "PowerShell(npx taigent tickets *)",
+      "PowerShell(npx taigent status *)",
+      "PowerShell(npx taigent comment *)"
+    ],
     "deny": ["mcp__taiga__authenticate"]
   }
 }

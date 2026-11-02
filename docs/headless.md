@@ -73,9 +73,11 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
 `tools/taiga/allowlist.txt` is the only list; both scripts read it (one rule per line, `#` comments). It holds:
 
 - `Bash(npx taigent <command> *)` and `PowerShell(npx taigent <command> *)` for `validate`, `plan`, `apply`,
-  `bootstrap`, `upload`: writes to Taiga go through the CLI only. `apply`/`bootstrap`/`upload` still need `--yes`,
-  which the skills add only after the user's explicit confirmation, so a headless run of `taiga-apply-backlog`
-  stops at the plan unless its arguments carry that confirmation.
+  `bootstrap`, `upload`, `tickets`, `status`, `comment`: writes to Taiga go through the CLI only.
+  `apply`/`bootstrap`/`upload` still need `--yes`, which the skills add only after the user's explicit confirmation,
+  so a headless run of `taiga-apply-backlog` stops at the plan unless its arguments carry that confirmation.
+  `status`/`comment` edit one of the user's own tickets named in the skill arguments (`taiga-update-ticket`); under
+  Codex the shell guard below refuses a comment holding `( ) ? *` or the other shell characters it blocks.
 - The Taiga MCP read tools of `taiga-mcp-server@1.9.20` (`list*`, `get*`, `getMilestoneStats`,
   `getIssuesByMilestone`, `advancedSearch`, `queryHelp`, `validateQuery`) as `mcp__taiga__<tool>`.
 
@@ -83,7 +85,7 @@ It never holds an MCP write tool (create, update, link, batch, upload, comment, 
 `authenticate`) nor a tool banned in `docs/taiga/conventions.md` §10; `test/headless.test.ts` fails if it does
 (it reads the banned tools from §10). Claude gets every rule. Codex gets the MCP tool names as `enabled_tools`;
 for the shell, its PreToolUse hook reads the `Bash(…)`/`PowerShell(…)` rules of the file on every command, and
-`.codex/rules/taigent.rules` repeats the five taigent commands in Codex's rule language, which cannot read
+`.codex/rules/taigent.rules` repeats the taigent commands in Codex's rule language, which cannot read
 files (`test/headless.test.ts` fails when the two lists differ).
 
 ## Platform notes
@@ -144,7 +146,7 @@ How Codex decides a shell command under `codex exec`:
    (`codex-rs/core/src/exec_policy.rs`, `policy_files`). A matching `decision = "allow"` rule runs the command
    **outside the sandbox** without prompting (`Decision::Allow` → `ExecApprovalRequirement::Skip { bypass_sandbox:
    true }`, then `SandboxOverride::BypassSandboxFirstAttempt` in `codex-rs/core/src/tools/sandboxing.rs`), so it has
-   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets …`; its
+   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets|status|comment …`; its
    `match`/`not_match` examples are checked by Codex when it loads the file.
 3. A command that **no rule matches** is decided by `render_decision_for_unmatched_command_for_platform`
    (`exec_policy.rs`): under `never` it is *allowed* inside the sandbox unless flagged dangerous. Rules cannot

@@ -27,6 +27,11 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
 `plan` và `apply` từ chối manifest sai quy ước với exit 4 và không gọi Taiga. Chạy lại `apply` luôn an toàn:
 item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
 
+Ngoại lệ duy nhất của quy trình trên là sửa **ticket của chính mình** (user story được giao cho mình):
+`taigent status` (đổi status) và `taigent comment` (thêm comment) ghi ngay, không cần `--yes`, vì chính yêu cầu của
+người dùng đã nêu rõ ticket và việc cần làm (skill `taiga-update-ticket`, kể cả khi yêu cầu đến từ Telegram). CLI
+từ chối story không được giao cho người đang đăng nhập.
+
 ## 2. Tên và slug project
 
 | Rule | Quy tắc |
@@ -140,7 +145,7 @@ chỉ ghi các attribute có trong manifest; giá trị người khác đặt ch
 
 ## 7. Ánh xạ status mặc định
 
-Status do người làm quản lý trên Taiga (hoặc qua tool MCP đọc/báo cáo). Manifest không khai báo status. Item
+Status do người làm quản lý: trên Taiga, hoặc với ticket của chính mình thì qua `taigent status` (§1). Manifest không khai báo status. Item
 mới tạo luôn ở status đầu tiên. Khi báo cáo hoặc cập nhật status, dùng **đúng tên** sau của template mặc định:
 
 | Loại | Status (theo thứ tự) | Ý nghĩa |

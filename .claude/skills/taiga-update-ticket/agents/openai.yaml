@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga Update Ticket"
+  short_description: "Move your own tickets to another status, or comment on one, at once"
+policy:
+  allow_implicit_invocation: true
