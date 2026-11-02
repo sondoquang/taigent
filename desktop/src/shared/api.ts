@@ -115,6 +115,80 @@ export type ApplyOutcome =
 
 export type VerdictChoice = Verdict | 'clear';
 
+/** The agents the terminal can start in a new tab (quick launch). */
+export const TERMINAL_AGENTS = ['claude', 'codex', 'omp'] as const;
+export type TerminalAgent = (typeof TERMINAL_AGENTS)[number];
+/** `skill` tabs run a given command and are opened by the main process only. */
+export type TerminalKind = 'shell' | TerminalAgent | 'skill';
+
+export interface TerminalTab {
+  id: number;
+  kind: TerminalKind;
+  title: string;
+  cwd: string;
+  pid: number;
+}
+
+export interface TerminalExit {
+  exitCode: number;
+  signal?: number;
+  /** Killed by closing or cancelling the tab, or by quitting. */
+  cancelled: boolean;
+}
+
+/** The embedded terminal; every tab runs in the open repository. */
+export interface TerminalApi {
+  /** Opens a shell (pwsh, else powershell.exe; $SHELL elsewhere) or an agent in it; `onOpened` delivers the tab. */
+  open(kind: 'shell' | TerminalAgent): Promise<Result<TerminalTab>>;
+  write(id: number, data: string): void;
+  resize(id: number, cols: number, rows: number): void;
+  /** Kills the tab's process tree; the tab stays. */
+  cancel(id: number): Promise<void>;
+  /** Kills the tab's process tree and forgets the tab. */
+  close(id: number): Promise<void>;
+  /** A tab was opened, from the renderer or by the main process (e.g. a skill run). */
+  onOpened(listener: (tab: TerminalTab) => void): () => void;
+  onData(listener: (id: number, data: string) => void): () => void;
+  onExit(listener: (id: number, exit: TerminalExit) => void): () => void;
+}
+
+/** A changed file in the Git section's scope, repo-relative with `/`. */
+export interface GitChange {
+  path: string;
+  state: 'modified' | 'added' | 'deleted' | 'untracked' | 'conflicted';
+}
+
+/** The Git section's view of the opened repository. */
+export interface GitStatus {
+  /** The current branch; undefined on a detached HEAD. */
+  branch?: string;
+  /** `<remote>/<branch>` the section pulls from and pushes to; undefined when the branch tracks none. */
+  upstream?: string;
+  /** Commits not pushed / not pulled yet, against the last fetch of the upstream. */
+  ahead: number;
+  behind: number;
+  /** Repo-relative paths the section may add: the manifests folder and the files its docs.yaml files reference. */
+  scope: string[];
+  /** Changed files within the scope. */
+  changes: GitChange[];
+  /** Changed files outside the scope: never added, committed or pushed by the app. */
+  outside: number;
+}
+
+/** Why a git action stopped before doing anything git could not undo; `message` is Vietnamese. */
+export interface GitStop {
+  reason: 'no-git' | 'not-repo' | 'detached' | 'no-remote' | 'no-upstream' | 'conflict' | 'diverged' | 'behind' | 'outside-commits' | 'failed';
+  message: string;
+  /** git's own output, when a git command failed. */
+  detail?: string;
+  /** Commands to run in a terminal at the repository. */
+  commands: string[];
+  /** True when the app opened a terminal tab at the repository for the user to continue there. */
+  terminal: boolean;
+}
+
+export type GitOutcome = { kind: 'ok'; status: GitStatus; summary?: string } | { kind: 'stopped'; stop: GitStop; status?: GitStatus };
+
 /** backlog.yaml as a form opens it (its digest guards the save), with what the forms offer from project.yaml. */
 export interface BacklogSnapshot {
   file: ManifestFile;
@@ -172,7 +246,6 @@ export type BootstrapOutcome =
   | { status: 'no-changes' }
   | { status: 'cancelled' }
   | { status: 'bootstrapped'; report: BootstrapReport };
-
 export interface TaigentApi {
   getState(): Promise<AppState>;
   /** Shows the folder dialog; undefined when cancelled. */
@@ -190,6 +263,7 @@ export interface TaigentApi {
   openExternal(url: string): Promise<void>;
   /** Subscribes to live refreshes of the open project; returns the unsubscribe function. */
   onProjectChanged(listener: (view: Result<ProjectView>) => void): () => void;
+  terminal: TerminalApi;
   /** Reads backlog.yaml for a form. */
   readBacklog(slug: string): Promise<Result<BacklogSnapshot>>;
   /** Adds or edits an item; refused (`conflict`) when backlog.yaml is no longer the file `baseDigest` names. */
@@ -205,6 +279,14 @@ export interface TaigentApi {
   bootstrapProject(slug: string): Promise<Result<BootstrapOutcome>>;
   /** Taiga > Báo cáo: `taigent report --project <slug> --json`. */
   readTaigaReport(slug: string): Promise<Result<ProjectReport>>;
+  /** Status of the opened repository within the Git section's scope. */
+  gitStatus(): Promise<Result<GitOutcome>>;
+  /** `git pull --ff-only`; stops on a diverged history without touching the working tree. */
+  gitPull(): Promise<Result<GitOutcome>>;
+  /** Adds and commits exactly the changed files in scope with `message`, then pushes to the upstream. */
+  gitCommitPush(message: string): Promise<Result<GitOutcome>>;
+  /** Pushes local commits that only touch the scope. */
+  gitPush(): Promise<Result<GitOutcome>>;
 }
 
 export const CHANNELS = {
@@ -221,6 +303,14 @@ export const CHANNELS = {
   apply: 'taigent:apply',
   openExternal: 'taigent:open-external',
   projectChanged: 'taigent:project-changed',
+  terminalOpen: 'taigent:terminal-open',
+  terminalWrite: 'taigent:terminal-write',
+  terminalResize: 'taigent:terminal-resize',
+  terminalCancel: 'taigent:terminal-cancel',
+  terminalClose: 'taigent:terminal-close',
+  terminalOpened: 'taigent:terminal-opened',
+  terminalData: 'taigent:terminal-data',
+  terminalExit: 'taigent:terminal-exit',
   readBacklog: 'taigent:read-backlog',
   saveItem: 'taigent:save-item',
   removeItem: 'taigent:remove-item',
@@ -229,4 +319,8 @@ export const CHANNELS = {
   saveProjectSettings: 'taigent:save-project-settings',
   bootstrapProject: 'taigent:bootstrap-project',
   readTaigaReport: 'taigent:read-taiga-report',
+  gitStatus: 'taigent:git-status',
+  gitPull: 'taigent:git-pull',
+  gitCommitPush: 'taigent:git-commit-push',
+  gitPush: 'taigent:git-push',
 } as const;

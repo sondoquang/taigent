@@ -3,6 +3,7 @@
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
 // user-data folder. It never writes to Taiga: every native confirm dialog (push, bootstrap) is stubbed to "Huỷ", and
 // "Xem thay đổi trên Taiga", bootstrap --dry-run and the Báo cáo report (read-only) run only when the app reports a login.
+// Terminal steps: scripts/smoke-terminal.mjs.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -13,6 +14,8 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright-core';
+import { agentPath, descendants, smokeTerminal, waitGone } from './smoke-terminal.mjs';
+import { smokeGit } from './smoke-git.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -38,7 +41,7 @@ const executablePath = values.exe ? resolve(values.exe) : createRequire(import.m
 const app = await electron.launch({
   executablePath,
   args: [...(values.exe ? [] : [desktop]), `--user-data-dir=${join(work, 'user-data')}`],
-  env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests },
+  env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests, PATH: await agentPath(work) },
   cwd: repo,
 });
 const log = (...parts) => console.log('[smoke]', ...parts);
@@ -108,7 +111,7 @@ try {
   await page.screenshot({ path: join(shots, '4-push-blocked.png') });
 
   // Switching sections keeps the open project and the selected item; sections without content yet have no controls.
-  for (const section of ['wiki', 'git', 'settings']) {
+  for (const section of ['wiki', 'settings']) {
     await goTo(page, section);
     const controls = await page.locator(`#screen-${section} :is(button, input, select, textarea, a)`).count();
     check(controls === 0, `section ${section} shows an empty state without controls`);
@@ -164,6 +167,8 @@ try {
 
   if (values.project) log('skipped forms: they use the keys of the fixture');
   else await formScenario(page);
+
+  await smokeTerminal(page, { repo, shots, log, check });
 
   await page.waitForFunction(() => document.querySelector('#statusbar')?.textContent?.includes('Taiga'), null, { timeout: 30_000 }).catch(() => undefined);
   const login = await page.evaluate(() => window.taigent.whoami());
@@ -236,11 +241,19 @@ try {
     check(reportSlugs.length === 0 && (await page.isDisabled('#taiga-report-run')), 'Báo cáo has no project to choose');
     log('skipped report:', (await page.textContent('#taiga-report-status'))?.trim());
   }
+  await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
   log('screenshots in', shots);
   log('temporary manifests in', manifests);
-} finally {
+} catch (error) {
   await app.close();
+  throw error;
 }
+
+// Quitting kills every process the app started: terminal shells, their children, the pseudo consoles.
+const appTree = descendants(app.process().pid);
+await app.close();
+const survivors = await waitGone(appTree.keys());
+check(survivors.length === 0, `after quitting, none of the app's ${appTree.size} child processes runs (left: ${survivors.map((pid) => `${pid} ${appTree.get(pid)}`).join(', ') || 'none'})`);
 
 /**
  * Forms: an epic and a task written to backlog.yaml (new items are "Chưa duyệt"), the key lock of an item already on
