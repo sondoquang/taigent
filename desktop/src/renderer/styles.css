@@ -1207,6 +1207,18 @@ textarea:focus {
   font-size: 15px;
 }
 
+/* Taiga > Báo cáo (taiga-report.ts). */
+.taiga-report {
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.taiga-report-blocked {
+  margin: 0;
+  padding-left: 16px;
+}
+
 .project-form label {
   display: flex;
   flex-direction: column;

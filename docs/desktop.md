@@ -61,8 +61,8 @@ Bố cục gồm bốn phần, từ trên xuống:
   dùng chung cho mọi mục.
 - **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
   - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
-  - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)). Ticket của tôi và Báo cáo chưa có:
-    màn hình ghi cách làm việc đó bằng CLI trong lúc chờ.
+  - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)) và **Báo cáo** (xem
+    [Báo cáo tiến độ](#báo-cáo-tiến-độ)). Ticket của tôi chưa có: màn hình ghi cách làm việc đó bằng CLI trong lúc chờ.
   - **Wiki**: chưa có nội dung. Mục này chỉ hiện một trạng thái trống ghi rõ là chưa có và cách làm việc đó bằng CLI
     trong lúc chờ. Không có nút nào.
   - **Git**: pull, commit và push thư mục manifest (xem [Git](#git)).
@@ -216,6 +216,20 @@ bật module, tạo tag, custom attribute, mời member, tạo wiki home). **B�
 ý bootstrap** (conventions §1). Chỉ sau đó ứng dụng mới chạy `taigent bootstrap --project <slug> --yes --json`.
 Bootstrap không bao giờ tắt, đổi tên hay xoá gì trên Taiga, và cần quyền admin với project đã có.
 
+## Báo cáo tiến độ
+
+Mục **Taiga** › **Báo cáo**, dưới Project, chỉ đọc Taiga. Ô chọn project liệt kê các project trên Taiga mà mục Project
+vừa đọc (chưa đăng nhập thì ô trống, kèm lý do). Chọn project rồi bấm **Xem báo cáo** để chạy
+`taigent report --project <slug> --json` (xem `docs/cli.md` §Report). Báo cáo gồm:
+
+- **Theo sprint**, sprint mới nhất trước: tên, ngày bắt đầu → kết thúc, đang chạy hay đã đóng, story xong/tổng, task
+  xong/tổng, point xong/tổng và các story bị block;
+- **Theo epic**: số story xong và đang mở của từng epic, và một dòng cho các story không thuộc epic nào;
+- **Story ngoài sprint**: số xong/mở và từng story với trạng thái, point, cờ bị block.
+
+Các con số có cùng nghĩa với báo cáo của skill `taiga-status-report`. Story xong là story Taiga đã đóng; task xong là
+task có status đã đóng.
+
 ## Git
 
 Mục **Git** chia sẻ manifest và kết quả review với team mà không cần biết git. Nó chỉ thao tác trên **phạm vi** gồm:
@@ -360,7 +374,9 @@ và `preview`. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi tr
 Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Sau đó script mở Taiga › Project,
 kiểm tra fixture có trong danh sách, mở form `project.yaml`, sửa mô tả, lưu và kiểm tra file giữ comment và tag. Nếu
 đã đăng nhập, script bấm *Bootstrap lên Taiga…*: `bootstrap --dry-run` chạy rồi hộp thoại xác nhận hiện ra. Mọi hộp
-thoại xác nhận (đẩy, bootstrap) luôn được trả lời *Huỷ*. 
+thoại xác nhận (đẩy, bootstrap) luôn được trả lời *Huỷ*. Sau đó script kiểm tra mục Báo cáo. Nếu đã đăng nhập và bạn
+là thành viên ít nhất một project trên Taiga, script mở báo cáo của project đầu tiên (chỉ đọc). Nếu không, script kiểm
+tra ô chọn project trống.
 Cuối cùng script kiểm tra mục **Git** (`scripts/smoke-git.mjs`) trên một repo tạm có remote là một repo bare tạm, chứa
 fixture trong `taiga/<slug>/`, một `docs.yaml` tham chiếu `docs/huong-dan.md` và một file ngoài phạm vi: sửa một file
 trong `taiga/` và một file ngoài, kiểm tra danh sách chỉ có file trong `taiga/`, Commit + Push rồi kiểm tra remote chỉ

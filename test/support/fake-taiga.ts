@@ -156,6 +156,7 @@ export interface FakeUserStory {
   milestone: number | null;
   points: FakePoints;
   is_closed: boolean;
+  is_blocked: boolean;
   /** When the story was closed (ISO 8601), null while open. */
   finish_date: string | null;
   /** Due day (YYYY-MM-DD, no time), null when the story has none. */
@@ -179,6 +180,18 @@ export interface FakeTask {
   assigned_to: number | null;
   milestone: number | null;
   is_closed: boolean;
+}
+
+/** A sprint ("milestone detail" in the Taiga API docs); its stories and tasks point at it with `milestone`. */
+export interface FakeMilestone {
+  id: number;
+  project: number;
+  name: string;
+  slug: string;
+  /** First and last day (YYYY-MM-DD). */
+  estimated_start: string;
+  estimated_finish: string;
+  closed: boolean;
 }
 
 /** An issue ("issue detail" in the Taiga API docs). */
@@ -301,6 +314,7 @@ export interface FakeState {
   epics: FakeEpic[];
   userStories: FakeUserStory[];
   tasks: FakeTask[];
+  milestones: FakeMilestone[];
   issues: FakeIssue[];
   issueStatuses: FakeIssueStatus[];
   issueTypes: FakeIssueValue[];
@@ -398,6 +412,8 @@ export interface FakeTaiga {
   intercept(rule: InterceptRule): void;
   addUserStory(input: FakeItemInput): FakeUserStory;
   addTask(input: FakeItemInput & { user_story?: number }): FakeTask;
+  /** Adds a sprint; set `milestone` on stories and tasks to put them in it. */
+  addMilestone(input: { project: number; name: string; estimated_start: string; estimated_finish: string; closed?: boolean }): FakeMilestone;
   /** Adds an issue; values left out get the project's defaults, like an issue created on Taiga. */
   addIssue(input: FakeItemInput & Partial<Pick<FakeIssue, 'type' | 'severity' | 'priority' | 'status'>>): FakeIssue;
   addEpicRelatedUserStory(epic: number, userStory: number): FakeEpicRelatedUserStory;
@@ -602,6 +618,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     userStories: [],
     tasks: [],
     issues: [],
+    milestones: [],
     issueStatuses: [],
     issueTypes: [],
     severities: [],
@@ -829,6 +846,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       milestone: null,
       points: {},
       is_closed: false,
+      is_blocked: false,
       finish_date: null,
       due_date: null,
       status_name: null,
@@ -838,6 +856,63 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
 
   function addTask(input: FakeItemInput & { user_story?: number }): FakeTask {
     return addItem<FakeTask>('task', input, { user_story: input.user_story ?? null, milestone: null, is_closed: false });
+  }
+
+  function addMilestone(input: Parameters<FakeTaiga['addMilestone']>[0]): FakeMilestone {
+    if (!state.projects.some((p) => p.id === input.project)) throw new Error(`fake taiga: no project ${input.project}`);
+    const slug = input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const milestone: FakeMilestone = { id: ++nextId, slug, closed: false, ...input };
+    state.milestones.push(milestone);
+    return milestone;
+  }
+
+  /**
+   * A sprint as taiga-back's MilestoneSerializer returns it: its dates, `closed`, the summed points of its stories
+   * (`total_points`, and `closed_points` of the closed ones) and the stories themselves (`user_stories`).
+   */
+  function milestoneJson(milestone: FakeMilestone): Json {
+    const stories = state.userStories.filter((s) => s.milestone === milestone.id);
+    const points = (list: FakeUserStory[]) => list.reduce((sum, s) => sum + (s.total_points ?? 0), 0);
+    return {
+      ...milestone,
+      total_points: points(stories),
+      closed_points: points(stories.filter((s) => s.is_closed)),
+      user_stories: stories.map(itemJson),
+    };
+  }
+
+  /**
+   * `GET /milestones?project=` (in creation order) and `GET /milestones/{id}/stats`, whose counts follow taiga-back's
+   * `MilestoneViewSet.stats`: stories by `is_closed`, tasks by their status's `is_closed`. Its `total_points` (points
+   * per role) is left out: the report takes points from the milestone itself.
+   */
+  function routeMilestones(req: IncomingMessage, method: string, path: string, query: URLSearchParams, userId: number): Reply | undefined {
+    if (method !== 'GET') return undefined;
+    if (path === '/milestones') {
+      const projectId = queryNumber(query, 'project');
+      const milestones = state.milestones.filter((m) => visibleProject(m.project, userId) && (projectId === undefined || m.project === projectId));
+      return paginate(req, query, milestones.map(milestoneJson));
+    }
+    const stats = /^\/milestones\/(\d+)\/stats$/.exec(path);
+    if (!stats) return undefined;
+    const milestone = state.milestones.find((m) => m.id === Number(stats[1]) && visibleProject(m.project, userId));
+    if (!milestone) throw notFound();
+    const stories = state.userStories.filter((s) => s.milestone === milestone.id);
+    const tasks = state.tasks.filter((t) => t.milestone === milestone.id);
+    return {
+      status: 200,
+      body: {
+        name: milestone.name,
+        estimated_start: milestone.estimated_start,
+        estimated_finish: milestone.estimated_finish,
+        total_userstories: stories.length,
+        completed_userstories: stories.filter((s) => s.is_closed).length,
+        total_tasks: tasks.length,
+        completed_tasks: tasks.filter((t) => t.is_closed).length,
+        iocaine_doses: 0,
+        days: [],
+      },
+    };
   }
 
   function addIssue(input: Parameters<FakeTaiga['addIssue']>[0]): FakeIssue {
@@ -1735,6 +1810,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     if (valuesReply) return valuesReply;
     const reply =
       routeStoriesAndTasks(req, method, path, query, body, userId) ??
+      routeMilestones(req, method, path, query, userId) ??
       routeIssues(req, method, path, query, body, userId) ??
       routeApplicationTokens(req, method, path, query, body, userId);
     if (reply) return reply;
@@ -1920,6 +1996,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     intercept: (rule) => void intercepts.push({ ...rule }),
     addUserStory,
     addTask,
+    addMilestone,
     addIssue,
     addEpicRelatedUserStory,
     editItem,

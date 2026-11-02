@@ -6,11 +6,13 @@ import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
 import type { ProjectDetailReport } from '../../../src/projects.ts';
+import type { ProjectReport } from '../../../src/report.ts';
 import type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
 
 export type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict };
 export type { BacklogItem, CustomAttributeSpec, EditResult, ItemType, ManifestFile, RemoveItemRequest, SaveItemRequest };
 export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult };
+export type { ProjectReport };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
 export interface Failure {
@@ -283,6 +285,8 @@ export interface TaigentApi {
   saveProjectSettings(input: ProjectSettingsInput): Promise<Result<SaveProjectSettingsResult>>;
   /** `bootstrap --dry-run --json`, a native confirmation listing the operations, then `bootstrap --yes --json`. */
   bootstrapProject(slug: string): Promise<Result<BootstrapOutcome>>;
+  /** Taiga > Báo cáo: `taigent report --project <slug> --json`. */
+  readTaigaReport(slug: string): Promise<Result<ProjectReport>>;
   /** Status of the opened repository within the Git section's scope. */
   gitStatus(): Promise<Result<GitOutcome>>;
   /** `git pull --ff-only`; stops on a diverged history without touching the working tree. */
@@ -322,6 +326,7 @@ export const CHANNELS = {
   readTaigaProject: 'taigent:read-taiga-project',
   saveProjectSettings: 'taigent:save-project-settings',
   bootstrapProject: 'taigent:bootstrap-project',
+  readTaigaReport: 'taigent:read-taiga-report',
   gitStatus: 'taigent:git-status',
   gitPull: 'taigent:git-pull',
   gitCommitPush: 'taigent:git-commit-push',

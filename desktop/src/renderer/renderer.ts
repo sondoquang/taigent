@@ -23,6 +23,7 @@ import { itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
 import { mountTaigaProjects } from './taiga-projects.ts';
+import { mountTaigaReport } from './taiga-report.ts';
 import { gitRepoChanged, wireGit } from './git.ts';
 import { wireTerminal } from './terminal.ts';
 
@@ -799,6 +800,7 @@ function wire(): void {
     toast,
     failureBlock,
   });
+  mountTaigaReport({ api, failureBlock });
   wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
 }
 

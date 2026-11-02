@@ -95,8 +95,18 @@
             <div id="taiga-projects-list"></div>
             <div id="taiga-project-detail"></div>
           </div>
+          <div class="taiga-report" id="taiga-report">
+            <div class="taiga-project-head">
+              <h2>Báo cáo</h2>
+              <div class="spacer"></div>
+              <select id="taiga-report-project" aria-label="Project của báo cáo"></select>
+              <button id="taiga-report-run" class="btn" type="button" disabled>Xem báo cáo</button>
+            </div>
+            <p class="muted" id="taiga-report-status">Chọn project khi mục Project ở trên đã đọc xong danh sách.</p>
+            <div id="taiga-report-body"></div>
+          </div>
           <p class="muted">
-            Ticket của tôi và Báo cáo chưa có trong ứng dụng. Trong terminal:
+            Ticket của tôi chưa có trong ứng dụng. Trong terminal:
             <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code> liệt kê ticket của bạn,
             <code>npx taigent status</code> và <code>npx taigent comment</code> đổi status và comment.
           </p>
