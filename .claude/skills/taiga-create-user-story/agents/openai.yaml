@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga Create User Story"
+  short_description: "Write one story under an epic, confirm, then create it on Taiga"
+policy:
+  allow_implicit_invocation: false

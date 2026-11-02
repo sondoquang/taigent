@@ -16,7 +16,7 @@ npx skills add sondoquang/taigent
 npm install -D github:sondoquang/taigent
 ```
 
-The first command adds the nine Taigent skills to `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code);
+The first command adds the ten Taigent skills to `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code);
 pick your agents when it asks. The second installs the `taigent` CLI and the Taiga MCP server into `node_modules`
 (nothing system-wide) and creates `package.json` if the project has none.
 

@@ -7,13 +7,14 @@ import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootst
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
+import { legacyStoryCreatesError } from './manifest/backlog.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
 import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
 import { serveMcp, startProxy } from './mcp.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
-import { buildPlan, describePlanOperation, type Plan } from './planner.ts';
+import { buildPlan, describePlanOperation, LegacyStoryCreateError, type Plan } from './planner.ts';
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { readBacklogRemote } from './remote.ts';
@@ -476,7 +477,13 @@ async function runPlan(run: Run): Promise<number> {
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
   const client = await connectTaiga(run);
   const remote = await readBacklogRemote(backlog, client, slug);
-  const plan = buildPlan(backlog, remote);
+  let plan: Plan;
+  try {
+    plan = buildPlan(backlog, remote);
+  } catch (error) {
+    if (error instanceof LegacyStoryCreateError) throw legacyStoryCreatesError(layout.backlog, error.stories);
+    throw error;
+  }
 
   const gate = reviewGate(run, plan, () =>
     formatPlanText(`Plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describePlanOperation, {

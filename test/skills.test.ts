@@ -161,7 +161,7 @@ test('skills commands outside a repository root are a usage error (exit 2)', asy
   assert.match(noAction.stderr, /skills needs one of: sync, check/);
 });
 
-const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 
 test('the repository holds exactly the Taigent skills, with Claude copies that match .agents/skills', async () => {
   const result = await skills(['check', '--json'], REPO_ROOT);
@@ -230,7 +230,7 @@ test('Taigent skills that write to Taiga run only when invoked explicitly, on Cl
     assert.equal(openai.policy?.allow_implicit_invocation, false, `${name}: agents/openai.yaml policy`);
   }
 
-  assert.deepEqual(writers, ['taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-upload-docs']);
+  assert.deepEqual(writers, ['taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-upload-docs']);
 });
 
 /** Each skill's shell rules: the commands it pre-approves, as Bash and as PowerShell rules. */
@@ -240,6 +240,7 @@ test('each taiga-* skill pre-approves only the taigent commands of its step', as
   const expected: Record<string, string[]> = {
     'taiga-plan-backlog': shellRules('validate', 'plan'),
     'taiga-apply-backlog': shellRules('validate', 'plan', 'apply'),
+    'taiga-create-user-story': shellRules('validate', 'plan', 'apply'),
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),
     'taiga-my-tickets': shellRules('tickets'),
@@ -286,6 +287,17 @@ test('taiga-update-ticket edits your tickets through taigent only, may be invoke
   assert.deepEqual(allowedTools, shellRules('tickets', 'status', 'comment'));
   const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
   assert.match(router, /`taiga-update-ticket`/);
+});
+
+test('taiga-create-user-story reads Taiga through MCP read tools only and ask-taigent routes to it', async () => {
+  const { allowedTools } = await readSkill('taiga-create-user-story');
+
+  for (const tool of ['listProjects', 'listEpics', 'getEpic', 'listUserStories', 'getUserStory']) {
+    assert.ok(allowedTools.includes(`mcp__taiga__${tool}`), `allowed-tools has mcp__taiga__${tool}`);
+  }
+  assert.ok(allowedTools.filter((tool) => !tool.includes('(')).every((tool) => MCP_READ_TOOLS.has(tool)), allowedTools.join(' '));
+  const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
+  assert.match(router, /`taiga-create-user-story`/);
 });
 
 test('taiga-setup gives the repository MCP server entries, run from node_modules, and the server version is pinned exactly', async () => {

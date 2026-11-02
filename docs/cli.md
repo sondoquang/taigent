@@ -84,10 +84,19 @@ epics:
     tags: [type:feature, area:auth]   # optional
     stories:                          # optional; each story is linked to this epic
       - key: AUTH-LOGIN
-        subject: User can log in
-        description: As a user I want to log in.    # optional
-        acceptance_criteria:                         # optional
-          - Wrong password shows an error
+        subject: Sign in to reach my projects        # the user story Summary
+        use_case:                                    # with scenarios: Mike Cohn use case, all three parts required
+          as_a: returning team member
+          i_want_to: sign in with my password
+          so_that: I land on my project list
+        description: Single sign-on comes later.     # optional context
+        scenarios:                                   # with use_case: one or more Gherkin scenarios
+          - scenario: Wrong password
+            given:                                   # one or more
+              - I have an account
+              - I am on the sign-in page
+            when: I submit a wrong password          # exactly one string
+            then: I see "Invalid credentials"        # exactly one string
         spec: docs/specs/auth.md                     # optional link/path to the spec
         tags: [type:feature]
         custom_attributes:                           # optional, on epics, stories and tasks
@@ -99,8 +108,54 @@ epics:
             tags: []                                      # optional
 ```
 
-Unknown fields are rejected (there is no status, assignee, sprint or points field: those belong to the people
-doing the work). A story's Taiga description is rendered from a template:
+Unknown fields are rejected, also inside `use_case` and inside a scenario (there is no status, assignee, sprint or
+points field: those belong to the people doing the work).
+
+A story comes in one of two formats ([ADR 0001](adr/0001-user-story-format-mike-cohn-gherkin.md)): the **user story format**, `use_case` + `scenarios` (Mike Cohn +
+Gherkin, labels stay in English), and the **legacy format**, free `description` + `acceptance_criteria`, kept only
+for stories already on Taiga:
+
+```yaml
+      - key: AUTH-LOGOUT
+        subject: User can log out
+        description: As a user I want to log out.    # optional
+        acceptance_criteria:                         # optional list of non-empty strings
+          - Session ends
+```
+
+`description`, `spec`, `tags`, `custom_attributes` and `tasks` work with both. Validation (offline, so in `validate`,
+`plan` and `apply`) checks the shape of the user story format: `use_case` is a mapping with non-empty `as_a`,
+`i_want_to` and `so_that`; `scenarios` is a non-empty list of mappings, each with a non-empty `scenario`, a `given`
+list of at least one non-empty string, and non-empty `when` and `then` strings (a list is a `type` error). Missing
+or empty values are `required`, wrong types `type`, unknown fields `known-field`. Rule **`story-format`** reports a
+story with `use_case` but no `scenarios` (or the reverse), and a story mixing `acceptance_criteria` with `use_case`
+or `scenarios`. Whether a story is new is only known on Taiga, so `validate` accepts the legacy format; `plan` and
+`apply` refuse to create it (see [Reconciliation](#reconciliation)).
+
+A story's Taiga description is rendered from a template; its parts are joined by one blank line and empty parts are
+left out. User story format:
+
+```
+- **As a** <as_a>
+- **I want to** <i_want_to>
+- **so that** <so_that>
+
+<description>
+
+## Acceptance criteria
+
+- [ ] **Scenario:** <scenario>
+  - **Given:** <given[0]>
+  - **and Given:** <given[1..]>
+  - **When:** <when>
+  - **Then:** <then>
+- [ ] **Scenario:** <next scenario>
+  ...
+
+Spec: <spec>
+```
+
+Legacy format, unchanged byte for byte so stories already on Taiga stay unchanged:
 
 ```
 <description>
@@ -111,8 +166,6 @@ doing the work). A story's Taiga description is rendered from a template:
 
 Spec: <spec>
 ```
-
-Empty parts are left out.
 
 Names, tags, keys, wiki slugs and attachment names follow `docs/taiga/conventions.md`; each rule there has the
 `rule` id that validation errors report. Keys are unique across epics, stories and tasks.
@@ -147,7 +200,12 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
 ## Reconciliation
 
 - **Create**: missing items, in dependency order: each epic, then each of its stories, the story's epic link,
-  and the story's tasks (created with `user_story` = the parent story).
+  and the story's tasks (created with `user_story` = the parent story). A new story must use the user story format:
+  after reading Taiga, `plan` and `apply` exit 4 (kind `validation`) if any story to create lacks `use_case` and
+  `scenarios`, with one issue `{file, path: epics[i].stories[j], rule: story-format}` per such story, and write
+  nothing. A story is new when no story on Taiga carries its `src:<key>` tag; `state.json` plays no part. Updates
+  and skips of stories in the legacy format already on Taiga are unaffected: their template renders byte for byte
+  as before.
 - **Link**: a story is linked to its epic with `POST /epics/{id}/related_userstories`, after
   `GET /epics/{id}/related_userstories` (read for every epic with a `src:` tag) shows the link is missing. Existing
   links are never removed.
@@ -169,9 +227,9 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
   by plan for existing items, so a value changed on Taiga meanwhile is a `conflict`). Taiga replaces the whole
   object, so apply sends the current values plus the manifest's: values of undeclared attributes stay, and removing
   a value from the manifest does not clear it on Taiga. New items get their values right after creation.
-  An attribute name the project does not define fails `plan`/`apply` before any write, with exit 5 (Taiga was
-  contacted to learn the names, so it is not a manifest error, exit 4), listing every unknown name with its key
-  and the names that exist.
+  An attribute name the project does not define fails `plan`/`apply` before any write, with exit 5 (the manifest is
+  valid; the project lacks the attribute, so it is not exit 4), listing every unknown name with its key and the
+  names that exist.
 - **Orphans**: items carrying a `src:` tag whose key is no longer in the manifest are listed by `plan` and never
   deleted. They are not changes (they do not make `plan` exit 3).
 
@@ -239,7 +297,8 @@ Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1]
 `conflict` means Taiga refused an update because the item changed on Taiga after apply read it (OCC); `key`
 names the item, nothing was overwritten, and re-running `plan` shows the new state.
 The text form is `<file>: <path>: <message> [<rule>]`. `plan`/`apply` validate the whole project directory the
-same way (and require `backlog.yaml`) before contacting Taiga.
+same way (and require `backlog.yaml`) before contacting Taiga; after reading Taiga they also refuse to create a story
+in the legacy format (rule `story-format`, see [Reconciliation](#reconciliation)), still before any write.
 
 ## Bootstrap
 
@@ -598,6 +657,7 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-setup` | Model or user | Checks `npx --no -- taigent --help`, the login (`taigent whoami`; the fix is the user running `npx taigent login` in their own terminal), and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (the `taiga` entry for `.mcp.json`/`.codex/config.toml`, running `taigent mcp`, once the user agrees), and installs the skills into another project on request (`npx skills add`) |
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
+| `taiga-create-user-story` | User only (as above) | One user story in the conventions §6.1 format under an existing manifest epic: drafts it, checks for duplicates (manifest, `taigent plan --json`, MCP read tools), adds it to `backlog.yaml`, `taigent validate` → `taigent plan --json` → asks → `taigent apply --yes`; hands over to `taiga-plan-backlog` when no epic fits and to `taiga-apply-backlog` when the plan holds other changes. Creates no epic or task |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
 | `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml` (referencing documents where they already are, no copies), `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
 | `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools only (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); hands questions about your own tickets to `taiga-my-tickets` |
@@ -621,7 +681,7 @@ or lists `taigent` as a dependency: otherwise npx would fetch an unrelated `taig
 Another project needs two commands at its root:
 
 ```sh
-npx skills add sondoquang/taigent          # the nine Taigent skills, for the agents it detects
+npx skills add sondoquang/taigent          # the ten Taigent skills, for the agents it detects
 npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite (append #<tag> to pin)
 ```
 
@@ -647,7 +707,7 @@ The `taiga-setup` skill checks all of it and names each fix.
 | 1 | Internal error (bug) |
 | 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
-| 4 | Manifest invalid or missing; Taiga was not contacted |
+| 4 | Manifest invalid or missing (including a new story without `use_case`/`scenarios`, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
 
 ## Code map
@@ -663,7 +723,7 @@ The `taiga-setup` skill checks all of it and names each fix.
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types to Taiga's endpoint and field names (`TAIGA_ITEM`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links and attribute values `buildPlan` needs |
-| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `describePlanOperation`, `srcTag(key)` |
+| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), `describePlanOperation`, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |

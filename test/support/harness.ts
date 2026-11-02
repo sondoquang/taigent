@@ -50,6 +50,14 @@ export interface Harness {
   taigent(args: string[], options?: RunOptions): Promise<CliResult>;
 }
 
+/** Run options env with no Taiga connection at all: offline commands must work without any TAIGA_* variable. */
+export const OFFLINE = { TAIGA_API_URL: undefined, TAIGA_USERNAME: undefined, TAIGA_PASSWORD: undefined };
+
+/** Requests to the fake that change Taiga: everything but reads and the login (`/auth`, `/auth/refresh`). */
+export function writes(fake: FakeTaiga): string[] {
+  return fake.requests.filter((r) => r.method !== 'GET' && r.path !== '/auth' && !r.path.startsWith('/auth/')).map((r) => `${r.method} ${r.path}`);
+}
+
 /** The env of a CLI child process: this process's env without the developer's Taiga, taigent and Telegram variables, plus `overrides`. */
 export function childEnv(overrides: Record<string, string | undefined>): Record<string, string> {
   // Never leak the developer's real Taiga credentials, bot token or overrides into a test run.
