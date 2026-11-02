@@ -1,9 +1,10 @@
 // Smoke test of Taigent Desktop, driven with Playwright's Electron support. It never touches the user's manifests:
-// it copies `taiga/<slug>` of the repository to a temporary folder and points the app there with
-// TAIGENT_MANIFESTS_DIR, and it uses a temporary user-data folder. It never pushes to Taiga: the native confirm
-// dialog is stubbed to "Huỷ", and "Xem thay đổi trên Taiga" (read-only) runs only when the app reports a login.
+// it copies the committed fixture `scripts/fixture/smoke-taigent-desktop` (or `taiga/<slug>` of the repository with
+// --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
+// user-data folder. It never pushes to Taiga: the native confirm dialog is stubbed to "Huỷ", and "Xem thay đổi trên
+// Taiga" (read-only) runs only when the app reports a login.
 //
-//   node scripts/smoke.mjs [--project <slug>] [--story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
+//   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
 import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -17,17 +18,19 @@ const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
 const { values } = parseArgs({
   options: {
-    project: { type: 'string', default: 'internal-taigent' },
-    story: { type: 'string', default: 'SETUP-ENV' },
+    project: { type: 'string' },
+    story: { type: 'string', default: 'REVIEW-COMMENT' },
     exe: { type: 'string' },
     out: { type: 'string', default: join(repo, 'tmp', 'desktop-smoke') },
   },
 });
-const { project, story } = values;
+const project = values.project ?? 'smoke-taigent-desktop';
+const source = values.project ? join(repo, 'taiga', project) : join(desktop, 'scripts', 'fixture', project);
+const { story } = values;
 const shots = resolve(values.out);
 const work = await mkdtemp(join(tmpdir(), 'taigent-desktop-smoke-'));
 const manifests = join(work, 'taiga');
-await cp(join(repo, 'taiga', project), join(manifests, project), { recursive: true });
+await cp(source, join(manifests, project), { recursive: true });
 const reviewFile = join(manifests, project, 'review.yaml');
 const backlogFile = join(manifests, project, 'backlog.yaml');
 
@@ -95,8 +98,8 @@ try {
   await page.waitForSelector('.verdict-bar .verdict.approve.on');
   check((await readFile(reviewFile, 'utf8')).includes('verdict: approved'), 'review.yaml has verdict approved');
   const backlog = await readFile(backlogFile, 'utf8');
-  const marker = `- key: ${story}\n`;
-  const at = backlog.indexOf(marker);
+  // A Windows checkout (core.autocrlf) has CRLF line endings.
+  const at = backlog.search(new RegExp(`- key: ${story}\\r?\\n`));
   check(at !== -1, `backlog.yaml declares ${story}`);
   const descriptionAt = backlog.indexOf('description: "', at);
   await writeFile(backlogFile, `${backlog.slice(0, descriptionAt)}description: "[Agent đã sửa] ${backlog.slice(descriptionAt + 'description: "'.length)}`);

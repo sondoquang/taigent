@@ -133,16 +133,24 @@ Không commit chứng chỉ hay mật khẩu. Hãy để chúng trong secret c�
 ## Kiểm thử nhanh (smoke)
 
 ```sh
+npm run build            # ở thư mục gốc taigent
 cd desktop
-npm run smoke                                         # bản chạy từ mã nguồn (cần npm run build trước)
-node scripts/smoke.mjs --exe "release/win-unpacked/Taigent Desktop.exe"   # bản đóng gói
+npm install
+npm run smoke                                                             # bản chạy từ mã nguồn (tự build desktop trước)
+node scripts/smoke.mjs --exe "release/win-unpacked/Taigent Desktop.exe"   # bản đóng gói (sau npm run dist)
 ```
 
-Script chép `taiga/internal-taigent` sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng
-user-data tạm, nên không đụng tới file của bạn. Script lần lượt: mở repo, chụp cây và chi tiết story, góp ý, đặt
+Cả hai cách dùng cùng fixture có trong repo: `desktop/scripts/fixture/smoke-taigent-desktop/` (project
+`Smoke - Taigent Desktop`: 3 epic, 5 story theo user story format, 1 story legacy đã có trên Taiga theo `state.json`,
+5 task). Đây không phải project thật trên Taiga, nên không bootstrap hay apply nó. Muốn smoke trên manifest của mình
+thì truyền `--project <slug> --story <key>` (chép `taiga/<slug>`).
+
+Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
+không đụng tới file của bạn. Script lần lượt: mở repo, chụp cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt
 *Cần sửa*, kiểm tra `review.yaml`, kiểm tra nút đẩy bị chặn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã đổi sau khi
-duyệt*, thử phím `j`/`k`. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* (chỉ đọc). Hộp thoại xác nhận
-đẩy luôn được trả lời *Huỷ*. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
+duyệt*, thử phím `j`/`k`. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* (chỉ đọc; với fixture, Taiga báo
+không có project `smoke-taigent-desktop`). Hộp thoại xác nhận đẩy luôn được trả lời *Huỷ*. Ảnh chụp lưu ở
+`tmp/desktop-smoke/`.
 
 ## Bảo mật
 
