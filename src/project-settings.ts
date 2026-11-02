@@ -4,12 +4,12 @@
 // file changed since the form read it (`baseDigest`), and runs the loader of `taigent validate` on the result first:
 // an issue at a form field blocks the save, issues elsewhere do not. Writes are atomic (temporary file + rename).
 
-import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Document, isMap, isScalar, isSeq, parse, parseDocument } from 'yaml';
+import { sha256, temporaryPath } from './files.ts';
 import { errorMessage, isFileNotFound, isRecord } from './guards.ts';
-import { projectSlug } from './manifest/conventions.ts';
+import { PROJECT_SLUG_PATTERN, projectSlug } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { loadProject, PROJECT_FILE } from './manifest/project.ts';
 
@@ -43,12 +43,6 @@ export type SaveProjectSettingsResult =
 
 /** The fields the form owns, as project.yaml keys, in the order of a new file (`slug` is set from the directory). */
 const FORM_FIELDS = ['name', 'slug', 'description', 'template', 'is_private', 'modules'] as const;
-
-const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]*$/;
-
-function digestOf(text: string): string {
-  return createHash('sha256').update(text).digest('hex');
-}
 
 async function readText(path: string): Promise<string | null> {
   try {
@@ -93,7 +87,7 @@ export async function readProjectSettings(manifestsRoot: string, slug: string): 
   } catch {
     raw = undefined; // reported by the loader as yaml-syntax
   }
-  return { slug, digest: digestOf(text), settings: settingsOf(raw), issues: await validationIssues(path, slug) };
+  return { slug, digest: sha256(text), settings: settingsOf(raw), issues: await validationIssues(path, slug) };
 }
 
 /** Sets `key` to `value`, keeping the node (and so its comments and style) when it already holds a scalar or a list. */
@@ -120,13 +114,13 @@ export async function saveProjectSettings(
   const slug = options.slug ?? projectSlug(settings.name);
   const dir = join(manifestsRoot, slug);
   const path = join(dir, PROJECT_FILE);
-  if (!SAFE_SLUG.test(slug)) {
+  if (!PROJECT_SLUG_PATTERN.test(slug)) {
     const message = options.slug === undefined ? `the project name "${settings.name}" gives no project slug` : `"${slug}" is not a project slug`;
     return { status: 'invalid', issues: [{ file: path, path: 'slug', rule: 'project-slug', message }] };
   }
 
   const text = await readText(path);
-  const current = text === null ? null : digestOf(text);
+  const current = text === null ? null : sha256(text);
   if (current !== options.baseDigest) return { status: 'conflict', current };
 
   const doc = text === null ? new Document({}) : parseDocument(text);
@@ -147,7 +141,8 @@ export async function saveProjectSettings(
   const next = doc.toString({ flowCollectionPadding: false });
 
   const created = await mkdir(dir, { recursive: true });
-  const temporary = join(dir, `.${PROJECT_FILE}.${randomUUID()}.tmp`);
+  // Validated as the temporary file it is written to, then renamed over project.yaml (atomic).
+  const temporary = temporaryPath(path);
   await writeFile(temporary, next);
   const blocking = (await validationIssues(temporary, slug)).filter(atFormField);
   if (blocking.length > 0) {
@@ -155,5 +150,5 @@ export async function saveProjectSettings(
     return { status: 'invalid', issues: blocking.map((issue) => ({ ...issue, file: path })) };
   }
   await rename(temporary, path);
-  return { status: 'saved', slug, digest: digestOf(next) };
+  return { status: 'saved', slug, digest: sha256(next) };
 }

@@ -43,7 +43,7 @@ và project có những giá trị issue nào. Chạy lại `apply` luôn an to�
 
 | Rule | Quy tắc |
 |---|---|
-| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá hoặc đổi key item thì chuyển hoặc xoá mục review của nó. |
+| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá item thì xoá mục review của nó; đổi key item thì chuyển comment sang key mới và bỏ verdict (item cần duyệt lại). Taigent Desktop tự làm việc này khi form đổi key hoặc xoá item. |
 | `review-verdict` | `verdict` là `approved` hoặc `changes`, và đi kèm `digest` của item lúc duyệt. |
 | `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 
@@ -114,11 +114,12 @@ Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên
 | `key-format` | Mỗi epic, story, task, issue có `key`: chữ hoa, số, gạch ngang giữa các nhóm (`^[A-Z0-9]+(-[A-Z0-9]+)*$`), ví dụ `AUTH`, `AUTH-LOGIN`, `AUTH-LOGIN-API`. |
 | `key-unique` | Key duy nhất trong cả project (epic, story, task, issue dùng chung một không gian key). |
 | `key-reference` | Mọi chỗ tham chiếu key (ví dụ `target` của attachment trong `docs.yaml`) phải trỏ tới key có trong `backlog.yaml`. Attachment chỉ gắn vào epic, story hoặc task, không gắn vào issue. |
+| `key-locked` | Item đã có trên Taiga (key có trong `state.json`) không đổi key: đổi key = item mới + item cũ thành mồ côi. Form của Taigent Desktop kiểm rule này khi lưu. |
 
-- Key **không đổi** sau khi đã apply: đổi key = item mới + item cũ thành mồ côi.
+- Key **không đổi** sau khi đã apply (rule `key-locked`).
 - Gợi ý đặt key: epic là tên mảng (`AUTH`), story là `<EPIC>-<việc>` (`AUTH-LOGIN`), task là
-  `<STORY>-<bước>` (`AUTH-LOGIN-API`), issue là `BUG-<việc>` (hoặc `ASK-`, `ENH-` theo type), ví dụ
-  `BUG-LONG-PASSWORD`.
+  `<STORY>-<bước>` (`AUTH-LOGIN-API`), issue là `<tiền tố>-<việc>` với tiền tố theo `type`: `Question` → `ASK`,
+  `Enhancement` → `ENH`, type khác (kể cả `Bug`) → `BUG`. Ví dụ `BUG-LONG-PASSWORD`.
 - Item bỏ khỏi manifest không bị xoá trên Taiga. `plan` báo nó là mồ côi để người quyết định.
 - Chuyển task sang story khác (hoặc story sang epic khác) trong manifest: `apply` gắn task vào story mới
   (`user_story`), và gắn story vào epic mới. Liên kết cũ với epic cũ **không bị gỡ**; `plan` báo nó trong

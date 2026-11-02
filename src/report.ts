@@ -3,7 +3,7 @@
 // is done when Taiga closed it, a task when its status is closed), points from the sprint itself, epics from their
 // related stories. The client disables Taiga's pagination, so every list is complete.
 
-import { type TaigaClient, TaigaError, type TaigaStory } from './taiga/client.ts';
+import type { TaigaClient, TaigaStory } from './taiga/client.ts';
 
 /** Done out of total. */
 export interface Progress {
@@ -70,8 +70,7 @@ function countStories(stories: TaigaStory[]): StoryCounts {
 
 /** The report of one visible project; exit 5 (TaigaError) when it is not visible. */
 export async function readProjectReport(client: TaigaClient, slug: string): Promise<ProjectReport> {
-  const project = await client.findProjectBySlug(slug);
-  if (!project) throw new TaigaError(`project "${slug}" not found on ${client.apiUrl} (or not visible to this user)`, 404);
+  const project = await client.getProjectBySlug(slug);
   const [milestones, stories, epics] = await Promise.all([client.listMilestones(project.id), client.listStories(project.id), client.listItems('epic', project.id)]);
   const [stats, epicStories] = await Promise.all([
     Promise.all(milestones.map((milestone) => client.getMilestoneStats(milestone.id))),

@@ -4,19 +4,20 @@
 // since (an agent edited it). Edits go through yaml's Document API, so comments, order and the style of the nodes
 // they do not touch stay as written. Before writing, the result goes through the loader `validate` runs; only issues
 // under the edited item or entry block it. Offline, and it never touches review.yaml: an edited item's verdict turns
-// stale through its digest (wiki pages are not reviewed).
+// stale through its digest, and the caller moves the review of a re-keyed or removed item (`rekeyReviewFile` in
+// review.ts). Wiki pages are not reviewed.
 //
 // Item kinds live in `KINDS` (where the item sits, its canonical field order) and files in `EDITABLE_FILES`.
 
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { type Document, isCollection, isMap, isNode, isScalar, isSeq, parse, parseDocument, visit, type YAMLMap, type YAMLSeq } from 'yaml';
+import { sha256, writeAtomic } from './files.ts';
 import { errorMessage, isFileNotFound, isRecord } from './guards.ts';
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type ItemType } from './items.ts';
 import { type AttributeValue, BACKLOG_FILE, checkBacklog, type Scenario, type UseCase } from './manifest/backlog.ts';
-import { KEY_PATTERN } from './manifest/conventions.ts';
+import { checkKey, checkKeyLocked, type IssueSink } from './manifest/conventions.ts';
 import { checkDocs, DOCS_FILE } from './manifest/docs.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { readState, STATE_FILE } from './manifest/state.ts';
@@ -165,10 +166,6 @@ const FIELD_NAMES: Record<string, string> = {
   severity: 'severity',
   priority: 'priority',
 };
-
-function sha256(text: string): string {
-  return createHash('sha256').update(text).digest('hex');
-}
 
 /** Reads `file` (empty when it does not exist) with its digest. */
 async function readFileState(file: string): Promise<ManifestFile> {
@@ -430,16 +427,21 @@ async function open(dir: string, manifest: EditableManifest, baseDigest: string)
   return { ok: true, manifest: current, doc, root: doc.contents };
 }
 
-/** Writes `text` in place of `manifest` (temporary file + rename), unless the file changed since it was read. */
-async function write<T extends object>(manifest: ManifestFile, text: string, extra: T): Promise<EditResult<T>> {
-  const current = await readFile(manifest.file, 'utf8').catch((error: unknown) => {
-    if (isFileNotFound(error)) return '';
-    throw error;
-  });
-  if (sha256(current) !== manifest.digest) return { status: 'conflict', current: { file: manifest.file, text: current, digest: sha256(current) } };
-  const temp = `${manifest.file}.tmp`;
-  await writeFile(temp, text);
-  await rename(temp, manifest.file);
+// Writes of this process run one at a time: a digest check and the write it guards never interleave with another
+// write (two quick saves from the same digest), so the second one sees the first and is a conflict.
+let writing: Promise<unknown> = Promise.resolve();
+
+function exclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writing.then(fn);
+  writing = run.catch(() => undefined);
+  return run;
+}
+
+/** Writes `text` in place of `manifest` (atomically), unless the file changed since it was read. Runs in `exclusive`. */
+async function replace<T extends object>(manifest: ManifestFile, text: string, extra: T): Promise<EditResult<T>> {
+  const current = await readFileState(manifest.file);
+  if (current.digest !== manifest.digest) return { status: 'conflict', current };
+  await writeAtomic(manifest.file, text);
   return { status: 'saved', digest: sha256(text), ...extra };
 }
 
@@ -468,14 +470,13 @@ export async function saveItem(dir: string, request: SaveItemRequest): Promise<E
 
   const existing = original === undefined ? undefined : all.find((entry) => entry.type === item.type && entry.key === original);
   if (original !== undefined && !existing) return missing(manifest.file, item.type, original);
-  if (existing && item.key !== original) {
+  const issues: ManifestIssue[] = [];
+  const issue: IssueSink = (path, rule, message) => issues.push({ file: manifest.file, path, rule, message });
+  if (existing) {
     const state = await readState(join(dir, STATE_FILE), { id: 0, slug: '' });
-    if (state.items[original!]?.type === item.type) {
-      return {
-        status: 'invalid',
-        issues: [{ file: manifest.file, path: `${existing.path}.key`, rule: 'key-locked', message: `${original} is already on Taiga: changing its key would create a new item and orphan the old one` }],
-      };
-    }
+    const applied = new Set(Object.entries(state.items).flatMap(([key, recorded]) => (recorded.type === item.type ? [key] : [])));
+    checkKeyLocked(original!, item.key, `${existing.path}.key`, issue, applied);
+    if (issues.length > 0) return { status: 'invalid', issues };
   }
   const parentKey = 'parent' in item ? item.parent : undefined;
   const parent = kind.parent && all.find((entry) => entry.type === kind.parent && entry.key === parentKey);
@@ -492,21 +493,22 @@ export async function saveItem(dir: string, request: SaveItemRequest): Promise<E
   const text = render(doc, manifest.text);
   const placed = entries(root);
   const path = placed.find((entry) => entry.node === node)!.path;
-  const issues: ManifestIssue[] = [];
   try {
     checkBacklog(parse(text), manifest.file);
   } catch (error) {
     if (!(error instanceof ManifestError)) throw error;
-    issues.push(...error.issues.filter((issue) => underItem(issue.path, path, item.type)));
+    issues.push(...error.issues.filter((found) => underItem(found.path, path, item.type)));
   }
-  // The loader reports a duplicate key on its second use; the edited item may be the first one.
+  // The loader reports a duplicate key on its second use; the edited item may be the first one, so its key is
+  // checked last, against every other key.
   const keyPath = `${path}.key`;
-  const twice = KEY_PATTERN.test(item.key) && placed.some((entry) => entry.node !== node && entry.key === item.key);
-  if (twice && !issues.some((issue) => issue.path === keyPath && issue.rule === 'key-unique')) {
-    issues.push({ file: manifest.file, path: keyPath, rule: 'key-unique', message: `duplicate key ${item.key}` });
-  }
+  const seen = new Map<string, string>();
+  for (const entry of placed) if (entry.node !== node) checkKey(entry.key, `${entry.path}.key`, () => {}, seen);
+  checkKey(item.key, keyPath, (at, rule, message) => {
+    if (!issues.some((known) => known.path === at && known.rule === rule)) issue(at, rule, message);
+  }, seen);
   if (issues.length > 0) return { status: 'invalid', issues };
-  return write(manifest, text, { path });
+  return exclusive(() => replace(manifest, text, { path }));
 }
 
 /**
@@ -527,15 +529,18 @@ export async function removeItem(dir: string, request: RemoveItemRequest): Promi
   const removed = gone.map((entry) => String(entry.key));
   const orphaned = gone.filter((entry) => state.items[String(entry.key)]?.type === entry.type).map((entry) => String(entry.key));
   detach(target);
-  return write(manifest, render(doc, manifest.text), { removed, orphaned });
+  return exclusive(() => replace(manifest, render(doc, manifest.text), { removed, orphaned }));
 }
 
 /**
  * Adds a wiki page (no `pageDigest`: an entry `{ slug, file: pages/<slug>.md }` at the end of docs.yaml's `wiki` list,
  * and the file) or edits one (the file its entry names, wherever it is; docs.yaml stays as it is) in the project
- * directory `dir`. `path` is the entry in docs.yaml, `page` the file as written. The page file is checked against
- * `pageDigest` (a new page's file must not exist yet) and written before docs.yaml; CRLF in an existing file stays.
- * Slugs follow the loader's rules (`wiki-slug`, `wiki-slug-unique`); an edit names an existing slug (`wiki-reference`).
+ * directory `dir`. `path` is the entry in docs.yaml, `page` the file as written. docs.yaml is checked against
+ * `baseDigest` and the page file against `pageDigest` (a new page's file must not exist yet) before anything is
+ * written; the page goes first, then docs.yaml. Should docs.yaml change in between (another process), the page is
+ * taken back (a new one removed with the `pages/` it created, an edited one restored): nothing is left behind. CRLF in
+ * an existing file stays. Slugs follow the loader's rules (`wiki-slug`, `wiki-slug-unique`); an edit names an
+ * existing slug (`wiki-reference`).
  */
 export async function saveWikiPage(dir: string, request: SaveWikiPageRequest): Promise<EditResult<{ path: string; page: ManifestFile }>> {
   const { slug, content } = request.page;
@@ -567,13 +572,27 @@ export async function saveWikiPage(dir: string, request: SaveWikiPageRequest): P
   }
   if (issues.length > 0 || pageFile === undefined) return { status: 'invalid', issues };
 
-  const current = await readFileState(pageFile);
-  if (current.digest !== (request.pageDigest ?? sha256(''))) return { status: 'conflict', current };
-  const body = current.text.includes('\r\n') ? content.replace(/\r?\n/g, '\r\n') : content;
-  await mkdir(dirname(pageFile), { recursive: true });
-  const written = await write(current, body, {});
-  if (written.status !== 'saved') return written;
-  const page = { file: pageFile, text: body, digest: written.digest };
-  if (!adding) return { status: 'saved', digest: manifest.digest, path, page };
-  return write(manifest, text, { path, page });
+  return exclusive(async () => {
+    const [docs, current] = await Promise.all([readFileState(manifest.file), readFileState(pageFile)]);
+    if (docs.digest !== manifest.digest) return { status: 'conflict', current: docs };
+    if (current.digest !== (request.pageDigest ?? sha256(''))) return { status: 'conflict', current };
+    const existed = await stat(pageFile).then(
+      () => true,
+      (error: unknown) => {
+        if (isFileNotFound(error)) return false;
+        throw error;
+      },
+    );
+    const body = current.text.includes('\r\n') ? content.replace(/\r?\n/g, '\r\n') : content;
+    const created = await mkdir(dirname(pageFile), { recursive: true });
+    await writeAtomic(pageFile, body);
+    const page = { file: pageFile, text: body, digest: sha256(body) };
+    if (!adding) return { status: 'saved', digest: manifest.digest, path, page };
+    const written = await replace(manifest, text, { path, page });
+    if (written.status === 'conflict') {
+      if (existed) await writeAtomic(pageFile, current.text);
+      else await rm(created ?? pageFile, { recursive: true, force: true });
+    }
+    return written;
+  });
 }

@@ -12,6 +12,8 @@ import {
   type Preview,
   REVIEW_FILE,
   type Review,
+  rekeyReview,
+  rekeyReviewFile,
   saveReview,
   setVerdict,
 } from '../src/review.ts';
@@ -137,6 +139,43 @@ test('saveReview round-trips through loadReview and drops items with neither ver
   assert.ok(!text.includes('BILLING'));
   assert.ok(text.indexOf('AUTH:') < text.indexOf('AUTH-LOGIN:'));
   assert.deepEqual(await loadReview(join(dir, 'missing.yaml')), { items: {} });
+});
+
+test('rekeyReview moves the comments of a re-keyed item but drops its verdict, and drops removed items', () => {
+  let review = setVerdict({ items: {} }, 'AUTH-LOGIN', 'approved', 'abc', 'Lan', AT);
+  review = addComment(review, 'AUTH-LOGIN', 'Thiếu tiêu chí', 'Minh', AT);
+  review = setVerdict(review, 'AUTH-LOGIN-API', 'approved', 'def', 'Lan', AT);
+  review = setVerdict(review, 'AUTH', 'approved', 'ghi', 'Lan', AT);
+  review = setVerdict(review, 'BILLING', 'approved', 'jkl', 'Lan', AT);
+
+  const next = rekeyReview(review, { 'AUTH-LOGIN': 'AUTH-SIGNIN', 'AUTH-LOGIN-API': 'AUTH-SIGNIN-API', AUTH: undefined });
+  assert.deepEqual(next, {
+    items: {
+      'AUTH-SIGNIN': { comments: [{ id: 'c1', by: 'Minh', at: AT, text: 'Thiếu tiêu chí', resolved: false }] },
+      BILLING: { verdict: 'approved', digest: 'jkl', by: 'Lan', at: AT, comments: [] },
+    },
+  });
+  assert.ok(review.items['AUTH-LOGIN'], 'the input review is not changed');
+  assert.equal(rekeyReview(review, { OTHER: 'OTHER-2', GONE: undefined }), review, 'no matching key: same review');
+});
+
+test('rekeyReviewFile saves review.yaml only when a key it names changed', async (t) => {
+  const dir = await tempDir(t);
+  const path = join(dir, REVIEW_FILE);
+  assert.equal(await rekeyReviewFile(dir, { 'AUTH-LOGIN': 'AUTH-SIGNIN' }), false);
+  await assert.rejects(readFile(path, 'utf8'), { code: 'ENOENT' }, 'no review.yaml is created');
+
+  const written = `# Review của PO\nitems:\n  AUTH-LOGIN:\n    verdict: approved\n    digest: abc\n`;
+  await writeFile(path, written);
+  assert.equal(await rekeyReviewFile(dir, { AUTH: 'AUTH-2', 'AUTH-LOGIN-API': undefined }), false);
+  assert.equal(await readFile(path, 'utf8'), written, 'unchanged review is not rewritten');
+
+  await writeFile(path, `items:\n  AUTH-LOGIN:\n    verdict: approved\n    digest: abc\n    comments:\n      - { id: c1, by: Minh, at: "${AT}", text: Rõ hơn, resolved: false }\n`);
+  assert.equal(await rekeyReviewFile(dir, { 'AUTH-LOGIN': 'AUTH-SIGNIN' }), true);
+  assert.deepEqual(await loadReview(path), { items: { 'AUTH-SIGNIN': { comments: [{ id: 'c1', by: 'Minh', at: AT, text: 'Rõ hơn', resolved: false }] } } });
+
+  assert.equal(await rekeyReviewFile(dir, { 'AUTH-SIGNIN': undefined }), true);
+  assert.deepEqual(await loadReview(path), { items: {} });
 });
 
 test('buildPreview marks the items recorded in state.json as applied', async (t) => {

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { initRepository } from '../src/init.ts';
+import { OFFLINE, runTaigent } from './support/harness.ts';
 
 // Headless wrapper: tools/taiga/run-skill.ps1 and run-skill.sh build one `claude -p` / `codex exec` command from
 // the shared allowlist (tools/taiga/allowlist.txt). Tests only use `--dry-run`, which prints the command (a JSON
@@ -256,7 +256,8 @@ for (const shell of SHELLS) {
     t.after(() => rm(work, { recursive: true, force: true }));
     const repo = join(work, 'repo');
     await mkdir(repo);
-    await initRepository(repo, { dryRun: false });
+    const init = await runTaigent(['init'], { env: OFFLINE, cwd: repo });
+    assert.equal(init.code, 0, init.stderr);
     // The repository's own allowlist, distinguishable from taigent's: one rule fewer.
     const repoAllowlist = join(repo, 'tools/taiga/allowlist.txt');
     const rules = parseAllowlist(await readFile(repoAllowlist, 'utf8')).slice(0, -1);
