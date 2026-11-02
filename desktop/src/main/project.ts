@@ -66,10 +66,10 @@ export function allItems(preview: Preview): PreviewItem[] {
   return [...preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]), ...preview.issues];
 }
 
-// review.yaml writes run one at a time, so two quick clicks never read the same old file.
+// Manifest and review.yaml writes run one at a time, so two quick clicks never read the same old file.
 let writes: Promise<unknown> = Promise.resolve();
 
-function serialized<T>(fn: () => Promise<T>): Promise<T> {
+export function serialized<T>(fn: () => Promise<T>): Promise<T> {
   const next = writes.then(fn, fn);
   writes = next.catch(() => undefined);
   return next;
@@ -166,7 +166,7 @@ export function removeItem(root: string, slug: string, request: RemoveItemReques
   });
 }
 
-/** Watches one project folder; every change (an agent editing backlog.yaml, review.yaml…) rebuilds the view. */
+/** Watches one project folder and below (`pages/`); every change (an agent editing backlog.yaml…) rebuilds the view. */
 export class ProjectWatcher {
   #watcher: FSWatcher | undefined;
   #timer: NodeJS.Timeout | undefined;
@@ -174,7 +174,7 @@ export class ProjectWatcher {
   watch(root: string, slug: string, onChange: (view: Result<ProjectView>) => void): void {
     this.close();
     try {
-      this.#watcher = watch(projectDir(root, slug), () => {
+      this.#watcher = watch(projectDir(root, slug), { recursive: true }, () => {
         clearTimeout(this.#timer);
         this.#timer = setTimeout(() => void buildView(root, slug).then(onChange), WATCH_DEBOUNCE_MS);
       });

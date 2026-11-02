@@ -1,18 +1,26 @@
 // The contract between the main process and the renderer: what `window.taigent` (preload) exposes. Review
-// shapes and the manifest edit shapes come from taigent's core (`src/review.ts`, `src/edit.ts`, compiled to `dist/`), as types only.
+// shapes, the manifest edit shapes and the upload plan come from taigent's core (`src/review.ts`, `src/edit.ts`,
+// `src/upload.ts`, compiled to `dist/`), as types only.
 
-import type { BacklogItem, EditResult, ManifestFile, RemoveItemRequest, SaveItemRequest } from '../../../src/edit.ts';
+import type { BacklogItem, EditResult, ManifestFile, RemoveItemRequest, SaveItemRequest, SaveWikiPageRequest, WikiPageFile, WikiSnapshot } from '../../../src/edit.ts';
 import type { InitFile, InitReport } from '../../../src/init.ts';
 import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
-import type { ProjectDetailReport } from '../../../src/projects.ts';
+import type { ProjectDetailReport, StoryStatusEntry } from '../../../src/projects.ts';
+import type { ProjectReport } from '../../../src/report.ts';
 import type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
+import type { CommentAdded, StatusChange } from '../../../src/ticket.ts';
+import type { DueStatus, Ticket, TicketsReport } from '../../../src/tickets.ts';
+import type { UploadOperation, UploadPlan, UploadReport } from '../../../src/upload.ts';
 
 export type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict };
 export type { BacklogItem, CustomAttributeSpec, EditResult, ItemType, ManifestFile, RemoveItemRequest, SaveItemRequest };
+export type { SaveWikiPageRequest, UploadOperation, UploadPlan, UploadReport, WikiPageFile, WikiSnapshot };
 export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult };
 export type { InitFile, InitReport };
+export type { CommentAdded, DueStatus, StatusChange, StoryStatusEntry, Ticket, TicketsReport };
+export type { ProjectReport };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
 export interface Failure {
@@ -208,6 +216,12 @@ export interface ItemRef {
 export type SaveOutcome = EditResult<{ path: string; view: Result<ProjectView> }>;
 export type RemoveOutcome = EditResult<{ removed: string[]; orphaned: string[]; view: Result<ProjectView> }>;
 
+/** A wiki page save (`src/edit.ts`); once saved, `wiki` is docs.yaml and its pages read again. */
+export type WikiSaveOutcome = EditResult<{ path: string; page: ManifestFile; wiki: Result<WikiSnapshot> }>;
+
+/** "Đẩy wiki lên Taiga": the dry run found nothing to do, the user cancelled the confirm dialog, or the upload ran. */
+export type WikiUploadOutcome = { status: 'no-changes'; plan: UploadPlan } | { status: 'cancelled'; plan: UploadPlan } | { status: 'uploaded'; report: UploadReport };
+
 /** One row of Taiga > Project: a Taiga project the user is a member of, or a manifest directory not on Taiga yet. */
 export interface TaigaProjectRow {
   slug: string;
@@ -308,6 +322,32 @@ export interface CreatedRepo {
   init: Result<InitReport>;
 }
 
+/** Taiga > Ticket của tôi: `tickets --from --to --json`, with the user story statuses of each project holding a ticket. */
+export interface MyTickets {
+  report: TicketsReport;
+  /** By project slug: `projects --project <slug> --json`'s `storyStatuses`, or why they could not be read. */
+  statuses: Record<string, { statuses: StoryStatusEntry[] } | { message: string }>;
+}
+
+/** One write to a ticket of the user; `subject` and `from` only word the confirmation. */
+export interface TicketStatusRequest {
+  slug: string;
+  ref: number;
+  subject: string;
+  from: string;
+  to: string;
+  /** `to` is a closed status: the confirmation says the ticket gets closed. */
+  closes: boolean;
+}
+
+export interface TicketCommentRequest {
+  slug: string;
+  ref: number;
+  subject: string;
+  text: string;
+}
+
+export type TicketWriteOutcome<T> = { status: 'cancelled' } | { status: 'done'; value: T };
 export interface TaigentApi {
   getState(): Promise<AppState>;
   /** Shows the folder dialog; undefined when cancelled. */
@@ -332,6 +372,12 @@ export interface TaigentApi {
   saveItem(slug: string, request: SaveItemRequest): Promise<Result<SaveOutcome>>;
   /** Removes an item with its children (a story's tasks); items on Taiga stay there as orphans. */
   removeItem(slug: string, request: RemoveItemRequest): Promise<Result<RemoveOutcome>>;
+  /** Reads docs.yaml and its wiki pages' Markdown for the Wiki section. */
+  readWiki(slug: string): Promise<Result<WikiSnapshot>>;
+  /** Adds or edits a wiki page; refused (`conflict`) when docs.yaml or the page file changed since the form opened. */
+  saveWikiPage(slug: string, request: SaveWikiPageRequest): Promise<Result<WikiSaveOutcome>>;
+  /** `upload --dry-run`, a confirm dialog listing create/update/skip, then `upload --yes` once confirmed. */
+  uploadWiki(slug: string): Promise<Result<WikiUploadOutcome>>;
   /** Taiga > Project: the user's Taiga projects (`taigent projects --json`) and the repository's manifest directories. */
   listTaigaProjects(): Promise<Result<TaigaProjectsOverview>>;
   readTaigaProject(slug: string): Promise<Result<TaigaProjectDetail>>;
@@ -339,6 +385,8 @@ export interface TaigentApi {
   saveProjectSettings(input: ProjectSettingsInput): Promise<Result<SaveProjectSettingsResult>>;
   /** `bootstrap --dry-run --json`, a native confirmation listing the operations, then `bootstrap --yes --json`. */
   bootstrapProject(slug: string): Promise<Result<BootstrapOutcome>>;
+  /** Taiga > Báo cáo: `taigent report --project <slug> --json`. */
+  readTaigaReport(slug: string): Promise<Result<ProjectReport>>;
   /** Status of the opened repository within the Git section's scope. */
   gitStatus(): Promise<Result<GitOutcome>>;
   /** `git pull --ff-only`; stops on a diverged history without touching the working tree. */
@@ -363,6 +411,12 @@ export interface TaigentApi {
   checkTools(): Promise<ToolCheck[]>;
   /** Opens a terminal tab running `tool`'s install command (`ToolCheck.install`). */
   installTool(tool: SetupTool): Promise<Result<TerminalTab>>;
+  /** Taiga > Ticket của tôi: the Period's tickets from `from` to `to` (YYYY-MM-DD, both included). */
+  readMyTickets(from: string, to: string): Promise<Result<MyTickets>>;
+  /** A native confirmation, then `status --project <slug> --json <ref> -- <to>`. */
+  setTicketStatus(request: TicketStatusRequest): Promise<Result<TicketWriteOutcome<StatusChange>>>;
+  /** A native confirmation, then `comment --project <slug> --json <ref> -- <text>`. */
+  commentTicket(request: TicketCommentRequest): Promise<Result<TicketWriteOutcome<CommentAdded>>>;
 }
 
 export const CHANNELS = {
@@ -390,10 +444,14 @@ export const CHANNELS = {
   readBacklog: 'taigent:read-backlog',
   saveItem: 'taigent:save-item',
   removeItem: 'taigent:remove-item',
+  readWiki: 'taigent:read-wiki',
+  saveWikiPage: 'taigent:save-wiki-page',
+  uploadWiki: 'taigent:upload-wiki',
   listTaigaProjects: 'taigent:list-taiga-projects',
   readTaigaProject: 'taigent:read-taiga-project',
   saveProjectSettings: 'taigent:save-project-settings',
   bootstrapProject: 'taigent:bootstrap-project',
+  readTaigaReport: 'taigent:read-taiga-report',
   gitStatus: 'taigent:git-status',
   gitPull: 'taigent:git-pull',
   gitCommitPush: 'taigent:git-commit-push',
@@ -406,4 +464,7 @@ export const CHANNELS = {
   runNpmInstall: 'taigent:run-npm-install',
   checkTools: 'taigent:check-tools',
   installTool: 'taigent:install-tool',
+  readMyTickets: 'taigent:read-my-tickets',
+  setTicketStatus: 'taigent:set-ticket-status',
+  commentTicket: 'taigent:comment-ticket',
 } as const;

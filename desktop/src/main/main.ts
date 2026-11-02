@@ -21,6 +21,9 @@ import {
   type RepoInfo,
   type Result,
   type SaveItemRequest,
+  type TicketCommentRequest,
+  type TicketStatusRequest,
+  type SaveWikiPageRequest,
   type VerdictChoice,
 } from '../shared/api.ts';
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
@@ -28,9 +31,12 @@ import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
+import { readTaigaReport } from './taiga-report.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
 import { cloneRepo, createRepo, openInstall, openNpmInstall, runInit, setupStatus } from './setup.ts';
 import { checkTools } from './tools.ts';
+import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
+import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -288,10 +294,14 @@ function registerIpc(): void {
   handle(CHANNELS.readBacklog, async (slug: string, item?: ItemRef) => readBacklog(requireRepo(), slug, item));
   handle(CHANNELS.saveItem, async (slug: string, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
   handle(CHANNELS.removeItem, async (slug: string, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
+  handle(CHANNELS.readWiki, async (slug: string) => readWiki(requireRepo(), slug));
+  handle(CHANNELS.saveWikiPage, async (slug: string, request: SaveWikiPageRequest) => saveWikiPage(requireRepo(), slug, request));
+  handle(CHANNELS.uploadWiki, async (slug: string) => uploadWiki(requireRepo(), slug, window!));
   handle(CHANNELS.listTaigaProjects, async () => listTaigaProjects(requireRepo()));
   handle(CHANNELS.readTaigaProject, async (slug: string) => readTaigaProject(requireRepo(), slug));
   handle(CHANNELS.saveProjectSettings, async (input: ProjectSettingsInput) => saveProjectFile(requireRepo(), input));
   handle(CHANNELS.bootstrapProject, async (slug: string) => bootstrapProject(requireRepo(), slug, window!));
+  handle(CHANNELS.readTaigaReport, async (slug: string) => readTaigaReport(requireRepo(), slug));
   handle(CHANNELS.gitStatus, async () => gitStatus(requireRepo()));
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
@@ -316,6 +326,10 @@ function registerIpc(): void {
   handle(CHANNELS.runNpmInstall, async () => ({ ok: true, value: openNpmInstall(requireRepo()) }));
   handle(CHANNELS.checkTools, checkTools);
   handle(CHANNELS.installTool, async (tool: unknown) => openInstall(tool, repoRoot));
+  // Tickets need no repository; with one open, its .env (TAIGA_*) applies, as for whoami.
+  handle(CHANNELS.readMyTickets, async (from: string, to: string) => readMyTickets(repoRoot ?? app.getPath('home'), String(from), String(to)));
+  handle(CHANNELS.setTicketStatus, async (request: TicketStatusRequest) => setTicketStatus(repoRoot ?? app.getPath('home'), request, window!));
+  handle(CHANNELS.commentTicket, async (request: TicketCommentRequest) => commentTicket(repoRoot ?? app.getPath('home'), request, window!));
 }
 
 app.enableSandbox();

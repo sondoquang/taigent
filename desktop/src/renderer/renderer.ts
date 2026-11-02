@@ -1,6 +1,6 @@
 // Taigent Desktop UI: the navigation shell (navigation.ts) with the Backlog section (tree, item detail and its
-// review), the Thay đổi section (plan and push to Taiga) and the Git section (git.ts). Everything it knows comes
-// through `window.taigent` (preload); it never reaches the file system or the network itself.
+// review), the Wiki section (wiki.ts), the Thay đổi section (plan and push to Taiga) and the Git section (git.ts).
+// Everything it knows comes through `window.taigent` (preload); it never reaches the file system or the network itself.
 
 import type {
   AppState,
@@ -23,9 +23,12 @@ import { itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
 import { mountTaigaProjects } from './taiga-projects.ts';
+import { mountTaigaReport } from './taiga-report.ts';
 import { gitRepoChanged, wireGit } from './git.ts';
+import { mountMyTickets } from './my-tickets.ts';
 import { wireTerminal } from './terminal.ts';
 import { mountSetup, setupLoginChanged, setupRepoChanged } from './setup.ts';
+import { mountWiki, refreshWiki } from './wiki.ts';
 
 declare global {
   interface Window {
@@ -456,6 +459,7 @@ function render(): void {
   renderDetail();
   renderChanges();
   renderButtons();
+  refreshWiki();
 }
 
 // ---- actions --------------------------------------------------------------------------------------------------
@@ -802,6 +806,7 @@ function wire(): void {
     toast,
     failureBlock,
   });
+  mountTaigaReport({ api, failureBlock });
   wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
   mountSetup({
     api,
@@ -812,6 +817,8 @@ function wire(): void {
     refreshLogin,
     loginStatus: () => state.login,
   });
+  mountMyTickets({ api, loginKey: () => `${state.login?.loggedIn}:${state.login?.apiUrl}:${state.login?.username}`, toast, failureBlock });
+  mountWiki({ api, view: () => state.view, toast, failureBlock });
 }
 
 async function start(): Promise<void> {

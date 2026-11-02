@@ -18,6 +18,7 @@ interface ProjectDetailJson {
   issueTypes: string[];
   severities: string[];
   priorities: string[];
+  storyStatuses: { name: string; isClosed: boolean }[];
 }
 
 /** Projects of the fake user (admin of one, plain member of the other) and two the user is not a member of. */
@@ -79,12 +80,13 @@ test('projects prints one line per project in text form', async (t) => {
   assert.doesNotMatch(result.stdout, /public-other|private-other/);
 });
 
-test('projects --project prints the issue types, severities and priorities of the project, in Taiga order', async (t) => {
+test('projects --project prints the issue values and user story statuses of the project, in Taiga order', async (t) => {
   const h = await startHarness(t);
   const { alpha, beta } = seed(h.fake);
   // A value added on Taiga and moved to the front: order wins over creation.
   h.fake.state.severities.push({ id: 9001, project: beta.id, name: 'Blocker', order: 0, color: '#000000' });
   h.fake.state.priorities.find((p) => p.project === beta.id && p.name === 'Low')!.order = 9;
+  h.fake.state.storyStatuses.find((s) => s.project === beta.id && s.name === 'Ready for test')!.order = 0;
   await h.writeManifest('beta', 'backlog.yaml', 'epics: []\n');
 
   const result = await h.taigent(['projects', '--project', 'beta', '--json']);
@@ -95,6 +97,14 @@ test('projects --project prints the issue types, severities and priorities of th
     issueTypes: ['Bug', 'Question', 'Enhancement'],
     severities: ['Blocker', 'Wishlist', 'Minor', 'Normal', 'Important', 'Critical'],
     priorities: ['Normal', 'High', 'Low'],
+    storyStatuses: [
+      { name: 'Ready for test', isClosed: false },
+      { name: 'New', isClosed: false },
+      { name: 'Ready', isClosed: false },
+      { name: 'In progress', isClosed: false },
+      { name: 'Done', isClosed: true },
+      { name: 'Archived', isClosed: true },
+    ],
   });
   const text = await h.taigent(['projects', '--project', 'alpha']);
   assert.equal(text.code, 0, text.stderr);
@@ -102,6 +112,7 @@ test('projects --project prints the issue types, severities and priorities of th
   assert.match(text.stdout, /Issue types: Bug, Question, Enhancement/);
   assert.match(text.stdout, /Severities: Wishlist, Minor, Normal, Important, Critical/);
   assert.match(text.stdout, /Priorities: Low, Normal, High/);
+  assert.match(text.stdout, /User story statuses: New, Ready, In progress, Ready for test, Done \(closed\), Archived \(closed\)/);
   assert.deepEqual(writes(h.fake), []);
 });
 
