@@ -21,6 +21,9 @@ const api: TaigentApi = {
     ipcRenderer.on(CHANNELS.projectChanged, handler);
     return () => ipcRenderer.off(CHANNELS.projectChanged, handler);
   },
+  readBacklog: (slug) => ipcRenderer.invoke(CHANNELS.readBacklog, slug),
+  saveItem: (slug, request) => ipcRenderer.invoke(CHANNELS.saveItem, slug, request),
+  removeItem: (slug, request) => ipcRenderer.invoke(CHANNELS.removeItem, slug, request),
   listTaigaProjects: () => ipcRenderer.invoke(CHANNELS.listTaigaProjects),
   readTaigaProject: (slug) => ipcRenderer.invoke(CHANNELS.readTaigaProject, slug),
   saveProjectSettings: (input) => ipcRenderer.invoke(CHANNELS.saveProjectSettings, input),

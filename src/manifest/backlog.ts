@@ -148,7 +148,7 @@ export function unknownIssueValuesError(file: string, values: readonly UnknownIs
   );
 }
 
-/** Every key of the epic tree (epics, stories and tasks): the items attachments and review entries may name. */
+/** Every key of the epic tree (epics, stories and tasks): the items attachments may name (review: `reviewKeys`). */
 export function backlogKeys(backlog: Backlog): Set<string> {
   const keys = new Set<string>();
   for (const epic of backlog.epics) {
@@ -163,8 +163,14 @@ export function backlogKeys(backlog: Backlog): Set<string> {
 
 /** Reads and validates the backlog manifest at `path`; throws ManifestError listing every issue. */
 export async function loadBacklog(path: string): Promise<Backlog> {
-  const doc = await readManifestYaml(path);
+  return checkBacklog(await readManifestYaml(path), path);
+}
 
+/**
+ * Validates `doc`, the parsed content of the backlog manifest `path` (issues name that file); throws ManifestError
+ * listing every issue. The manifest edit API checks an edited backlog with it before writing.
+ */
+export function checkBacklog(doc: unknown, path: string): Backlog {
   const issues: ManifestIssue[] = [];
   const issue = (at: string, rule: string, message: string) => issues.push({ file: path, path: at, rule, message });
 

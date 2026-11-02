@@ -14,11 +14,13 @@ import {
   type LoginStatus,
   type Plan,
   type ProjectSettingsInput,
+  type RemoveItemRequest,
   type RepoInfo,
   type Result,
+  type SaveItemRequest,
   type VerdictChoice,
 } from '../shared/api.ts';
-import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, toFailure } from './project.ts';
+import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
 import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
@@ -193,10 +195,12 @@ async function apply(slug: string): Promise<Result<ApplyOutcome>> {
 
   const { summary } = view.value.preview;
   const counts = planned.value.summary;
+  const issueOps = planned.value.operations.filter((op) => op.type === 'issue');
   const detail = [
     `Dự án: ${slug}`,
     `Tạo mới: ${counts.create} mục`,
     `Cập nhật: ${counts.update} mục`,
+    `Trong đó issue: tạo mới ${issueOps.filter((op) => op.action === 'create').length}, cập nhật ${issueOps.filter((op) => op.action === 'update').length}`,
     `Gắn story vào epic: ${counts.link}`,
     '',
     `Chưa duyệt: ${summary.unreviewed} mục`,
@@ -272,6 +276,9 @@ function registerIpc(): void {
   handle(CHANNELS.openExternal, async (url: string) => {
     if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) await shell.openExternal(url);
   });
+  handle(CHANNELS.readBacklog, async (slug: string) => readBacklog(requireRepo(), slug));
+  handle(CHANNELS.saveItem, async (slug: string, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
+  handle(CHANNELS.removeItem, async (slug: string, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
   handle(CHANNELS.listTaigaProjects, async () => listTaigaProjects(requireRepo()));
   handle(CHANNELS.readTaigaProject, async (slug: string) => readTaigaProject(requireRepo(), slug));
   handle(CHANNELS.saveProjectSettings, async (input: ProjectSettingsInput) => saveProjectFile(requireRepo(), input));

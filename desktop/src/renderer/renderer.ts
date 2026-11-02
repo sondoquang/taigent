@@ -9,6 +9,7 @@ import type {
   LoginStatus,
   Plan,
   PreviewEpic,
+  PreviewIssue,
   PreviewItem,
   PreviewStory,
   ProjectView,
@@ -17,6 +18,8 @@ import type {
   TaigentApi,
   VerdictChoice,
 } from '../shared/api.ts';
+import { byId, h } from './dom.ts';
+import { itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
 import { mountTaigaProjects } from './taiga-projects.ts';
@@ -29,10 +32,11 @@ declare global {
 
 type Filter = 'all' | 'unreviewed' | 'changes' | 'stale';
 
+/** A row of the Backlog tree: an epic-tree item with its parents, or an issue (no parent). */
 interface TreeNode {
   item: PreviewItem;
   depth: number;
-  epic: PreviewEpic;
+  epic?: PreviewEpic;
   story?: PreviewStory;
 }
 
@@ -46,33 +50,6 @@ const state: {
   busy: boolean;
 } = { filter: 'all', busy: false };
 const drafts = new Map<string, string>();
-
-function byId<T extends HTMLElement>(id: string): T {
-  const element = document.getElementById(id);
-  if (!element) throw new Error(`missing #${id}`);
-  // index.html declares every id this file asks for, with the element type the caller names.
-  const typed = element as T;
-  return typed;
-}
-
-/** Builds an element; text children are text nodes, never HTML. */
-function h<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Record<string, string | boolean | ((event: Event) => void)> = {},
-  ...children: (string | false | undefined | null | Node)[]
-): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tag);
-  for (const [name, value] of Object.entries(props)) {
-    if (typeof value === 'function') element.addEventListener(name.replace(/^on/, ''), value);
-    else if (value === true) element.setAttribute(name, '');
-    else if (value !== false) element.setAttribute(name, value);
-  }
-  for (const child of children) {
-    if (child === false || child === undefined || child === null) continue;
-    element.append(typeof child === 'string' ? document.createTextNode(child) : child);
-  }
-  return element;
-}
 
 // ---- status vocabulary ----------------------------------------------------------------------------------------
 
@@ -106,7 +83,7 @@ function matches(item: PreviewItem, filter: Filter): boolean {
   return true;
 }
 
-/** The tree in display order; with a filter, an item shows when it or one of its children matches. */
+/** The tree in display order, epics then issues; with a filter, an item shows when it or one of its children matches. */
 function visibleNodes(view: ProjectView, filter: Filter): TreeNode[] {
   const nodes: TreeNode[] = [];
   for (const epic of view.preview.epics) {
@@ -117,6 +94,7 @@ function visibleNodes(view: ProjectView, filter: Filter): TreeNode[] {
     }
     if (matches(epic, filter) || storyNodes.length > 0) nodes.push({ item: epic, depth: 0, epic }, ...storyNodes);
   }
+  for (const issue of view.preview.issues) if (matches(issue, filter)) nodes.push({ item: issue, depth: 0 });
   return nodes;
 }
 
@@ -201,6 +179,7 @@ function renderSummary(): void {
     cell('Epic', s.epics),
     cell('Story', s.stories),
     cell('Task', s.tasks),
+    cell('Issue', s.issues),
     h('div', { class: 'sep' }),
     cell('Mới', s.new, 'new'),
     cell('Đã đẩy', s.applied, 'applied'),
@@ -244,8 +223,10 @@ function renderTree(): void {
     tree.replaceChildren(h('div', { class: 'empty small' }, 'Không có mục nào khớp bộ lọc.'));
     return;
   }
+  const firstIssue = nodes.findIndex((node) => node.item.type === 'issue');
   tree.replaceChildren(
-    ...nodes.map((node) =>
+    ...nodes.flatMap((node, index) => [
+      ...(index === firstIssue ? [h('div', { class: 'tree-group' }, `Issues (${view.preview.issues.length})`)] : []),
       h(
         'button',
         {
@@ -258,7 +239,7 @@ function renderTree(): void {
         h('span', { class: 'subject' }, node.item.subject),
         badges(node.item, true),
       ),
-    ),
+    ]),
   );
   tree.querySelector('.node.selected')?.scrollIntoView({ block: 'nearest' });
 }
@@ -364,10 +345,9 @@ function renderDetail(): void {
   const item = node.item;
   const story = item.type === 'story' ? node.story : undefined;
   const epic = item.type === 'epic' ? node.epic : undefined;
-  const trail: PreviewItem[] = [];
-  if (node.depth > 0) trail.push(node.epic);
-  if (node.depth > 1 && node.story) trail.push(node.story);
+  const trail = [node.epic, node.story].filter((parent): parent is PreviewEpic | PreviewStory => parent !== undefined && parent !== item);
   const attributes = Object.entries(item.customAttributes);
+  const values = item.type === 'issue' ? (item as PreviewIssue).values : undefined;
 
   const blocks: (HTMLElement | false | undefined | '')[] = [
     h(
@@ -382,8 +362,20 @@ function renderDetail(): void {
       h('div', { class: 'detail-meta' }, h('span', { class: `type type-${item.type}` }, TYPE_LABEL[item.type]), h('code', {}, item.key), badges(item, false)),
       h('h1', {}, item.subject),
       verdictBar(item),
+      itemActions(item),
     ),
     section('Mô tả (đúng nội dung ghi lên Taiga)', markdownBlock(item.description)),
+    values &&
+      section(
+        'Phân loại',
+        h(
+          'table',
+          { class: 'attributes issue-values' },
+          h('tr', {}, h('th', {}, 'Loại'), h('td', {}, values.type)),
+          h('tr', {}, h('th', {}, 'Mức độ'), h('td', {}, values.severity)),
+          h('tr', {}, h('th', {}, 'Ưu tiên'), h('td', {}, values.priority)),
+        ),
+      ),
     story && section(`Task (${story.tasks.length})`, story.tasks.length ? h('ul', { class: 'children' }, ...story.tasks.map(itemLink)) : h('p', { class: 'muted' }, 'Không có task.')),
     epic && section(`Story (${epic.stories.length})`, h('ul', { class: 'children' }, ...epic.stories.map(itemLink))),
     (item.tags.length > 0 || attributes.length > 0) &&
@@ -435,7 +427,7 @@ function renderChanges(): void {
       'p',
       {},
       h('strong', {}, view.slug),
-      ` · ${s.epics} epic, ${s.stories} story, ${s.tasks} task · Mới ${s.new} · Đã đẩy ${s.applied}`,
+      ` · ${s.epics} epic, ${s.stories} story, ${s.tasks} task, ${s.issues} issue · Mới ${s.new} · Đã đẩy ${s.applied}`,
     ),
     h(
       'p',
@@ -488,7 +480,7 @@ function applyView(result: Result<ProjectView>): void {
     return;
   }
   state.view = result.value;
-  if (!findNode(result.value, state.selected)) state.selected = result.value.preview.epics[0]?.key;
+  if (!findNode(result.value, state.selected)) state.selected = visibleNodes(result.value, 'all')[0]?.item.key;
   render();
 }
 
@@ -584,7 +576,11 @@ function planTable(plan: Plan): HTMLElement {
         'div',
         { class: 'warn-box' },
         h('strong', {}, `${plan.orphans.length} mục trên Taiga không còn trong backlog (taigent không xoá):`),
-        h('ul', {}, ...plan.orphans.map((orphan) => h('li', {}, `#${orphan.ref} ${orphan.key} – ${orphan.subject}`))),
+        h(
+          'ul',
+          {},
+          ...plan.orphans.map((orphan) => h('li', {}, `${TYPE_LABEL[orphan.type as PreviewItem['type']] ?? orphan.type} #${orphan.ref} ${orphan.key} – ${orphan.subject}`)),
+        ),
       ),
   );
 }
@@ -775,6 +771,16 @@ function wire(): void {
   api.onProjectChanged((result) => {
     if (result.ok && result.value.slug !== state.view?.slug) return;
     applyView(result);
+  });
+  mountForms({
+    api,
+    view: () => state.view,
+    showView(result, key) {
+      if (key !== undefined) state.selected = key;
+      applyView(result);
+    },
+    toast,
+    failureBlock,
   });
   mountTaigaProjects({
     api,
