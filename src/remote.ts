@@ -1,18 +1,26 @@
 // Remote reader of `plan`/`apply`: reads back from Taiga what the pure planner (`buildPlan`) compares the backlog
-// with: the project's items, the epic links and the custom attribute values that matter for this backlog.
+// with: the project's items, the epic links, the issue values and the custom attribute values that matter for this
+// backlog.
 
-import { ITEM_TYPES, type ItemType } from './items.ts';
+import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
 import type { Backlog } from './manifest/backlog.ts';
 import { srcTag, type RemoteState } from './planner.ts';
-import type { TaigaAttributeValues, TaigaClient } from './taiga/client.ts';
+import type { TaigaAttributeValues, TaigaClient, TaigaIssueValue } from './taiga/client.ts';
 
 export async function readBacklogRemote(backlog: Backlog, client: TaigaClient, slug: string): Promise<RemoteState> {
   const project = await client.getProjectBySlug(slug);
-  const [epics, stories, tasks] = await Promise.all([
+  const [epics, stories, tasks, issues] = await Promise.all([
     client.listItems('epic', project.id),
     client.listItems('story', project.id),
     client.listItems('task', project.id),
+    client.listItems('issue', project.id),
   ]);
+
+  // The project's issue types, severities and priorities, to resolve the names of the manifest's issues.
+  const issueValues = {} as Record<IssueValueField, TaigaIssueValue[]>;
+  for (const field of ISSUE_VALUE_FIELDS) {
+    issueValues[field] = backlog.issues.length > 0 ? await client.listIssueValues(field, project.id) : [];
+  }
 
   // Links of every taigent-managed epic: missing ones are planned, those to an epic the story left are reported.
   const epicStories = new Map<number, number[]>();
@@ -22,12 +30,10 @@ export async function readBacklogRemote(backlog: Backlog, client: TaigaClient, s
 
   // Current custom attribute values, only for existing items that declare some in the manifest.
   const declaringTags = new Set<string>();
-  for (const epic of backlog.epics) {
-    for (const item of [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]) {
-      if (Object.keys(item.customAttributes).length > 0) declaringTags.add(srcTag(item.key));
-    }
+  for (const item of [...backlog.epics.flatMap((epic) => [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]), ...backlog.issues]) {
+    if (Object.keys(item.customAttributes).length > 0) declaringTags.add(srcTag(item.key));
   }
-  const items = { epic: epics, story: stories, task: tasks };
+  const items = { epic: epics, story: stories, task: tasks, issue: issues };
   const attributeValues = {} as Record<ItemType, Map<number, TaigaAttributeValues>>;
   for (const type of ITEM_TYPES) {
     attributeValues[type] = new Map();
@@ -41,6 +47,8 @@ export async function readBacklogRemote(backlog: Backlog, client: TaigaClient, s
     epics,
     stories,
     tasks,
+    issues,
+    issueValues,
     epicStories,
     customAttributes: project.customAttributes,
     attributeValues,
