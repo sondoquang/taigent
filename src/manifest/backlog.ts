@@ -36,41 +36,79 @@ export interface Scenario {
   then: string;
 }
 
-export interface StorySpec extends ItemSpec {
-  /** Legacy format: rendered into the Taiga description under "Acceptance criteria". */
-  acceptanceCriteria: string[];
-  /** New format (with `scenarios`); undefined for a legacy story. */
-  useCase: UseCase | undefined;
-  /** New format acceptance scenarios; empty for a legacy story. */
-  scenarios: Scenario[];
+interface StoryCommon extends ItemSpec {
   /** Link or path to the spec the story comes from; empty when absent. */
   spec: string;
   tasks: TaskSpec[];
 }
+
+/** User story format: a use case and Gherkin scenarios as acceptance criteria. */
+export interface UserStoryFormat {
+  format: 'user-story';
+  useCase: UseCase;
+  scenarios: Scenario[];
+}
+
+/** Legacy format, kept only for stories already on Taiga: acceptance criteria as a plain checklist. */
+export interface LegacyFormat {
+  format: 'legacy';
+  acceptanceCriteria: string[];
+}
+
+/** A story is in exactly one format: a story mixing both is a `story-format` issue, never a StorySpec. */
+export type StorySpec = StoryCommon & (UserStoryFormat | LegacyFormat);
 
 export interface EpicSpec extends ItemSpec {
   stories: StorySpec[];
 }
 
 export interface Backlog {
-  /** Path of the backlog.yaml it was read from, for issues found after the manifest was loaded. */
-  file: string;
   epics: EpicSpec[];
 }
 
 type Kind = 'epic' | 'story' | 'task';
 
 const ITEM_FIELDS = ['key', 'subject', 'description', 'tags', 'custom_attributes'];
-const KNOWN_FIELDS: Record<Kind, ReadonlySet<string>> = {
-  epic: new Set([...ITEM_FIELDS, 'stories']),
-  story: new Set([...ITEM_FIELDS, 'acceptance_criteria', 'use_case', 'scenarios', 'spec', 'tasks']),
-  task: new Set(ITEM_FIELDS),
+const KNOWN_FIELDS: Record<Kind, readonly string[]> = {
+  epic: [...ITEM_FIELDS, 'stories'],
+  story: [...ITEM_FIELDS, 'acceptance_criteria', 'use_case', 'scenarios', 'spec', 'tasks'],
+  task: ITEM_FIELDS,
 };
 const USE_CASE_FIELDS = ['as_a', 'i_want_to', 'so_that'] as const;
 const SCENARIO_FIELDS = ['scenario', 'given', 'when', 'then'] as const;
+/** Stands in for an invalid or missing use case; the issue it comes with keeps the backlog from loading. */
+const NO_USE_CASE: UseCase = { asA: '', iWantTo: '', soThat: '' };
 
 function isStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string' && entry !== '');
+}
+
+/** Manifest path of the `e`-th epic, as issues name it. */
+export function epicPath(e: number): string {
+  return `epics[${e}]`;
+}
+
+/** Manifest path of the `s`-th story of the `e`-th epic, as issues name it. */
+export function storyPath(e: number, s: number): string {
+  return `${epicPath(e)}.stories[${s}]`;
+}
+
+/** A story `plan` would create in the legacy format: `path` locates it in backlog.yaml. */
+export interface LegacyStoryCreate {
+  key: string;
+  path: string;
+}
+
+/** The `story-format` issues of backlog `file` for stories that would be created in the legacy format. */
+export function legacyStoryCreatesError(file: string, stories: readonly LegacyStoryCreate[]): ManifestError {
+  return new ManifestError(
+    stories.map(({ key, path }) => ({
+      file,
+      path,
+      rule: 'story-format',
+      message: `new story ${key} must use use_case and scenarios (conventions §6); the legacy format is only kept for stories already on Taiga`,
+    })),
+  );
 }
 
 /** Every item key declared in the backlog (epics, stories and tasks). */
@@ -105,9 +143,7 @@ export async function loadBacklog(path: string): Promise<Backlog> {
       issue(at, 'type', `${kind} must be a mapping`);
       return undefined;
     }
-    for (const field of Object.keys(raw)) {
-      if (!KNOWN_FIELDS[kind].has(field)) issue(`${at}.${field}`, 'known-field', `unknown ${kind} field \`${field}\``);
-    }
+    checkKnownFields(raw, at, KNOWN_FIELDS[kind], kind);
     const { key, subject, description = '', tags = [], custom_attributes: customAttributes = {} } = raw;
     checkKey(key, `${at}.key`, issue, seenKeys);
     if (typeof subject !== 'string' || subject.trim() === '') issue(`${at}.subject`, 'required', 'subject is required');
@@ -141,7 +177,7 @@ export async function loadBacklog(path: string): Promise<Backlog> {
     }
   }
 
-  /** A required non-empty single-line field: missing or empty is `required`, any other non-string is `type`. */
+  /** A required non-empty string field: missing or empty is `required`, any other non-string is `type`. */
   function checkText(value: unknown, at: string): string {
     if (value === undefined || value === null || value === '') issue(at, 'required', 'must be a non-empty string');
     else if (typeof value !== 'string') issue(at, 'type', 'must be a string');
@@ -151,7 +187,7 @@ export async function loadBacklog(path: string): Promise<Backlog> {
   function checkUseCase(raw: unknown, at: string): UseCase {
     if (!isRecord(raw)) {
       issue(at, 'type', 'must be a mapping with `as_a`, `i_want_to` and `so_that`');
-      return { asA: '', iWantTo: '', soThat: '' };
+      return NO_USE_CASE;
     }
     checkKnownFields(raw, at, USE_CASE_FIELDS, 'use case');
     return { asA: checkText(raw.as_a, `${at}.as_a`), iWantTo: checkText(raw.i_want_to, `${at}.i_want_to`), soThat: checkText(raw.so_that, `${at}.so_that`) };
@@ -190,19 +226,19 @@ export async function loadBacklog(path: string): Promise<Backlog> {
 
   const epics: EpicSpec[] = [];
   rawEpics.forEach((rawEpic: unknown, e) => {
-    const epicAt = `epics[${e}]`;
+    const epicAt = epicPath(e);
     const epic = checkItem(rawEpic, epicAt, 'epic');
     if (!epic) return;
     const stories: StorySpec[] = [];
     children(epic.raw.stories, `${epicAt}.stories`).forEach((rawStory, s) => {
-      const storyAt = `${epicAt}.stories[${s}]`;
+      const storyAt = storyPath(e, s);
       const story = checkItem(rawStory, storyAt, 'story');
       if (!story) return;
       const { acceptance_criteria: acceptanceCriteria = [], spec = '' } = story.raw;
       if (!isStringList(acceptanceCriteria)) issue(`${storyAt}.acceptance_criteria`, 'type', 'must be a list of non-empty strings');
       const hasUseCase = story.raw.use_case !== undefined;
       const hasScenarios = story.raw.scenarios !== undefined;
-      const useCase = hasUseCase ? checkUseCase(story.raw.use_case, `${storyAt}.use_case`) : undefined;
+      const useCase = hasUseCase ? checkUseCase(story.raw.use_case, `${storyAt}.use_case`) : NO_USE_CASE;
       const scenarios = hasScenarios ? checkScenarios(story.raw.scenarios, `${storyAt}.scenarios`) : [];
       if (hasUseCase && !hasScenarios) issue(`${storyAt}.scenarios`, 'story-format', '`use_case` needs `scenarios`');
       if (hasScenarios && !hasUseCase) issue(`${storyAt}.use_case`, 'story-format', '`scenarios` needs `use_case`');
@@ -215,15 +251,17 @@ export async function loadBacklog(path: string): Promise<Backlog> {
         const task = checkItem(rawTask, `${storyAt}.tasks[${t}]`, 'task');
         if (task) tasks.push({ key: task.key, subject: task.subject, description: task.description, tags: task.tags, customAttributes: task.customAttributes });
       });
+      const format: UserStoryFormat | LegacyFormat =
+        hasUseCase || hasScenarios
+          ? { format: 'user-story', useCase, scenarios }
+          : { format: 'legacy', acceptanceCriteria: acceptanceCriteria as string[] };
       stories.push({
         key: story.key,
         subject: story.subject,
         description: story.description,
         tags: story.tags,
         customAttributes: story.customAttributes,
-        acceptanceCriteria: acceptanceCriteria as string[],
-        useCase,
-        scenarios,
+        ...format,
         spec: spec as string,
         tasks,
       });
@@ -232,5 +270,5 @@ export async function loadBacklog(path: string): Promise<Backlog> {
   });
 
   if (issues.length > 0) throw new ManifestError(issues);
-  return { file: path, epics };
+  return { epics };
 }

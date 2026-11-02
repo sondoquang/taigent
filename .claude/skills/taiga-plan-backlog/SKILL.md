@@ -53,8 +53,8 @@ Patch the baseline in place with targeted edits, leaving every other line untouc
 
 Shape every epic, story and task per conventions §4–§6, and write subjects and descriptions in the spec's language. Story format (conventions §6):
 
-- Every **new** story uses the §6.1 format: `subject` is the Summary, plus `use_case` and `scenarios` (one or more Given, exactly one When, exactly one Then per scenario). `plan` exits 4 with rule `story-format` for a new story in the old format. Run the §6.1 quality check, and split a story that needs several When/Then or carries several goals.
-- An **existing** story keeps its current format (old `description` + `acceptance_criteria`, §6.2) when you edit it, unless the user asks to convert it; a conversion rewrites its Taiga description, so name it in your report.
+- Every **new** story uses the user story format (§6.1): `subject` is the Summary, plus `use_case` and `scenarios` (one or more Given, exactly one When, exactly one Then per scenario). `plan` exits 4 with rule `story-format` for a new story in the legacy format. Run the §6.1 quality check, and split a story that needs several When/Then or carries several goals.
+- An **existing** story keeps its current format (the legacy format, `description` + `acceptance_criteria`, §6.2) when you edit it, unless the user asks to convert it; a conversion rewrites its Taiga description, so name it in your report.
 
 Done when every requirement of the spec maps to a story or task, or is named as out of scope in your report.
 

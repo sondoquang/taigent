@@ -2,15 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ManifestIssue } from '../src/manifest/errors.ts';
 import type { Plan } from '../src/planner.ts';
-import { startHarness, type Harness } from './support/harness.ts';
+import { OFFLINE, startHarness, writes, type Harness } from './support/harness.ts';
 import type { FakeUserStory } from './support/fake-taiga.ts';
 
 interface ErrorOutput {
   error: { kind: string; issues?: ManifestIssue[] };
 }
-
-/** No Taiga connection at all: validate must work offline, without any TAIGA_* variable. */
-const OFFLINE = { TAIGA_API_URL: undefined, TAIGA_USERNAME: undefined, TAIGA_PASSWORD: undefined };
 
 test('apply renders a use case + scenarios story: use case, context, one checkbox per scenario with its Given/When/Then, spec', async (t) => {
   const h = await startHarness(t);
@@ -288,11 +285,6 @@ function seedLegacy(h: Harness): FakeUserStory {
   return story;
 }
 
-/** Requests that change Taiga (everything but reads and the login). */
-function writes(h: Harness): string[] {
-  return h.fake.requests.filter((r) => r.method !== 'GET' && r.path !== '/auth' && !r.path.startsWith('/auth/')).map((r) => `${r.method} ${r.path}`);
-}
-
 test('plan and apply refuse to create stories without use_case/scenarios: exit 4, every story-format issue, nothing written', async (t) => {
   const h = await startHarness(t);
   h.fake.addProject({ slug: 'demo' });
@@ -324,8 +316,8 @@ test('plan and apply refuse to create stories without use_case/scenarios: exit 4
   }
   const text = await h.taigent(['plan', '--project', 'demo']);
   assert.equal(text.code, 4);
-  assert.match(text.stderr, /backlog\.yaml: epics\[0\]\.stories\[0\]: .*use_case.* \[story-format\]/);
-  assert.deepEqual(writes(h), [], 'nothing is written to Taiga');
+  assert.match(text.stderr, /backlog\.yaml: epics\[0\]\.stories\[0\]: .* \[story-format\]/);
+  assert.deepEqual(writes(h.fake), [], 'nothing is written to Taiga');
   assert.deepEqual([h.fake.state.epics.length, h.fake.state.userStories.length], [0, 0]);
   assert.equal(await h.readState('demo'), undefined);
 });
@@ -343,7 +335,7 @@ test('a legacy story already on Taiga is left alone: plan reports No changes, wi
   assert.match(text.stdout, /No changes/);
   const applied = await h.taigent(['apply', '--project', 'demo', '--yes']);
   assert.equal(applied.code, 0, applied.stderr);
-  assert.deepEqual(writes(h), []);
+  assert.deepEqual(writes(h.fake), []);
 });
 
 test('state.json is only a cache: a legacy story it lists but missing on Taiga is still refused', async (t) => {

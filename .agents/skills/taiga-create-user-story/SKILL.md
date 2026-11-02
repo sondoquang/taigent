@@ -1,13 +1,13 @@
 ---
 name: taiga-create-user-story
-description: "Write one user story in the Mike Cohn + Gherkin format under an existing epic, then create it on Taiga after you confirm."
+description: "Write one user story in the user story format (Mike Cohn + Gherkin) under an existing epic, then create it on Taiga after you confirm."
 disable-model-invocation: true
 allowed-tools: Bash(npx taigent validate *) Bash(npx taigent plan *) Bash(npx taigent apply *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) PowerShell(npx taigent apply *) mcp__taiga__listProjects mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory
 ---
 
 # Taiga create user story
 
-Add **one** user story to `taiga/<slug>/backlog.yaml` under an epic that already exists, in the format of `docs/taiga/conventions.md` §6.1, and create it on Taiga after the user confirms. The `taigent` CLI makes the only write. This skill creates no epic and no task, and never writes through MCP.
+Add **one** user story to `taiga/<slug>/backlog.yaml` under an epic that already exists, in the user story format of `docs/taiga/conventions.md` §6.1, and create it on Taiga after the user confirms. The `taigent` CLI makes the only write. This skill creates no epic and no task, and never writes through MCP.
 
 ## 1. Check the setup
 
@@ -52,12 +52,12 @@ Add the story at the end of the chosen epic's `stories`, with a new key `<EPIC>-
 
 ## 7. Plan
 
-Run `npx taigent plan --project <slug> --json`.
+Run `npx taigent plan --project <slug> --json`. Ignore the `skip` operations: they are items already on Taiga and unchanged. The **expected operations** of a new story are exactly two: `create` of this story's key (`type: story`, `parent`: the chosen epic) and `link` of this story's key to that epic.
 
 - **Exit 0**: the story is already on Taiga. Say so, with its ref, and stop.
 - **Exit 4**: the manifest breaks a convention (for a story, often rule `story-format`). Fix the manifest and run plan again.
-- **Exit 3 with operations other than exactly one `create` of this story's key** (other creates, updates or links): list those operations, do not apply, hand over to `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`) to review the whole plan, and stop.
-- **Exit 3 with exactly one `create` of this story's key**: go to step 8.
+- **Exit 3 with any other non-`skip` operation** (another create, an update, another link) **or without one of the expected operations**: list the non-`skip` operations, do not apply, hand over to `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`) to review the whole plan, and stop.
+- **Exit 3 whose non-`skip` operations are exactly the expected operations**: go to step 8.
 
 ## 8. Confirm and apply
 
@@ -65,7 +65,7 @@ Show the story as Taiga will render it (§6.1 rendered layout: Use case, then Ac
 
 After the yes:
 
-1. Run `npx taigent plan --project <slug>` again. When its operations are no longer exactly this one create, show the new plan and go back to step 7.
+1. Run `npx taigent plan --project <slug> --json` again. When its non-`skip` operations are no longer exactly the expected operations, show the new plan and go back to step 7.
 2. Run `npx taigent apply --project <slug> --yes`. Exit 5: show the message and stop; re-running this skill resumes.
 
 Done when apply exits 0. Report the story's ref (from `taiga/<slug>/state.json`, under its key) and its URL, `<Taiga web host>/project/<slug>/us/<ref>`, and remind the user to commit `taiga/<slug>/backlog.yaml` together with `taiga/<slug>/state.json`.

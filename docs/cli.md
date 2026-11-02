@@ -204,7 +204,8 @@ deleted or stale `state.json` never causes duplicates. `state.json` is a cache, 
   after reading Taiga, `plan` and `apply` exit 4 (kind `validation`) if any story to create lacks `use_case` and
   `scenarios`, with one issue `{file, path: epics[i].stories[j], rule: story-format}` per such story, and write
   nothing. A story is new when no story on Taiga carries its `src:<key>` tag; `state.json` plays no part. Updates
-  and skips of legacy-format stories already on Taiga are unaffected: their template renders byte for byte as before.
+  and skips of stories in the legacy format already on Taiga are unaffected: their template renders byte for byte
+  as before.
 - **Link**: a story is linked to its epic with `POST /epics/{id}/related_userstories`, after
   `GET /epics/{id}/related_userstories` (read for every epic with a `src:` tag) shows the link is missing. Existing
   links are never removed.
@@ -296,8 +297,8 @@ Validation issues have the shape `{ file, path, rule, message }`, e.g. `epics[1]
 `conflict` means Taiga refused an update because the item changed on Taiga after apply read it (OCC); `key`
 names the item, nothing was overwritten, and re-running `plan` shows the new state.
 The text form is `<file>: <path>: <message> [<rule>]`. `plan`/`apply` validate the whole project directory the
-same way (and require `backlog.yaml`) before contacting Taiga; after reading Taiga they also refuse to create a
-legacy-format story (rule `story-format`, see [Reconciliation](#reconciliation)), still before any write.
+same way (and require `backlog.yaml`) before contacting Taiga; after reading Taiga they also refuse to create a story
+in the legacy format (rule `story-format`, see [Reconciliation](#reconciliation)), still before any write.
 
 ## Bootstrap
 
@@ -722,7 +723,7 @@ The `taiga-setup` skill checks all of it and names each fix.
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types to Taiga's endpoint and field names (`TAIGA_ITEM`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links and attribute values `buildPlan` needs |
-| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, `describePlanOperation`, `srcTag(key)` |
+| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), `describePlanOperation`, `srcTag(key)` |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |

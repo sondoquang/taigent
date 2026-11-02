@@ -1,8 +1,7 @@
 // Planner: pure function from (manifest, Taiga state read back) to an ordered plan. No I/O.
 
 import { ITEM_TYPES, type ItemType } from './items.ts';
-import type { AttributeValue, Backlog, StorySpec } from './manifest/backlog.ts';
-import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
+import { storyPath, type AttributeValue, type Backlog, type LegacyStoryCreate, type StorySpec } from './manifest/backlog.ts';
 import { summarize, type Action, type PlanSummary } from './operations.ts';
 import { TaigaError, type TaigaAttributeValues, type TaigaCustomAttribute, type TaigaItem, type TaigaTask } from './taiga/client.ts';
 
@@ -93,6 +92,20 @@ export interface Plan extends PlanSummary<Action> {
   staleLinks: StaleLink[];
 }
 
+/**
+ * The plan would create stories in the legacy format. Only known once Taiga is read (`src:` tags, not state.json);
+ * the caller, which knows the backlog file, reports them as manifest issues.
+ */
+export class LegacyStoryCreateError extends Error {
+  readonly stories: readonly LegacyStoryCreate[];
+
+  constructor(stories: readonly LegacyStoryCreate[]) {
+    super(`new stories must use use_case and scenarios: ${stories.map((story) => story.key).join(', ')}`);
+    this.name = 'LegacyStoryCreateError';
+    this.stories = stories;
+  }
+}
+
 /** ` Name: from -> to; …` for the attribute values an operation sets. */
 function formatAttributes(from: Record<string, unknown>, to: Record<string, unknown>): string {
   return Object.entries(to)
@@ -123,28 +136,27 @@ export function describePlanOperation(op: Operation): string {
 }
 
 /**
- * Story description. A use case + scenarios story renders the use case, the free text, one checkbox per
- * scenario with its Given/When/Then, then the spec link. A legacy story keeps its template byte for byte:
- * free text, acceptance criteria as a checklist, then the spec link.
+ * Story description. The user story format renders the use case, the free text, one checkbox per scenario with its
+ * Given/When/Then, then the spec link. The legacy format keeps its template byte for byte: free text, acceptance
+ * criteria as a checklist, then the spec link.
  */
 function storyDescription(story: StorySpec): string {
   const parts: string[] = [];
-  if (story.useCase) {
+  let checklist: string[];
+  if (story.format === 'user-story') {
     const { asA, iWantTo, soThat } = story.useCase;
     parts.push([`- **As a** ${asA}`, `- **I want to** ${iWantTo}`, `- **so that** ${soThat}`].join('\n'));
-  }
-  if (story.description.trim() !== '') parts.push(story.description.trimEnd());
-  if (story.useCase) {
-    const scenarios = story.scenarios.flatMap(({ scenario, given, when, then }) => [
+    checklist = story.scenarios.flatMap(({ scenario, given, when, then }) => [
       `- [ ] **Scenario:** ${scenario}`,
       ...given.map((condition, i) => `  - **${i === 0 ? 'Given' : 'and Given'}:** ${condition}`),
       `  - **When:** ${when}`,
       `  - **Then:** ${then}`,
     ]);
-    parts.push(['## Acceptance criteria', '', ...scenarios].join('\n'));
-  } else if (story.acceptanceCriteria.length > 0) {
-    parts.push(['## Acceptance criteria', '', ...story.acceptanceCriteria.map((criterion) => `- [ ] ${criterion}`)].join('\n'));
+  } else {
+    checklist = story.acceptanceCriteria.map((criterion) => `- [ ] ${criterion}`);
   }
+  if (story.description.trim() !== '') parts.push(story.description.trimEnd());
+  if (checklist.length > 0) parts.push(['## Acceptance criteria', '', ...checklist].join('\n'));
   if (story.spec !== '') parts.push(`Spec: ${story.spec}`);
   return parts.join('\n\n');
 }
@@ -169,8 +181,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   const manifestTags: Record<ItemType, Set<string>> = { epic: new Set(), story: new Set(), task: new Set() };
   const operations: Operation[] = [];
   const unknownAttributes: string[] = [];
-  // Stories the plan would create in the legacy format: only known once Taiga is read (`src:` tags, not state.json).
-  const legacyCreates: ManifestIssue[] = [];
+  const legacyCreates: LegacyStoryCreate[] = [];
 
   type Spec = { key: string; subject: string; tags: string[]; customAttributes: Record<string, AttributeValue> };
 
@@ -245,14 +256,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
     const remoteEpic = reconcile('epic', epic, epic.description);
     for (const [s, story] of epic.stories.entries()) {
       const remoteStory = reconcile('story', story, storyDescription(story), epic.key);
-      if (!remoteStory && !story.useCase) {
-        legacyCreates.push({
-          file: backlog.file,
-          path: `epics[${e}].stories[${s}]`,
-          rule: 'story-format',
-          message: `new story ${story.key} must use use_case and scenarios (conventions §6); the legacy format is only kept for stories already on Taiga`,
-        });
-      }
+      if (!remoteStory && story.format === 'legacy') legacyCreates.push({ key: story.key, path: storyPath(e, s) });
       const linked = remoteEpic && remoteStory && remote.epicStories.get(remoteEpic.id)?.includes(remoteStory.id);
       if (!linked) operations.push({ action: 'link', type: 'story', key: story.key, epic: epic.key });
       // Links of this story to other taigent-managed epics (it moved epics in the manifest) are reported, never removed.
@@ -272,7 +276,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
     }
   }
 
-  if (legacyCreates.length > 0) throw new ManifestError(legacyCreates);
+  if (legacyCreates.length > 0) throw new LegacyStoryCreateError(legacyCreates);
 
   if (unknownAttributes.length > 0) {
     throw new TaigaError(

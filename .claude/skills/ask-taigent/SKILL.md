@@ -24,7 +24,7 @@ The route most work travels. Every write to Taiga goes **plan → review → app
 
 Beside the main flow:
 
-- **`taiga-create-user-story`**: one user story in the Mike Cohn + Gherkin format (conventions §6) under an existing epic: draft → duplicate check → pick the epic → `backlog.yaml` → `taigent plan` → confirm → `taigent apply --yes`. Hands over to `taiga-plan-backlog` when no epic fits, and to `taiga-apply-backlog` when the plan holds other changes.
+- **`taiga-create-user-story`**: one user story in the user story format (Mike Cohn + Gherkin, conventions §6) under an existing epic: draft → duplicate check → pick the epic → `backlog.yaml` → `taigent plan` → confirm → `taigent apply --yes`. Hands over to `taiga-plan-backlog` when no epic fits, and to `taiga-apply-backlog` when the plan holds other changes.
 - **`taiga-upload-docs`**: specs, ADRs, guides and meeting notes as wiki pages and attachments, declared in `taiga/<slug>/docs.yaml`, after bootstrap (and after the backlog when attachments target item keys).
 - **`taiga-status-report`**: progress by sprint and by epic, or one quick count or lookup. Read-only through the MCP server, any time.
 - **`taiga-my-tickets`**: your tickets (user stories assigned to you) in a period, this week by default: closed, due and still open, with due status and effort. Read-only through `taigent tickets`, any time.
