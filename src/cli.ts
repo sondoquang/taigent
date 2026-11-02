@@ -1,13 +1,14 @@
 // CLI: argument parsing, wiring of Manifest → Taiga client → Planner → Executor, output and exit codes.
 
-import { readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
-import { legacyStoryCreatesError } from './manifest/backlog.ts';
+import { backlogKeys, legacyStoryCreatesError } from './manifest/backlog.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
@@ -18,6 +19,7 @@ import { buildPlan, describePlanOperation, LegacyStoryCreateError, type Plan } f
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { readBacklogRemote } from './remote.ts';
+import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE } from './review.ts';
 import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
@@ -28,7 +30,8 @@ import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, U
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
 Commands:
-  validate  Check manifests against the conventions, offline (all projects without --project)
+  validate  Check manifests (and review.yaml) against the conventions, offline (all projects without --project)
+  preview   Show the backlog as apply would write it, with its review (review.yaml), as one Markdown page; offline
   bootstrap Create or complete the Taiga project declared in project.yaml (requires --yes)
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
@@ -49,6 +52,7 @@ Commands:
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets and notify)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
+  --out <file>      preview: write the page (or the JSON) to this file instead of stdout
   --application <id>  login: store an application token of this Application (created by the instance admin)
                     instead of a refresh token
   --json            Machine-readable output on stdout
@@ -74,7 +78,7 @@ Environment (a variable not set in the environment is read from ./.env):
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in),
             3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['validate', 'skills', 'tickets', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
@@ -104,6 +108,8 @@ interface Options {
   notifyKind?: NotifyKind;
   /** `login`: Application id for an application token. */
   application?: string;
+  /** `preview`: file to write instead of stdout. */
+  out?: string;
   json: boolean;
   yes: boolean;
   dryRun: boolean;
@@ -137,6 +143,7 @@ function parseOptions(argv: string[]): Options | 'help' {
         from: { type: 'string' },
         to: { type: 'string' },
         application: { type: 'string' },
+        out: { type: 'string' },
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
@@ -182,6 +189,8 @@ function parseOptions(argv: string[]): Options | 'help' {
   }
   if (values.application !== undefined && command !== 'login') throw new UsageError('--application applies only to login');
   if (values.application === '') throw new UsageError('--application needs the Application id');
+  if (values.out !== undefined && command !== 'preview') throw new UsageError('--out applies only to preview');
+  if (values.out === '') throw new UsageError('--out needs a file path');
   if (command === 'tickets') {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
@@ -202,6 +211,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     text,
     notifyKind,
     application: values.application,
+    out: values.out,
     json: values.json,
     yes: values.yes,
     dryRun: values['dry-run'],
@@ -360,7 +370,10 @@ function reviewGate(run: Run, plan: { changes: boolean }, text: () => string): n
   throw new UsageError(`refusing to ${options.command} without --yes; review the operations above, then re-run with --yes`);
 }
 
-/** Validates one project's manifests, or every project under the manifests root. Offline: no env needed. */
+/**
+ * Validates one project's manifests, or every project under the manifests root, and their review.yaml (whose keys are
+ * checked against a valid backlog). Offline: no env needed.
+ */
 async function runValidate(run: Run): Promise<number> {
   const { options, env, cwd } = run;
   const root = manifestsRoot(env, cwd);
@@ -371,8 +384,22 @@ async function runValidate(run: Run): Promise<number> {
   const projects: LoadedProject[] = [];
   const issues: ManifestIssue[] = [];
   for (const slug of slugs) {
+    const { dir } = projectLayout(slug, env, cwd);
+    let project: LoadedProject | undefined;
     try {
-      projects.push(await loadManifests(projectLayout(slug, env, cwd).dir, slug));
+      project = await loadManifests(dir, slug);
+      projects.push(project);
+    } catch (error) {
+      if (!(error instanceof ManifestError)) throw error;
+      issues.push(...error.issues);
+    }
+    const reviewPath = join(dir, REVIEW_FILE);
+    if (!existsSync(reviewPath)) continue;
+    // Review keys are only checked against a valid backlog; an invalid one already reports its issues.
+    const backlog = project?.manifests.backlog;
+    try {
+      await loadReview(reviewPath, backlog ? backlogKeys(backlog) : undefined);
+      project?.files.push(reviewPath);
     } catch (error) {
       if (!(error instanceof ManifestError)) throw error;
       issues.push(...error.issues);
@@ -387,6 +414,23 @@ async function runValidate(run: Run): Promise<number> {
       ? `${JSON.stringify({ valid: true, projects: report }, null, 2)}\n`
       : `${report.flatMap(({ files }) => files.map((file) => `${file}: ok`)).join('\n')}\nAll manifests follow the conventions.\n`,
   );
+  return ExitCode.Ok;
+}
+
+/** `preview`: the backlog as apply would write it, with its review, as Markdown (or JSON). Offline: no env needed. */
+async function runPreview(run: Run): Promise<number> {
+  const { options, env, cwd } = run;
+  const slug = options.project!;
+  const preview = await buildPreview(projectLayout(slug, env, cwd).dir, slug);
+  const output = options.json ? `${JSON.stringify(preview, null, 2)}\n` : renderPreviewMarkdown(preview);
+  if (options.out === undefined) {
+    print(run, output);
+    return ExitCode.Ok;
+  }
+  const path = resolve(cwd, options.out);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, output);
+  emit(run, { out: relative(cwd, path) }, () => `Preview written to ${relative(cwd, path)}\n`);
   return ExitCode.Ok;
 }
 
@@ -648,6 +692,8 @@ function dispatch(run: Run): Promise<number> {
   switch (run.options.command) {
     case 'validate':
       return runValidate(run);
+    case 'preview':
+      return runPreview(run);
     case 'bootstrap':
       return runBootstrap(run);
     case 'upload':

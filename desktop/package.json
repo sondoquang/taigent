@@ -1,0 +1,75 @@
+{
+  "name": "taigent-desktop",
+  "productName": "Taigent Desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Xem trước, góp ý và duyệt backlog Taiga (taiga/<slug>/backlog.yaml) trước khi đẩy lên Taiga.",
+  "license": "MIT",
+  "author": "Taigent",
+  "type": "module",
+  "main": "out/main.js",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json && node scripts/build.mjs",
+    "start": "npm run build && electron .",
+    "stage": "node scripts/stage-taigent.mjs",
+    "dist": "npm run build && node scripts/stage-taigent.mjs && electron-builder --publish never",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "build": {
+    "appId": "io.github.sondoquang.taigent-desktop",
+    "productName": "Taigent Desktop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "!out/**/*.map",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "stage/taigent/node_modules",
+        "to": "taigent/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Taigent-Desktop-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "dmg": {
+      "artifactName": "Taigent-Desktop-${version}-${arch}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "dompurify": "^3.4.17",
+    "electron": "45.2.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "marked": "^18.1.2",
+    "playwright-core": "^1.64.1",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,12 +1,12 @@
 ---
 name: taiga-plan-backlog
-description: "Taiga backlog planning into the backlog manifest (epics, stories, tasks), files only. Use when turning a spec or PRD into a Taiga backlog, or adding or changing epics, stories or tasks of an existing manifest."
-allowed-tools: Bash(npx taigent validate *) Bash(npx taigent plan *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) mcp__taiga__listProjects mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory
+description: "Taiga backlog planning into the backlog manifest (epics, stories, tasks), files only. Use when turning a spec or PRD into a Taiga backlog, adding or changing epics, stories or tasks of an existing manifest, or answering the BA/PO review comments in review.yaml."
+allowed-tools: Bash(npx taigent validate *) Bash(npx taigent plan *) Bash(npx taigent preview *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) PowerShell(npx taigent preview *) mcp__taiga__listProjects mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory
 ---
 
 # Taiga plan backlog
 
-Turn a spec into the **backlog manifest** `taiga/<slug>/backlog.yaml`. This skill writes repository files only. Taiga changes later, through `taiga-apply-backlog` (Claude Code `/taiga-apply-backlog`, Codex `$taiga-apply-backlog`), after a human has reviewed the manifest diff.
+Turn a spec into the **backlog manifest** `taiga/<slug>/backlog.yaml`, and answer the review comments of the Business Analyst / Product Owner in `taiga/<slug>/review.yaml`. This skill writes repository files only. Taiga changes later, through `taiga-apply-backlog` (Claude Code `/taiga-apply-backlog`, Codex `$taiga-apply-backlog`), after a human has reviewed the manifest.
 
 ## 0. Check the setup
 
@@ -19,13 +19,13 @@ Taiga MCP tool names below are those of the `taiga` server; your agent prefixes 
 In the taigent root:
 
 - `docs/taiga/conventions.md`: plan → review → apply (§1), tags (§4), keys (§5), epic/story/task templates (§6), banned MCP tools (§10). Read §1 and §4–§6 before editing.
-- `docs/cli.md`, section "Manifest layout": the `backlog.yaml` schema. Fields it does not list are rejected. Section "Commands": the `plan --json` output.
+- `docs/cli.md`, section "Manifest layout": the `backlog.yaml` schema. Fields it does not list are rejected. Section "Commands": the `plan --json` output. Section "Review": the `review.yaml` format and `taigent preview`.
 
 Run each `npx taigent …` command exactly as written, alone in its own shell call from the project root, and branch on its exit code (all codes: `docs/cli.md` §Exit codes).
 
 ## 1. Gather the inputs
 
-- **Spec**: the path, URL or text the user gave; a one-line request such as "add a password-reset story under AUTH" is a spec too. Read all of it.
+- **Spec**: the path, URL or text the user gave; a one-line request such as "add a password-reset story under AUTH" is a spec too. Read all of it. A request to answer the review ("xử lý comment review") needs no other spec: the open comments of `review.yaml` are the spec.
 - **Slug**: the project the user named. With exactly one directory under `taiga/`, use it; otherwise ask. A slug without a `taiga/<slug>/` directory: check with `listProjects` that the project exists on Taiga; when it does not, plan anyway, skip the Taiga reads of step 2, and name `taiga-bootstrap-project` as the step before apply in your report.
 
 Done when you have read the spec and know the slug.
@@ -58,17 +58,32 @@ Shape every epic, story and task per conventions §4–§6, and write subjects a
 
 Done when every requirement of the spec maps to a story or task, or is named as out of scope in your report.
 
-## 4. Validate
+## 4. Answer the review
 
-Run `npx taigent validate --project <slug>`. Exit 4 prints each problem as `file: path: message [rule]`; fix every one and run it again. Done when it exits 0.
+`taiga/<slug>/review.yaml` holds, per item key, the reviewer's `verdict` (`approved` or `changes`) and their `comments`; Taigent Desktop or the reviewer writes it. Skip this step when the file is absent. `npx taigent preview --project <slug>` (offline) shows every item with its review status and open comments.
 
-## 5. Report
+For each comment whose `resolved` is `false` or missing:
+
+1. Address it by editing `backlog.yaml` with the rules of step 3: the comment's item key names what to change.
+2. Set `resolved: true` and `reply:` a short answer in Vietnamese saying what changed, e.g. `reply: Đã thêm tiêu chí khoá tài khoản sau 5 lần sai.` Edit only these two fields of that comment.
+3. A comment that needs a decision you cannot take from the spec, or that you disagree with: leave the manifest and `resolved: false`, set `reply` to your question or reason, and list it in your report.
+
+The verdicts and the comments' `id`, `by`, `at` and `text` belong to the reviewer: never change, add or remove them. An item edited after its `approved` verdict becomes **stale** (its digest changed) and goes back to the reviewer. When the user has you remove an item that `review.yaml` lists, delete its entry there too; validate reports `key-reference` otherwise.
+
+Done when every open comment is resolved or carries your question.
+
+## 5. Validate
+
+Run `npx taigent validate --project <slug>`; it checks `review.yaml` too. Exit 4 prints each problem as `file: path: message [rule]`; fix every one and run it again. Done when it exits 0.
+
+## 6. Report
 
 Tell the user:
 
 - keys added, and keys changed with the fields that changed;
 - items the spec no longer covers;
 - hand-made Taiga work that overlaps the spec, and any part of Taiga that could not be read;
-- next step: review `git diff taiga/<slug>/`, then run `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`).
+- review comments answered (key, comment id, reply), comments left open with your question, and approved items you changed (now stale);
+- next step: the reviewer checks the backlog in Taigent Desktop or with `npx taigent preview --project <slug>` (and `git diff taiga/<slug>/`), then run `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`). An `approved` verdict is not the user's consent to apply.
 
 Taiga stays read-only in this skill: read it only through `npx taigent plan` and the MCP read tools of `allowed-tools` (conventions §10).

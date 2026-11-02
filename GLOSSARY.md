@@ -18,6 +18,23 @@ _Avoid_: New format, Cohn format
 The earlier shape of a user story, free text with a list of acceptance criteria, kept only for user stories already on Taiga.
 _Avoid_: Old format
 
+**Backlog item**:
+An epic, story or task planned in a project's backlog manifest, whether or not it is on Taiga yet.
+_Avoid_: Ticket (reserved for a user story assigned to you), card
+
+**Review**:
+The Business Analyst's or Product Owner's check of the planned backlog items before they are applied to Taiga, kept in the project's `review.yaml` as verdicts and comments per item.
+_Avoid_: Approval (a review is not consent to apply)
+
+**Verdict**:
+A reviewer's decision on one backlog item: approved, or changes requested. Only the reviewer sets it.
+
+**Stale verdict**:
+A verdict given on an earlier version of the item: what apply would write for it has changed since, so it must be reviewed again.
+
+**Review comment**:
+A reviewer's remark on one backlog item; open until the agent addresses it in the manifest and marks it resolved with a reply.
+
 ### Reporting on your work
 
 **Ticket**:

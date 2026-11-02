@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Taigent Desktop</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">Taigent <span>Desktop</span></div>
+      <button id="open-repo" class="btn" type="button">Mở thư mục repo…</button>
+      <div class="repo" id="repo-path" title="">Chưa mở repo</div>
+      <label class="project-picker">
+        Dự án
+        <select id="project-select" disabled>
+          <option value="">—</option>
+        </select>
+      </label>
+      <div class="spacer"></div>
+      <button id="plan-btn" class="btn" type="button" disabled>Xem thay đổi trên Taiga</button>
+      <button id="apply-btn" class="btn primary" type="button" disabled>Đẩy lên Taiga</button>
+      <button id="login-btn" class="btn ghost" type="button">Đăng nhập</button>
+    </header>
+
+    <section class="summary" id="summary" aria-label="Tổng quan"></section>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <div class="filters" role="tablist" aria-label="Lọc">
+          <button type="button" class="filter active" data-filter="all">Tất cả</button>
+          <button type="button" class="filter" data-filter="unreviewed">Chưa duyệt</button>
+          <button type="button" class="filter" data-filter="changes">Cần sửa</button>
+          <button type="button" class="filter" data-filter="stale">Đã đổi</button>
+        </div>
+        <nav class="tree" id="tree" aria-label="Backlog" tabindex="0"></nav>
+      </aside>
+
+      <section class="detail" id="detail">
+        <div id="detail-content" class="detail-content">
+          <div class="empty">Mở thư mục repo có <code>taiga/&lt;slug&gt;/backlog.yaml</code>, rồi chọn dự án.</div>
+        </div>
+        <form id="composer" class="composer" hidden>
+          <label for="comment-text">Góp ý cho mục này</label>
+          <textarea id="comment-text" rows="3" placeholder="Viết góp ý cho agent… (Ctrl+Enter để gửi)"></textarea>
+          <div class="composer-actions">
+            <span class="hint">j/k hoặc ↑/↓ để chuyển mục</span>
+            <button type="submit" class="btn primary">Gửi góp ý</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <footer class="statusbar" id="statusbar"></footer>
+
+    <dialog id="login-dialog" class="modal">
+      <form id="login-form" method="dialog">
+        <h2>Đăng nhập Taiga</h2>
+        <p class="muted">
+          Mật khẩu chỉ gửi tới Taiga một lần để lấy token; ứng dụng không lưu mật khẩu. Token được cất trong kho
+          thông tin đăng nhập của hệ điều hành, dùng chung với <code>taigent login</code>.
+        </p>
+        <label>URL API Taiga <input id="login-url" type="url" required placeholder="https://taiga.example.com/api/v1" /></label>
+        <label>Tên đăng nhập hoặc email <input id="login-user" type="text" required autocomplete="username" /></label>
+        <label>Mật khẩu <input id="login-password" type="password" required autocomplete="current-password" /></label>
+        <p class="error" id="login-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" id="login-cancel">Huỷ</button>
+          <button type="submit" class="btn primary" id="login-submit">Đăng nhập</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="result-dialog" class="modal wide">
+      <div id="result-content"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="result-close">Đóng</button>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script src="renderer.js"></script>
+  </body>
+</html>

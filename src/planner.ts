@@ -138,9 +138,10 @@ export function describePlanOperation(op: Operation): string {
 /**
  * Story description. The user story format renders the use case, the free text, one checkbox per scenario with its
  * Given/When/Then, then the spec link. The legacy format keeps its template byte for byte: free text, acceptance
- * criteria as a checklist, then the spec link.
+ * criteria as a checklist, then the spec link. Exported so `taigent preview` (src/review.ts) shows exactly the text
+ * apply writes.
  */
-function storyDescription(story: StorySpec): string {
+export function storyDescription(story: StorySpec): string {
   const parts: string[] = [];
   let checklist: string[];
   if (story.format === 'user-story') {
