@@ -71,6 +71,7 @@ One directory per Taiga project, named by its slug, committed to git:
 taiga/<slug>/
   backlog.yaml   # desired epics → stories → tasks
   docs.yaml      # wiki pages + attachments (optional)
+  review.yaml    # verdicts and comments of the BA/PO review, see Review (optional; commit it)
   state.json     # written by apply: key → Taiga id/ref/version (commit it)
 ```
 
@@ -242,9 +243,11 @@ is the same as `plan`). Without `--yes` or `--dry-run`, a writing command prints
 and exits 2 when there are changes.
 
 - `taigent validate [--project <slug>] [--json]`: checks every manifest present in `taiga/<slug>/` (all project
-  directories without `--project`) against the schema and the conventions. Offline: needs no `TAIGA_*` variable
-  and never contacts Taiga. Exit 0 when valid, 4 otherwise. `--json` prints
-  `{ "valid": true, "projects": [{ "slug", "files": ["taiga/demo/backlog.yaml", …] }] }`.
+  directories without `--project`) against the schema and the conventions, and `review.yaml` when present (see
+  [Review](#review)). Offline: needs no `TAIGA_*` variable and never contacts Taiga. Exit 0 when valid, 4 otherwise.
+  `--json` prints `{ "valid": true, "projects": [{ "slug", "files": ["taiga/demo/backlog.yaml", …] }] }`.
+- `taigent preview --project <slug> [--out <file>] [--json]`: the backlog as `apply` would write it, with its
+  review; offline. See [Review](#review).
 - `taigent plan --project <slug> [--json]`: reads Taiga, prints the operations `apply` would run and the
   orphans. Never writes.
 - `taigent apply --project <slug> --yes [--json]`: runs the plan in order, writing `state.json` after each
@@ -299,6 +302,56 @@ names the item, nothing was overwritten, and re-running `plan` shows the new sta
 The text form is `<file>: <path>: <message> [<rule>]`. `plan`/`apply` validate the whole project directory the
 same way (and require `backlog.yaml`) before contacting Taiga; after reading Taiga they also refuse to create a story
 in the legacy format (rule `story-format`, see [Reconciliation](#reconciliation)), still before any write.
+
+## Review
+
+Before `apply`, the Business Analyst / Product Owner reviews the backlog the agent wrote: in Taigent Desktop
+(`docs/desktop.md`) or with `taigent preview`. Verdicts and comments live in `taiga/<slug>/review.yaml`, committed
+with the manifests; the agent answers the comments by editing the manifests (skill `taiga-plan-backlog`). The review
+never writes to Taiga, and `plan`/`apply` ignore `review.yaml`: apply still needs the user's explicit approval
+(`docs/taiga/conventions.md` §1).
+
+`taigent preview --project <slug> [--out <file>] [--json]` reads `backlog.yaml` (required; the whole project
+directory is validated like `plan`), `state.json` and `review.yaml`, offline (no `TAIGA_*` variable, no login). The
+text form is one Markdown page: a summary table (epics, stories, tasks, new / on Taiga, approved, changes requested,
+not reviewed, stale, open comments), then each epic → story → task with its tags, custom attributes, Taiga ref
+(from `state.json`), review status and comments, and its description exactly as apply writes it (a story's
+includes its acceptance criteria and spec link). `--json` prints the `Preview` object of `src/review.ts`
+(`{ project: { slug, name? }, summary, epics: [{ …item, stories: [{ …item, format, spec, tasks }] }] }`, `format`
+being `user-story` or `legacy`,
+each item `{ type, key, subject, description, tags, customAttributes, parent?, applied?: { id, ref }, digest,
+review: { verdict?, stale, by?, at?, comments, openComments } }`). `--out <file>` writes the page (or the JSON) to
+that file instead and prints `Preview written to <file>` (`{ "out": "<file>" }` with `--json`). Exit 0; 4 when a
+manifest or `review.yaml` is invalid.
+
+`review.yaml`:
+
+```yaml
+items:
+  AUTH-LOGIN:                      # a key of backlog.yaml
+    verdict: approved              # approved | changes (optional)
+    digest: 3f1c…                  # required with verdict: the item's digest when the verdict was given
+    by: Lan                        # optional
+    at: 2026-11-02T09:30:00Z       # optional, ISO 8601 date-time
+    comments:                      # optional
+      - id: c1                     # unique within the item (c1, c2, …)
+        by: Lan
+        at: 2026-11-02T09:31:00Z
+        text: Thiếu tiêu chí khi khoá tài khoản.
+        resolved: true             # default false; the agent sets it once the manifest addresses the comment
+        reply: Đã thêm tiêu chí khoá 15 phút.   # optional, the agent's short answer
+```
+
+An item's **digest** is the SHA-256 of what apply writes for it: subject, description as written (a story's with
+its acceptance criteria and spec), tags (lowercased, order-insensitive), custom attributes and parent key. A verdict
+whose digest differs from the item's current one is **stale**: the item changed after it was reviewed, so it counts
+as stale, not as approved. Editing `review.yaml` never changes a digest. Files are written with sorted keys
+(`saveReview`); items with neither a verdict nor a comment are dropped.
+
+`validate` reports, besides the generic `type`, `required` and `known-field` rules: `key-format` and `key-reference`
+for item keys (a key the backlog does not declare, e.g. after the item was removed or renamed: move or delete its
+entry), `review-verdict` (a verdict other than `approved`/`changes`) and `review-comment-unique` (a duplicate
+comment id within an item). `preview` itself tolerates unknown keys and lists them in `summary.unknownReviewKeys`.
 
 ## Bootstrap
 
@@ -655,7 +708,7 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 |---|---|---|
 | `ask-taigent` | User only (as below) | Router: which Taigent skill, workflow step or CLI command fits a situation, the plan → review → apply rules, and how to maintain the skills. Reads only |
 | `taiga-setup` | Model or user | Checks `npx --no -- taigent --help`, the login (`taigent whoami`; the fix is the user running `npx taigent login` in their own terminal), and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (the `taiga` entry for `.mcp.json`/`.codex/config.toml`, running `taigent mcp`, once the user agrees), and installs the skills into another project on request (`npx skills add`) |
-| `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
+| `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys) → answers the open comments of `review.yaml` (`resolved` + `reply`, never verdicts; `taigent preview` offline), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-create-user-story` | User only (as above) | One user story in the conventions §6.1 format under an existing manifest epic: drafts it, checks for duplicates (manifest, `taigent plan --json`, MCP read tools), adds it to `backlog.yaml`, `taigent validate` → `taigent plan --json` → asks → `taigent apply --yes`; hands over to `taiga-plan-backlog` when no epic fits and to `taiga-apply-backlog` when the plan holds other changes. Creates no epic or task |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
@@ -664,7 +717,7 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-my-tickets` | Model or user | Read-only report of your tickets in a period (the current week, Monday to Sunday, by default): `taigent tickets --json`, the one shell command it runs, laid out as header, summary, by day, by project, still open, notes, in the user's language |
 | `taiga-update-ticket` | Model or user (`policy.allow_implicit_invocation: true`) | Finds the tickets a request names (`taigent tickets --json`; "close them" = the end-of-day reminder's list), then `taigent status` / `taigent comment` per ticket, at once, and reports each outcome |
 
-Their `allowed-tools` pre-approve only `npx taigent validate|plan|apply|bootstrap|upload|tickets|status|comment` (as
+Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment` (as
 `Bash(...)` and, for Claude Code's Windows PowerShell tool, `PowerShell(...)` rules) and Taiga MCP read tools; every
 skill that pre-approves a plan-gated writing command (`apply`, `bootstrap`, `upload`) is user-only on both agents
 (`test/skills.test.ts` enforces both rules). They grant, not restrict: the gate before `--yes` is the skill's explicit
@@ -705,9 +758,9 @@ The `taiga-setup` skill checks all of it and names each fix.
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat |
 | 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
-| 4 | Manifest invalid or missing (including a new story without `use_case`/`scenarios`, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
+| 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
 
 ## Code map
@@ -723,7 +776,8 @@ The `taiga-setup` skill checks all of it and names each fix.
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types to Taiga's endpoint and field names (`TAIGA_ITEM`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links and attribute values `buildPlan` needs |
-| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), `describePlanOperation`, `srcTag(key)` |
+| Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), `describePlanOperation`, `srcTag(key)`, `storyDescription(story)` (the story template, shared with preview) |
+| Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, pure `setVerdict`/`addComment`, `itemDigest`, `buildPreview(dir, slug)` → `Preview`, `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
@@ -743,7 +797,8 @@ dependency order (`context.loaded` holds the manifests loaded before it, `contex
 
 ## Tests
 
-`npm test` (Node's built-in runner) and `npm run typecheck`. Tests only go through the CLI seam:
+`npm test` (Node's built-in runner) and `npm run typecheck`. Tests go through the CLI seam, except the library APIs
+other programs call directly (`storeLogin`, the review API of `src/review.ts`):
 `test/support/harness.ts` (`startHarness(t)`) spawns `bin/taigent.js` in a temp working directory against
 `test/support/fake-taiga.ts` (`startFakeTaiga()`), an in-process fake of the Taiga API that validates
 payloads like Taiga (and additionally rejects unknown fields). Extend the fake rather than mocking modules. Every run

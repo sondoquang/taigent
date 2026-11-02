@@ -1,0 +1,4 @@
+# Build output: bundled app, staged taigent runtime, installers
+out/
+stage/
+release/

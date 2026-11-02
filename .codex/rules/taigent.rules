@@ -4,7 +4,7 @@
 # status/comment reach Taiga. apply/bootstrap/upload still need --yes, which the skills add only after the user's
 # confirmation; status/comment edit one of the user's own tickets, named in the request.
 prefix_rule(
-    pattern = ["npx", "taigent", ["validate", "plan", "apply", "bootstrap", "upload", "tickets", "status", "comment"]],
+    pattern = ["npx", "taigent", ["validate", "plan", "apply", "bootstrap", "upload", "tickets", "status", "comment", "preview"]],
     decision = "allow",
     justification = "taigent CLI commands of the standard allowlist (tools/taiga/allowlist.txt)",
     match = [
@@ -16,6 +16,7 @@ prefix_rule(
         "npx taigent tickets --from 2026-10-26 --to 2026-11-01 --project vigo-auth --json",
         "npx taigent status --project vigo-auth 84 Done",
         "npx taigent comment --project vigo-auth 84 'tested on UAT'",
+        "npx taigent preview --project vigo-auth --json",
     ],
     not_match = [
         "npx taigent skills check",

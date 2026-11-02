@@ -205,6 +205,20 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
 - Details: [docs/cli.md](docs/cli.md) (commands, credentials, manifests, exit codes) and
   [§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).
 
+## Taigent Desktop (review app for BA/PO)
+
+`desktop/` holds **Taigent Desktop**, an Electron app for Business Analysts and Product Owners: open the repository
+folder, read the backlog the agent wrote exactly as `apply` would write it, comment and mark each item **Đạt**
+(approved) or **Cần sửa** (changes) in `taiga/<slug>/review.yaml`, log in, see the Taiga plan and push after an
+explicit confirmation. It runs the taigent CLI and core bundled inside it (no Node needed for the installed app).
+
+```sh
+npm run build && cd desktop && npm install && npm start   # from source
+npm run dist                                              # in desktop/: Windows installer in desktop/release/
+```
+
+Guide (Vietnamese): [docs/desktop.md](docs/desktop.md).
+
 ## Develop taigent
 
 ```sh

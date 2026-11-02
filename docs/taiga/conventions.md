@@ -19,14 +19,32 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
    - Có thể đọc Taiga để tránh tạo trùng việc đã có: `taigent plan --project <slug> --json` (chỉ đọc) cho các item
      đã có tag `src:`, và tool MCP đọc cho việc người khác tạo tay.
    - Kết thúc bằng `taigent validate --project <slug>`. Phải ra exit 0.
-2. **Review.** Người dùng duyệt diff manifest trong git như duyệt code, rồi chạy (hoặc để agent chạy)
-   `taigent plan --project <slug>` để xem chính xác những gì sẽ đổi trên Taiga (exit 3 = có thay đổi).
+2. **Review.** Business Analyst / Product Owner duyệt backlog trước khi apply:
+   - **Taigent Desktop** (`docs/desktop.md`) hoặc `taigent preview --project <slug>` (offline, in một trang Markdown
+     đúng những gì `apply` sẽ ghi, kèm trạng thái review). Mỗi item được đánh dấu **approved** (đồng ý) hoặc
+     **changes** (cần sửa) và có thể kèm comment. Tất cả nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest
+     (định dạng: `docs/cli.md` mục Review).
+   - Agent đọc `review.yaml`, xử lý từng comment chưa resolved bằng cách sửa manifest, rồi đặt `resolved: true` và
+     `reply` (trả lời ngắn bằng tiếng Việt) cho comment đó. Agent **không bao giờ** đổi verdict; verdict chỉ do người
+     review đặt. Item sửa sau khi đã approved thì verdict thành **stale** (digest khác) và cần duyệt lại.
+   - Người dùng duyệt diff manifest trong git như duyệt code, rồi chạy (hoặc để agent chạy)
+     `taigent plan --project <slug>` để xem chính xác những gì sẽ đổi trên Taiga (exit 3 = có thay đổi).
 3. **Apply (chỉ sau khi người dùng đồng ý tường minh).** `taigent apply --project <slug> --yes`, rồi commit
-   `state.json` cùng manifest. Agent **không bao giờ** tự thêm `--yes` khi người dùng chưa đồng ý.
+   `state.json` cùng manifest. Agent **không bao giờ** tự thêm `--yes` khi người dùng chưa đồng ý. Approve trong
+   `review.yaml` **không** phải là đồng ý apply: `plan`/`apply` bỏ qua `review.yaml`, và apply vẫn cần người dùng đồng
+   ý tường minh.
 
 `plan` và `apply` từ chối manifest sai quy ước với exit 4 và không ghi gì lên Taiga. Riêng rule `story-format` cho
 story sắp được tạo (§6.2) được kiểm sau khi đọc Taiga, vì chỉ Taiga biết story nào là mới. Chạy lại `apply` luôn an
 toàn: item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
+
+`taigent validate` kiểm cả `review.yaml` (khi có):
+
+| Rule | Quy tắc |
+|---|---|
+| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá hoặc đổi key item thì chuyển hoặc xoá mục review của nó. |
+| `review-verdict` | `verdict` là `approved` hoặc `changes`, và đi kèm `digest` của item lúc duyệt. |
+| `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 
 Ngoại lệ duy nhất của quy trình trên là sửa **ticket của chính mình** (user story được giao cho mình):
 `taigent status` (đổi status) và `taigent comment` (thêm comment) ghi ngay, không cần `--yes`, vì chính yêu cầu của

@@ -204,7 +204,7 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
  * `taigent` commands a skill may pre-approve. The plan-gated writing ones make a skill explicit-only; `status` and
  * `comment` edit one of the user's own tickets, named in the request itself, so their skill may run implicitly.
  */
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment'];
+const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
 
@@ -238,7 +238,7 @@ const shellRules = (...commands: string[]) => ['Bash', 'PowerShell'].flatMap((sh
 
 test('each taiga-* skill pre-approves only the taigent commands of its step', async () => {
   const expected: Record<string, string[]> = {
-    'taiga-plan-backlog': shellRules('validate', 'plan'),
+    'taiga-plan-backlog': shellRules('validate', 'plan', 'preview'),
     'taiga-apply-backlog': shellRules('validate', 'plan', 'apply'),
     'taiga-create-user-story': shellRules('validate', 'plan', 'apply'),
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
