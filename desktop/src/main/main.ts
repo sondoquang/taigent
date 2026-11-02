@@ -10,9 +10,11 @@ import {
   type ApplyReport,
   CHANNELS,
   type AppState,
+  type CloneRepoInput,
   type ItemRef,
   type LoginInput,
   type LoginStatus,
+  type NewRepoInput,
   type Plan,
   type ProjectSettingsInput,
   type RemoveItemRequest,
@@ -31,6 +33,8 @@ import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
 import { readTaigaReport } from './taiga-report.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
+import { cloneRepo, createRepo, openInstall, openNpmInstall, runInit, setupStatus } from './setup.ts';
+import { checkTools } from './tools.ts';
 import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
 import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
 
@@ -302,6 +306,26 @@ function registerIpc(): void {
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
   handle(CHANNELS.gitPush, async () => gitPush(requireRepo()));
+  handle(CHANNELS.pickParentFolder, async () => {
+    const picked = await dialog.showOpenDialog(window!, { title: 'Chọn thư mục chứa repo', properties: ['openDirectory', 'createDirectory'] });
+    return picked.canceled ? undefined : picked.filePaths[0];
+  });
+  handle(CHANNELS.createRepo, async (input: NewRepoInput) => {
+    const created = await createRepo(input);
+    if (!created.ok) return created;
+    const opened = await openRepoAt(created.value);
+    if (!opened.ok) return opened;
+    return { ok: true, value: { repo: opened.value, init: await runInit(created.value) } };
+  });
+  handle(CHANNELS.cloneRepo, async (input: CloneRepoInput) => {
+    const cloned = await cloneRepo(input);
+    return cloned.ok ? openRepoAt(cloned.value) : cloned;
+  });
+  handle(CHANNELS.setupStatus, async () => setupStatus(requireRepo()));
+  handle(CHANNELS.runInit, async () => runInit(requireRepo()));
+  handle(CHANNELS.runNpmInstall, async () => ({ ok: true, value: openNpmInstall(requireRepo()) }));
+  handle(CHANNELS.checkTools, checkTools);
+  handle(CHANNELS.installTool, async (tool: unknown) => openInstall(tool, repoRoot));
   // Tickets need no repository; with one open, its .env (TAIGA_*) applies, as for whoami.
   handle(CHANNELS.readMyTickets, async (from: string, to: string) => readMyTickets(repoRoot ?? app.getPath('home'), String(from), String(to)));
   handle(CHANNELS.setTicketStatus, async (request: TicketStatusRequest) => setTicketStatus(repoRoot ?? app.getPath('home'), request, window!));

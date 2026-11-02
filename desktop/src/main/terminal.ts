@@ -66,20 +66,26 @@ function resolveShell(): string {
 }
 
 /**
- * The shell's arguments: interactive, and for an agent tab the agent started first, then the shell stays open (so a
- * missing agent shows the shell's own error). PowerShell switches its console to UTF-8 first, so native programs'
- * output (git, the agents) shows Vietnamese correctly.
+ * The shell's arguments: interactive, and with `command` (an agent, an install command) that command run first, then
+ * the shell stays open (so a missing agent shows the shell's own error). PowerShell switches its console to UTF-8
+ * first, so native programs' output (git, the agents) shows Vietnamese correctly.
  */
-function shellArgs(shell: string, agent: TerminalAgent | undefined): string[] {
+function shellArgs(shell: string, command: string | undefined): string[] {
   if (process.platform === 'win32') {
     const utf8 = '[Console]::InputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()';
-    return ['-NoLogo', '-NoExit', '-Command', agent ? `${utf8}; ${agent}` : utf8];
+    return ['-NoLogo', '-NoExit', '-Command', command ? `${utf8}; ${command}` : utf8];
   }
-  return agent ? ['-l', '-i', '-c', `${agent}; exec "$0" -l`, shell] : ['-l'];
+  return command ? ['-l', '-i', '-c', `${command}; exec "$0" -l`, shell] : ['-l'];
+}
+
+/** For a `skill` tab: the shell runs `command`, then stays open for the user. */
+export function shellRun(command: string): TerminalCommand {
+  const shell = resolveShell();
+  return { file: shell, args: shellArgs(shell, command) };
 }
 
 /** Kills `pid` and every process under it. */
-function killTree(pid: number): Promise<void> {
+export function killTree(pid: number): Promise<void> {
   if (process.platform !== 'win32') {
     killGroup(pid);
     return Promise.resolve();

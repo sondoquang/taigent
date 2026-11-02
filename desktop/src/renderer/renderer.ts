@@ -27,6 +27,7 @@ import { mountTaigaReport } from './taiga-report.ts';
 import { gitRepoChanged, wireGit } from './git.ts';
 import { mountMyTickets } from './my-tickets.ts';
 import { wireTerminal } from './terminal.ts';
+import { mountSetup, setupLoginChanged, setupRepoChanged } from './setup.ts';
 import { mountWiki, refreshWiki } from './wiki.ts';
 
 declare global {
@@ -661,6 +662,7 @@ async function pushToTaiga(): Promise<void> {
 async function refreshLogin(): Promise<void> {
   state.login = await api.whoami();
   renderButtons();
+  setupLoginChanged();
 }
 
 async function onLoginButton(): Promise<void> {
@@ -711,6 +713,7 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
   clearChangesResult();
   render();
   gitRepoChanged();
+  setupRepoChanged();
   const only = result.value.projects.length === 1 ? result.value.projects[0] : undefined;
   if (only) void openProject(only.slug);
 }
@@ -806,6 +809,15 @@ function wire(): void {
   });
   mountTaigaReport({ api, failureBlock });
   wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
+  mountSetup({
+    api,
+    failureBlock,
+    repoRoot: () => state.repo?.root,
+    useRepo,
+    login: () => void onLoginButton(),
+    refreshLogin,
+    loginStatus: () => state.login,
+  });
   mountMyTickets({ api, loginKey: () => `${state.login?.loggedIn}:${state.login?.apiUrl}:${state.login?.username}`, toast, failureBlock });
   mountWiki({ api, view: () => state.view, toast, failureBlock });
 }
@@ -817,6 +829,7 @@ async function start(): Promise<void> {
   document.title = `Taigent Desktop ${initial.versions.app}`;
   renderVersions(initial.versions);
   render();
+  setupRepoChanged();
   if (initial.repo?.projects.length === 1 && initial.repo.projects[0]) await openProject(initial.repo.projects[0].slug);
   await refreshLogin();
 }

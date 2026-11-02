@@ -26,6 +26,9 @@
   (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là repo đang mở, không qua shell;
 - **form `project.yaml`**: `readProjectSettings` / `saveProjectSettings` trong `dist/project-settings.js`. Form chỉ ghi
   file trong repo, không ghi lên Taiga.
+- **setup repo**: `init --dry-run --json` (repo đã có Taigent chưa, có cũ hơn ứng dụng không) và `init --json` của
+  chính taigent kèm ứng dụng, chạy như các lệnh CLI ở trên, thư mục làm việc là repo vừa tạo, clone hoặc mở (xem
+  [Setup repo](#setup-repo-wizard)).
 
 ## Cài đặt
 
@@ -46,6 +49,53 @@ Lần chạy đầu `npm start` có thể tự tải Electron nếu `npm install
 taigent của chính repo này: lõi từ `dist/` (sửa `src/` thì chạy lại `npm run build` ở thư mục gốc), CLI từ
 `bin/taigent.js`.
 
+### Setup repo (wizard)
+
+Mục **Setup repo** (thanh điều hướng, phía trên Settings) đưa một repo tới chỗ dùng được Taigent, theo bốn bước. Khi
+chưa mở repo nào, thanh trên cùng có gợi ý *Chưa mở repo* kèm nút **Setup repo**.
+
+1. **Repo.** Chọn **Thư mục chứa repo**, rồi:
+   - **Tạo repo mới**: nhập tên thư mục. Ứng dụng tạo `<thư mục chứa>/<tên>`, chạy `git init`, tạo `taiga/` (kèm
+     `.gitkeep` để commit được) và `.gitignore` (`node_modules/`, `.env`), mở repo đó rồi tự chạy bước 2. Thư mục đã
+     tồn tại thì ứng dụng từ chối, không đụng tới nó.
+   - **Clone từ URL**: URL `https://`, `ssh://`, `git@host:đường-dẫn` hoặc đường dẫn tới một repo trên máy; tên thư
+     mục lấy từ URL (sửa được). Ứng dụng chạy `git clone` không qua shell và không bao giờ hỏi mật khẩu trong terminal
+     (`GIT_TERMINAL_PROMPT=0`): repo riêng tư cần đăng nhập git trước (Git Credential Manager hoặc SSH key). Clone
+     lỗi thì ứng dụng giải thích bằng tiếng Việt (*Không tìm thấy repo ở URL này*, *Không có quyền truy cập*, *Không
+     kết nối được*, kèm nguyên văn lỗi của git, đã che thông tin đăng nhập trong URL) và **xoá thư mục dở**, nên không
+     còn gì sót lại. Clone quá 10 phút thì bị dừng, cũng xoá thư mục.
+   - **Mở repo có sẵn…**: như nút *Mở thư mục repo…* trên thanh trên cùng.
+2. **Cài Taigent vào repo.** Mỗi khi mở một repo (từ wizard hay thanh trên cùng), ứng dụng chạy
+   `taigent init --dry-run --json` của **chính taigent kèm ứng dụng** (không phải bản trong `node_modules` của repo) để
+   biết repo ở trạng thái nào:
+   - *đã cài, cùng version*: init không đổi file nào. Ứng dụng không yêu cầu setup lại;
+   - *chưa cài Taigent* (chưa có skill Taigent nào): thanh trên cùng gợi ý **Cài Taigent**;
+   - *cũ hơn ứng dụng* (init sẽ đổi file, thường là sau khi nâng cấp ứng dụng): thanh trên cùng gợi ý **Chạy lại
+     init**, mục Setup repo liệt kê các file sẽ đổi.
+
+   Bấm **Cài Taigent vào repo** (hoặc **Chạy lại init**) chạy `taigent init --json`: các skill Taigent, entry MCP
+   `taiga` trong `.mcp.json` và `.codex/config.toml`, bộ chạy headless và devDependency `taigent` ghim theo version của
+   ứng dụng ([docs/cli.md § Using the skills in another project](cli.md#using-the-skills-in-another-project)). Ứng
+   dụng liệt kê từng file: *Tạo mới*, *Cập nhật*, *Xoá* hoặc *Giữ nguyên*. Skill, MCP server và dependency khác của repo
+   giữ nguyên. Hãy commit các file đó (mục **Git** chỉ commit `taiga/`, nên commit chúng trong terminal).
+3. **npm install** mở một tab terminal chạy `npm install` ở repo (trên Windows qua `cmd`, vì `npm` là file `.cmd`), có
+   nút **Huỷ**. Wizard báo khi lệnh xong và mã thoát. Cần Node.js 24+ trên máy; khi repo `sondoquang/taigent` còn
+   private, tài khoản git trên máy cần quyền đọc repo đó.
+4. **Kiểm tra** (chạy khi mở mục, bấm **Kiểm tra lại** để chạy lại):
+   - `git`, `claude`, `codex`, `omp`: version (kèm đường dẫn trên `PATH`), hoặc *Chưa cài* kèm lệnh cài và nút **Chạy
+     trong terminal** mở một tab chạy đúng lệnh đó (ví dụ `irm https://claude.ai/install.ps1 | iex`,
+     `npm install -g @openai/codex`, `irm https://omp.sh/install.ps1 | iex`, `winget install --id Git.Git -e`). Ứng dụng
+     **không tự cài** công cụ nào: lệnh chỉ chạy khi bạn bấm. Mỗi công cụ được tìm trên `PATH` rồi chạy `--version`
+     bằng `execFile`, **không qua shell**, với **timeout 10 giây**: quá hạn thì hiện *không trả lời* thay vì treo. Trên
+     Windows, công cụ cài bằng `npm install -g` là file `.cmd`, chỉ shell mới chạy được; ứng dụng đọc file `.cmd` mà npm
+     viết để lấy script và chạy script đó bằng `node`. File `.cmd` kiểu khác được báo là có trên máy nhưng không đọc
+     được version. Cài xong mà vẫn báo *Chưa cài* thì mở lại ứng dụng để nhận `PATH` mới;
+   - **đăng nhập Taiga** (`taigent whoami`): chưa đăng nhập thì có nút **Đăng nhập** mở hộp thoại
+     [Đăng nhập Taiga](#đăng-nhập-taiga);
+   - lời nhắc **duyệt MCP server `taiga`**: lần đầu mở `claude` trong repo, Claude Code hỏi có dùng server `taiga` của
+     `.mcp.json` không, hãy chọn dùng (kiểm tra bằng `claude mcp get taiga`); Codex chỉ nạp `.codex/config.toml` của
+     repo khi bạn trust project.
+
 ## Mở repo và chọn dự án
 
 1. Bấm **Mở thư mục repo…** và chọn thư mục gốc của repo có `taiga/<slug>/backlog.yaml` (repo mà agent đang sửa trên
@@ -61,8 +111,9 @@ một trang wiki hoặc trả lời góp ý trong `review.yaml`, màn hình tự
 
 Bố cục gồm bốn phần, từ trên xuống:
 
-- **Thanh trên cùng**: mở thư mục repo, chọn **Dự án**, bật/tắt **Terminal**, đăng nhập/đăng xuất Taiga. Các phần này
-  dùng chung cho mọi mục.
+- **Thanh trên cùng**: mở thư mục repo, chọn **Dự án**, gợi ý setup (chưa mở repo, repo chưa cài Taigent, hoặc Taigent
+  trong repo cũ hơn ứng dụng; xem [Setup repo](#setup-repo-wizard)), bật/tắt **Terminal**, đăng nhập/đăng xuất Taiga.
+  Các phần này dùng chung cho mọi mục.
 - **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
   - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
   - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)), **Ticket của tôi** (xem
@@ -70,6 +121,8 @@ Bố cục gồm bốn phần, từ trên xuống:
   - **Wiki**: các trang của `docs.yaml`, form tạo/sửa trang và nút **Đẩy wiki lên Taiga** (xem [Wiki](#wiki)).
   - **Git**: pull, commit và push thư mục manifest (xem [Git](#git)).
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
+  - **Setup repo**: tạo, clone hoặc mở repo, cài Taigent vào repo, `npm install` và checklist công cụ (xem
+    [Setup repo](#setup-repo-wizard)).
   - **Settings**: phiên bản của ứng dụng, taigent, Electron và Node. Chưa có thiết lập nào.
 
   Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở.
@@ -377,10 +430,12 @@ tự đổi số cột và số dòng theo panel và báo cho process.
 Đăng nhập Taiga trong ứng dụng bằng hộp thoại **Đăng nhập**, không gõ mật khẩu vào tab terminal. Lần đăng nhập đó
 dùng chung với `npx taigent` và agent chạy trong terminal.
 
-Cho các phần khác của ứng dụng (mục Git, nút skill headless): main process mở tab qua `terminals.open(...)` trong
-`desktop/src/main/terminal.ts`. `{ kind: 'shell', cwd }` mở một shell; `{ kind: 'skill', cwd, title, command: { file,
-args, env? } }` chạy thẳng lệnh đó trong pty (không qua shell). Kết quả có `tab`, `cancel()` (kill cả cây process),
-`exited` (Promise `{ exitCode, signal?, cancelled }`) và `onData(listener)`. Renderer tự hiện panel và chọn tab mới.
+Cho các phần khác của ứng dụng (mục Git, nút skill headless, wizard Setup repo): main process mở tab qua
+`terminals.open(...)` trong `desktop/src/main/terminal.ts`. `{ kind: 'shell', cwd }` mở một shell; `{ kind: 'skill',
+cwd, title, command: { file, args, env? } }` chạy thẳng lệnh đó trong pty (không qua shell). Kết quả có `tab`,
+`cancel()` (kill cả cây process), `exited` (Promise `{ exitCode, signal?, cancelled }`) và `onData(listener)`.
+Renderer tự hiện panel và chọn tab mới. Lệnh cần shell (ví dụ `irm … | iex` khi cài công cụ) dùng
+`command: shellRun('<lệnh>')`: shell của tab chạy lệnh đó rồi vẫn mở để bạn gõ tiếp.
 
 ## Đóng gói
 
@@ -443,7 +498,8 @@ hay upload nó lên Taiga thật. Muốn smoke trên manifest của mình thì t
 `taiga/<slug>`); khi đó script bỏ qua phần issue, phần form và phần wiki, vì chúng dùng các key và trang của fixture.
 
 Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
-không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng và ứng dụng mở vào mục Backlog, mở repo, chụp
+không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng, ứng dụng mở vào mục Backlog và gợi ý *Chưa mở
+repo* trên thanh trên cùng, mở repo, chụp
 cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
 đẩy bị chặn, đi qua Settings (chỉ có trạng thái trống, không có nút; phím `j` không đổi
 mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
@@ -498,8 +554,22 @@ Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form và phần
 kiểm tra shell thấy đúng số cột và dòng mới; chạy một process con (`ping`), đóng tab rồi kiểm tra shell và process con
 đã dừng. Ứng dụng được mở với `PATH` có một `claude` giả (in thư mục làm việc) đứng đầu và không có thư mục nào chứa
 `omp`: nút mở nhanh `claude` phải chạy ở thư mục repo, còn `omp` phải hiện lỗi của shell mà tab và ứng dụng vẫn chạy.
-Phần này để lại một shell chạy `ping`. Sau mục Git, script thoát ứng dụng và kiểm tra mọi process con của ứng dụng đã
-dừng.
+Phần này để lại một shell chạy `ping`. Sau phần setup repo, script thoát ứng dụng và kiểm tra mọi process con của ứng
+dụng đã dừng.
+
+Phần setup repo (`scripts/smoke-wizard.mjs`) chạy cuối, trên một thư mục tạm. Nó đặt vào thư mục đầu tiên của `PATH`
+của ứng dụng: một `codex` giả dạng file `.cmd` mà `npm install -g` viết (in `codex-cli 9.9.9-smoke`), một `claude` giả
+không bao giờ trả lời `--version`, và một `npm` giả (in tham số và thư mục làm việc); `omp` vẫn không có trên `PATH`.
+Script tạo repo mới bằng wizard và kiểm tra: có `.git` và `taiga/`, repo mới là repo đang mở, `taigent init` đã cài đủ
+(chạy `init --dry-run` của taigent trong repo này không còn gì để làm, có `.mcp.json` với server `taiga`), danh sách
+file của wizard đúng bằng các file đó và đều *Tạo mới*, không có gợi ý setup. Rồi: **npm install** mở một tab terminal
+chạy ở repo mới và wizard báo xong với mã 0; checklist hiện `git` với đúng version của máy, `codex` với version đọc qua
+file `.cmd` (không qua shell), `claude` *không trả lời* (timeout), `omp` *Chưa cài* kèm lệnh cài và nút chạy (script
+không bấm), trạng thái đăng nhập Taiga đúng với `whoami` và lời nhắc duyệt MCP server `taiga`. Sau đó sửa một skill
+Taigent trong repo cho cũ đi, mở lại repo và kiểm tra thanh trên cùng gợi ý chạy lại init, bấm gợi ý rồi chạy lại init
+(file *Cập nhật*, repo hết cũ); clone một đường dẫn không có repo và kiểm tra thông báo tiếng Việt, không còn thư mục
+dở; clone một repo bare tạm (không có Taigent) và kiểm tra repo được mở, được đề nghị cài Taigent, rồi cài; cuối cùng
+mở lại repo đã setup và kiểm tra ứng dụng không yêu cầu setup lại.
 
 ## Bảo mật
 
@@ -527,3 +597,9 @@ dừng.
 - Mục Git chạy `git` bằng `execFile`, không qua shell, với `GIT_TERMINAL_PROMPT=0` (không bao giờ chờ nhập mật khẩu).
   Danh sách file cần add và commit đi qua stdin (`--pathspec-from-file`) và được hiểu đúng nguyên văn
   (`--literal-pathspecs`).
+- Wizard **Setup repo** không cho renderer chọn lệnh: renderer chỉ xin "npm install" hoặc "lệnh cài của `git` / `claude`
+  / `codex` / `omp`"; main process kiểm tra tên công cụ nằm trong danh sách cố định và tự chọn lệnh, rồi mở tab `skill`
+  ở repo. Lệnh cài chỉ chạy khi bạn bấm. Phát hiện công cụ chạy `--version` bằng `execFile`, không qua shell, với timeout
+  10 giây. `git init` và `git clone` cũng chạy bằng `execFile` với `GIT_TERMINAL_PROMPT=0` và timeout; URL clone phải
+  là URL git hoặc đường dẫn tuyệt đối, không bao giờ bắt đầu bằng `-`, và được đặt sau `--`. Lỗi clone hiện lên đã che
+  thông tin đăng nhập nằm trong URL.

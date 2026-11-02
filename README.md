@@ -206,6 +206,9 @@ folder, read the backlog the agent wrote exactly as `apply` would write it, comm
 explicit confirmation, and pull, commit and push `taiga/` plus the files `docs.yaml` references with git (never
 merging, rebasing or force-pushing). A terminal panel (`` Ctrl+` ``) runs shells and `claude`, `codex` or `omp` in
 the repository, in tabs. It runs the taigent CLI and core bundled inside it (no Node needed for the installed app).
+Its **Setup repo** wizard creates a repository (`git init` + `taiga/`), clones one or opens one, installs Taigent there
+with its bundled `taigent init`, runs `npm install` in a terminal tab, and checks `git`, `claude`, `codex`, `omp` and the
+Taiga login (it never installs an agent CLI itself).
 
 ```sh
 npm run build && cd desktop && npm install && npm start   # from source

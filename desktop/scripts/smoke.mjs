@@ -5,7 +5,7 @@
 // stubbed to "Huỷ", "Xem thay đổi trên Taiga", bootstrap --dry-run, the Báo cáo report and Ticket của tôi (read-only)
 // use the login only when the app reports one, and "Đẩy wiki lên Taiga" and Ticket của tôi's writes (status, comment)
 // run against an in-process fake Taiga (test/support/fake-taiga.ts; smoke-tickets.mjs for the tickets).
-// Terminal steps: scripts/smoke-terminal.mjs.
+// Terminal steps: scripts/smoke-terminal.mjs; Git: scripts/smoke-git.mjs; setup wizard (last): scripts/smoke-wizard.mjs.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -20,6 +20,7 @@ import { _electron as electron } from 'playwright-core';
 import { parse } from 'yaml';
 import { agentPath, descendants, smokeTerminal, waitGone } from './smoke-terminal.mjs';
 import { smokeGit } from './smoke-git.mjs';
+import { smokeWizard } from './smoke-wizard.mjs';
 import { smokeTickets } from './smoke-tickets.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -54,7 +55,7 @@ const check = (condition, message) => {
   if (!condition) throw new Error(`FAILED: ${message}`);
   log('ok -', message);
 };
-const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'settings'];
+const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'setup', 'settings'];
 /** Switches to a section of the navigation shell and checks that only its screen shows. */
 const goTo = async (page, section) => {
   await page.click(`#nav [data-section="${section}"]`);
@@ -84,8 +85,10 @@ try {
   await page.setViewportSize({ width: 1400, height: 900 }).catch(() => undefined);
   await page.waitForLoadState('domcontentloaded');
   const sections = await page.locator('#nav [data-section]').evaluateAll((buttons) => buttons.map((button) => button.textContent?.trim()));
-  check(sections.join('|') === 'Backlog|Wiki|Taiga|Thay đổi|Git|Settings', `navigation shows ${sections.join(', ')}`);
+  check(sections.join('|') === 'Backlog|Wiki|Taiga|Thay đổi|Git|Setup repo|Settings', `navigation shows ${sections.join(', ')}`);
   check((await page.isVisible('#screen-backlog')) && !(await page.isVisible('#screen-changes')), 'the app opens on Backlog');
+  await page.waitForSelector('#setup-banner[data-state="no-repo"]');
+  log('ok - without a repository, the app points to Setup repo');
 
   await page.click('#open-repo');
   await page.waitForSelector('#tree .node');
@@ -261,6 +264,7 @@ try {
   }
   await smokeTickets({ app, page, work, shots, check, log, login });
   await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
+  await smokeWizard({ app, page, repo, work, shots, check, goTo, log });
   log('screenshots in', shots);
   log('temporary manifests in', manifests);
 } catch (error) {

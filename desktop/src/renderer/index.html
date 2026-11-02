@@ -21,6 +21,10 @@
           <option value="">—</option>
         </select>
       </label>
+      <div id="setup-banner" class="setup-banner" role="status" hidden>
+        <span id="setup-banner-text"></span>
+        <button id="setup-banner-action" class="btn small" type="button"></button>
+      </div>
       <div class="spacer"></div>
       <button id="terminal-toggle" class="btn ghost" type="button" title="Terminal (Ctrl+`)" aria-controls="terminal-dock" aria-expanded="false">Terminal</button>
       <button id="login-btn" class="btn ghost" type="button">Đăng nhập</button>
@@ -34,6 +38,7 @@
         <button type="button" class="nav-item" data-section="changes">Thay đổi</button>
         <button type="button" class="nav-item" data-section="git">Git</button>
         <div class="spacer"></div>
+        <button type="button" class="nav-item" data-section="setup">Setup repo</button>
         <button type="button" class="nav-item" data-section="settings">Settings</button>
       </nav>
 
@@ -165,6 +170,64 @@
             <button id="git-commit-push" class="btn primary" type="submit" disabled>Commit + Push</button>
           </form>
           <div id="git-result" class="changes-result" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <!-- The setup wizard (src/renderer/setup.ts): repository, taigent init, npm install, checklist. -->
+      <section class="screen" id="screen-setup" aria-label="Setup repo" hidden>
+        <div class="screen-body setup">
+          <h1>Setup repo</h1>
+          <p class="muted">
+            Tạo repo mới, clone repo của team hoặc mở repo có sẵn, rồi cài Taigent vào repo: các skill Taigent, MCP
+            server <code>taiga</code>, bộ chạy headless và devDependency <code>taigent</code>, cùng version với ứng
+            dụng. Ứng dụng không cài agent CLI giúp bạn: nó chỉ cho biết công cụ nào còn thiếu và lệnh cài.
+          </p>
+
+          <h2>1. Repo</h2>
+          <div class="setup-row">
+            <span class="setup-label">Thư mục chứa repo</span>
+            <code id="setup-parent-path" class="setup-path">Chưa chọn</code>
+            <button id="setup-parent" class="btn" type="button">Chọn…</button>
+          </div>
+          <form id="setup-new-form" class="setup-row">
+            <label class="setup-label" for="setup-new-name">Tạo repo mới</label>
+            <input id="setup-new-name" type="text" placeholder="Tên thư mục, ví dụ du-an-abc" />
+            <button id="setup-new-create" class="btn primary" type="submit">Tạo repo</button>
+          </form>
+          <form id="setup-clone-form" class="setup-row">
+            <label class="setup-label" for="setup-clone-url">Clone từ URL</label>
+            <input id="setup-clone-url" type="text" placeholder="https://github.com/&lt;tổ chức&gt;/&lt;repo&gt;.git" />
+            <input id="setup-clone-name" class="setup-name" type="text" placeholder="Tên thư mục" aria-label="Tên thư mục của bản clone" />
+            <button id="setup-clone-go" class="btn" type="submit">Clone</button>
+          </form>
+          <div class="setup-row">
+            <span class="setup-label">Repo có sẵn</span>
+            <button id="setup-open" class="btn" type="button">Mở repo có sẵn…</button>
+          </div>
+          <div id="setup-repo-result" class="setup-result" aria-live="polite"></div>
+
+          <h2>2. Cài Taigent vào repo</h2>
+          <div id="setup-status" class="setup-status"></div>
+          <div class="changes-actions">
+            <button id="setup-init" class="btn primary" type="button" disabled>Cài Taigent vào repo</button>
+          </div>
+          <div id="setup-init-result" class="setup-result" aria-live="polite"></div>
+
+          <h2>3. npm install</h2>
+          <p class="muted">
+            Cài <code>taigent</code> (devDependency mà bước 2 ghim theo version của ứng dụng) vào <code>node_modules/</code>,
+            nơi agent chạy MCP server <code>taiga</code>. Cần Node.js 24+ trên máy.
+          </p>
+          <div class="changes-actions">
+            <button id="setup-npm" class="btn" type="button" disabled>Chạy npm install trong terminal</button>
+          </div>
+          <p id="setup-npm-result" class="muted" aria-live="polite"></p>
+
+          <h2>4. Kiểm tra</h2>
+          <ul id="setup-checklist" class="setup-checklist"></ul>
+          <div class="changes-actions">
+            <button id="setup-recheck" class="btn" type="button">Kiểm tra lại</button>
+          </div>
         </div>
       </section>
 
