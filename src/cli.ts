@@ -8,7 +8,7 @@ import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootst
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
-import { backlogKeys, legacyStoryCreatesError, unknownIssueValuesError } from './manifest/backlog.ts';
+import { legacyStoryCreatesError, unknownIssueValuesError } from './manifest/backlog.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
@@ -20,7 +20,7 @@ import { buildPlan, describePlanOperation, LegacyStoryCreateError, UnknownIssueV
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { readBacklogRemote } from './remote.ts';
-import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE } from './review.ts';
+import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE, reviewKeys } from './review.ts';
 import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
@@ -401,7 +401,7 @@ async function runValidate(run: Run): Promise<number> {
     // Review keys are only checked against a valid backlog; an invalid one already reports its issues.
     const backlog = project?.manifests.backlog;
     try {
-      await loadReview(reviewPath, backlog ? backlogKeys(backlog) : undefined);
+      await loadReview(reviewPath, backlog ? reviewKeys(backlog) : undefined);
       project?.files.push(reviewPath);
     } catch (error) {
       if (!(error instanceof ManifestError)) throw error;

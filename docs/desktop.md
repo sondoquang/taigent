@@ -1,7 +1,7 @@
 # Taigent Desktop
 
 Ứng dụng desktop (Electron) cho Business Analyst / Product Owner: xem backlog mà agent viết trong
-`taiga/<slug>/backlog.yaml` đúng như `taigent apply` sẽ ghi lên Taiga, góp ý và duyệt từng epic/story/task, rồi tự
+`taiga/<slug>/backlog.yaml` đúng như `taigent apply` sẽ ghi lên Taiga, góp ý và duyệt từng epic/story/task/issue, rồi tự
 đẩy lên Taiga khi đã ổn. Đây là bước **review** của quy trình plan → review → apply
 ([conventions §1](taiga/conventions.md)).
 
@@ -68,14 +68,15 @@ Bố cục gồm bốn phần, từ trên xuống:
 
 Mục **Backlog** gồm:
 
-- **Thanh tổng quan**: số epic/story/task; *Mới* (chưa có trên Taiga) và *Đã đẩy*; *Đạt*, *Cần sửa*, *Chưa duyệt*,
+- **Thanh tổng quan**: số epic/story/task/issue; *Mới* (chưa có trên Taiga) và *Đã đẩy*; *Đạt*, *Cần sửa*, *Chưa duyệt*,
   *Đã đổi sau khi duyệt*; số góp ý chưa xử lý; kết quả `taigent validate` (bấm *Manifest lỗi* để xem từng lỗi).
-- **Cây bên trái**: epic → story → task. Mỗi mục có nhãn *Mới* hoặc *Đã đẩy #ref*, trạng thái duyệt và số góp ý mở.
-  Bộ lọc: *Tất cả*, *Chưa duyệt*, *Cần sửa*, *Đã đổi*. Khi lọc, epic/story cha vẫn hiện (mờ) để bạn biết mục nằm ở
-  đâu.
+- **Cây bên trái**: epic → story → task, rồi nhóm **Issues** (các issue của `backlog.yaml`, không thuộc epic nào).
+  Mỗi mục có nhãn *Mới* hoặc *Đã đẩy #ref*, trạng thái duyệt và số góp ý mở. Bộ lọc: *Tất cả*, *Chưa duyệt*,
+  *Cần sửa*, *Đã đổi*. Khi lọc, epic/story cha vẫn hiện (mờ) để bạn biết mục nằm ở đâu.
 - **Chi tiết bên phải**: tiêu đề, mô tả hiển thị dạng Markdown, đúng nội dung ghi lên Taiga (với story, mô tả đã gồm
-  tiêu chí chấp nhận dạng checklist `- [ ]` và link spec, nên không lặp lại thành mục riêng), task/story con, tag,
-  custom attribute và chuỗi góp ý.
+  tiêu chí chấp nhận dạng checklist `- [ ]` và link spec, nên không lặp lại thành mục riêng), task/story con, với
+  issue thì mục **Phân loại** (loại, mức độ, ưu tiên), tag, custom attribute và chuỗi góp ý. Issue được duyệt và góp
+  ý như mọi mục khác; đổi loại, mức độ hay ưu tiên của một issue đã *Đạt* cũng làm nó thành *Đã đổi sau khi duyệt*.
 - **Phím tắt**: `j`/`k` hoặc `↓`/`↑` để chuyển mục (chỉ khi đang ở mục Backlog); `Ctrl+Enter` trong ô góp ý để gửi.
 
 ## Duyệt và góp ý
@@ -132,16 +133,16 @@ kết quả `taigent whoami`. Nếu repo đặt `TAIGA_USERNAME`/`TAIGA_PASSWORD
 
 ## Xem thay đổi và đẩy lên Taiga
 
-Cả hai thao tác nằm ở mục **Thay đổi**. Mục này tóm tắt dự án đang mở (số mục mới, đã đẩy, trạng thái duyệt, manifest
+Cả hai thao tác nằm ở mục **Thay đổi**. Mục này tóm tắt dự án đang mở (số epic/story/task/issue, số mục mới, đã đẩy, trạng thái duyệt, manifest
 hợp lệ hay không) và hiện kết quả của lần chạy gần nhất ngay trong màn hình. Kết quả bị xoá khi đổi dự án hoặc mở repo
 khác.
 
 - **Xem thay đổi trên Taiga** chạy `taigent plan --project <slug> --json`: chỉ đọc Taiga, không ghi gì. Kết quả liệt
-  kê các mục sẽ được tạo mới, cập nhật (kèm trường thay đổi) hoặc gắn vào epic, và các mục trên Taiga không còn trong
-  backlog (taigent không bao giờ xoá chúng).
+  kê các mục sẽ được tạo mới, cập nhật (kèm trường thay đổi) hoặc gắn vào epic, cả issue, và các mục trên Taiga không
+  còn trong backlog, kèm loại của từng mục (taigent không bao giờ xoá chúng).
 - **Đẩy lên Taiga** bị chặn khi `taigent validate` báo lỗi hoặc còn mục **Cần sửa** có góp ý chưa xử lý. Nếu không
   bị chặn, ứng dụng chạy `plan` trước. Không có thay đổi thì dừng ở đó. Có thay đổi thì ứng dụng mở hộp thoại xác nhận
-  liệt kê số mục tạo mới/cập nhật/gắn epic, số mục chưa duyệt và số mục đã đổi sau khi duyệt. **Bấm "Đẩy lên Taiga"
+  liệt kê số mục tạo mới/cập nhật (trong đó bao nhiêu issue)/gắn epic, số mục chưa duyệt và số mục đã đổi sau khi duyệt. **Bấm "Đẩy lên Taiga"
   trong hộp thoại này chính là đồng ý apply** (conventions §1). Chỉ sau đó ứng dụng mới chạy
   `taigent apply --project <slug> --yes --json` và hiện báo cáo. Nếu apply lỗi giữa chừng, các mục đã ghi được lưu
   trong `state.json`, lần chạy sau sẽ tiếp tục từ chỗ dừng.
@@ -194,16 +195,18 @@ node scripts/smoke.mjs --exe "release/win-unpacked/Taigent Desktop.exe"   # bả
 
 Cả hai cách dùng cùng fixture có trong repo: `desktop/scripts/fixture/smoke-taigent-desktop/` (project
 `Smoke - Taigent Desktop`: 3 epic, 5 story theo user story format, 1 story legacy đã có trên Taiga theo `state.json`,
-5 task; `project.yaml` khai báo custom attribute `Mục tiêu quý` cho epic). Đây không phải project thật trên Taiga, nên
-không bootstrap hay apply nó. Muốn smoke trên manifest của mình thì truyền `--project <slug> --story <key>` (chép
-`taiga/<slug>`); khi đó script bỏ qua phần form, vì phần này dùng các key của fixture.
+5 task, 1 issue `BUG-STALE-AFTER-RENAME`; `project.yaml` khai báo custom attribute `Mục tiêu quý` cho epic). Đây không
+phải project thật trên Taiga, nên không bootstrap hay apply nó. Muốn smoke trên manifest của mình thì truyền
+`--project <slug> --story <key>` (chép `taiga/<slug>`); khi đó script bỏ qua phần issue và phần form, vì chúng dùng các
+key của fixture.
 
 Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
 không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng và ứng dụng mở vào mục Backlog, mở repo, chụp
 cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
 đẩy bị chặn, đi qua Wiki, Taiga, Git, Settings (mỗi mục chỉ có trạng thái trống, không có nút; phím `j` không đổi
 mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
-đổi sau khi duyệt*, thử phím `j`/`k`. Sau đó là phần form: tạo epic (key gợi ý, custom attribute) và task bằng form,
+đổi sau khi duyệt*, thử phím `j`/`k`, rồi (chỉ với fixture) mở issue trong nhóm *Issues* của cây, kiểm tra phân loại
+và nhãn *Mới*, đặt *Đạt* và kiểm tra `review.yaml`. Sau đó là phần form: tạo epic (key gợi ý, custom attribute) và task bằng form,
 kiểm tra `backlog.yaml` (giữ comment, task nằm dưới đúng story) và trạng thái *Chưa duyệt*; kiểm tra key của epic đã
 có trên Taiga bị khoá; mở form sửa task, giả lập agent sửa `backlog.yaml`, kiểm tra form báo file đổi, lưu bị từ chối
 (file vẫn là bản của agent), hộp thoại conflict hiện thay đổi, rồi *Áp lại*; kiểm tra cảnh báo mồ côi khi xoá story

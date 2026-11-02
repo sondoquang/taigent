@@ -146,6 +146,22 @@ try {
   await page.keyboard.press('k');
   check((await page.getAttribute('#tree .node.selected', 'data-key')) === story, 'k moves back');
 
+  // Issues sit in their own group after the epic tree and are reviewed like any item.
+  const issue = 'BUG-STALE-AFTER-RENAME';
+  if (!values.project) {
+    check((await page.textContent('#tree .tree-group'))?.startsWith('Issues'), 'tree shows the Issues group');
+    await page.click(`#tree .node[data-key="${issue}"]`);
+    await page.waitForSelector('.issue-values');
+    const classification = await page.textContent('.issue-values');
+    check(classification?.includes('Bug') && classification.includes('Normal') && classification.includes('High'), `issue ${issue} shows type, severity and priority`);
+    check((await page.textContent(`#tree .node[data-key="${issue}"] .badge.new`)) === 'Mới', `issue ${issue} is labelled Mới`);
+    await page.click('.verdict-bar [data-verdict="approved"]');
+    await page.waitForSelector(`#tree .node[data-key="${issue}"] .badge.approved`);
+    const reviewed = await readFile(reviewFile, 'utf8');
+    check(new RegExp(`${issue}:\\r?\\n\\s+verdict: approved`).test(reviewed), `review.yaml has verdict approved for issue ${issue}`);
+    await page.screenshot({ path: join(shots, '5b-issue.png') });
+  }
+
   if (values.project) log('skipped forms: they use the keys of the fixture');
   else await formScenario(page);
 
