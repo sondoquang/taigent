@@ -301,6 +301,33 @@ test('issues share the key space and can be removed; epics are added before the 
   assert.equal(await backlogText(dir), `${BACKLOG}  - key: SEARCH\n    subject: Search\n`);
 });
 
+test('saveItem adds, edits and removes an issue; readItem returns it as its form edits it', async (t) => {
+  const dir = await project(t);
+  const issue: BacklogItem = {
+    type: 'issue',
+    key: 'LOGIN-500',
+    fields: { subject: 'Login fails with a long password', description: '## Steps to reproduce\n\n1. Sign in\n', type: 'Bug', severity: 'Normal', priority: 'High', tags: ['area:auth'] },
+  };
+  const added = saved(await saveItem(dir, { baseDigest: await digest(dir), item: issue }));
+  assert.equal(added.path, 'issues[0]');
+  assert.equal(
+    await backlogText(dir),
+    `${BACKLOG}issues:\n  - key: LOGIN-500\n    subject: Login fails with a long password\n    description: |\n      ## Steps to reproduce\n\n      1. Sign in\n    type: Bug\n    severity: Normal\n    priority: High\n    tags:\n      - area:auth\n`,
+  );
+  const text = await backlogText(dir);
+  assert.deepEqual(readItem(text, 'issue', 'LOGIN-500'), { ...issue, fields: { ...issue.fields, customAttributes: {} } });
+
+  const edited = saved(await saveItem(dir, { baseDigest: added.digest, original: 'LOGIN-500', item: { type: 'issue', key: 'LOGIN-500', fields: { priority: 'Low', tags: [] } } }));
+  assert.match(await backlogText(dir), /    severity: Normal\n    priority: Low\n$/);
+  assert.deepEqual(
+    issuesOf(await saveItem(dir, { baseDigest: edited.digest, original: 'LOGIN-500', item: { type: 'issue', key: 'LOGIN-500', fields: { subject: '', severity: '' } } })),
+    [{ path: 'issues[0].subject', rule: 'required' }, { path: 'issues[0].severity', rule: 'required' }],
+  );
+  const removed = saved(await removeItem(dir, { baseDigest: edited.digest, type: 'issue', key: 'LOGIN-500' }));
+  assert.deepEqual(removed.removed, ['LOGIN-500']);
+  assert.equal(await backlogText(dir), BACKLOG);
+});
+
 test('readItem returns a story as its form edits it, in its own format; saving it back leaves the file as it was', async (t) => {
   const dir = await project(t);
   const file = await readManifestFile(dir, 'backlog');
