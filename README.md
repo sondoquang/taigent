@@ -113,11 +113,15 @@ first. Then exit `claude`.
 **d. Start the chat session** and pair your Telegram account:
 
 ```sh
-claude --channels plugin:telegram@claude-plugins-official
+claude --channels plugin:telegram@claude-plugins-official --append-system-prompt-file node_modules/taigent/docs/telegram-reply.md
 ```
 
 Send any message to your bot: it replies with a 6-character code. Back in `claude`, type `/telegram:access pair
 <code>`, then `/telegram:access policy allowlist` so nobody else can use it. Leave this terminal open.
+
+`--append-system-prompt-file` makes the answers bold the key facts (project, ticket refs, hours, due status) with
+Telegram's MarkdownV2; the rules are in [docs/telegram-reply.md](docs/telegram-reply.md), and in the taigent
+repository itself the path is `docs/telegram-reply.md`. Without it the answers are plain text.
 
 **e. Let chats run without prompts.** Add these rules to the project's `.claude/settings.json` (the taigent repository
 has them already):
