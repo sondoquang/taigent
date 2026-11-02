@@ -580,6 +580,13 @@ textarea:focus {
   font-weight: 600;
   text-transform: uppercase;
   color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tree-group .btn {
+  text-transform: none;
 }
 
 .badges {

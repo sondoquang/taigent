@@ -10,7 +10,7 @@
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
 import { spawnSync } from 'node:child_process';
-import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -181,6 +181,7 @@ try {
   else {
     await formScenario(page);
     await storyFormScenario(page);
+    await issueFormScenario(page);
     await wikiScenario(page);
   }
 
@@ -196,6 +197,7 @@ try {
     log('plan result:', (await page.textContent('#changes-result h2'))?.trim());
     await page.screenshot({ path: join(shots, '9-plan.png') });
     await goTo(page, 'backlog');
+    if (!values.project) await issueValuesOnTaiga(page);
   } else {
     log('skipped plan: not logged in');
   }
@@ -568,4 +570,97 @@ async function storyFormScenario(page) {
   check(!('acceptance_criteria' in legacy) && legacy.use_case && legacy.scenarios.length === 2, 'the converted story has use_case + scenarios instead of acceptance_criteria');
   check(taigent('validate', '--project', project).status === 0, 'taigent validate exits 0 after the conversion');
   check(previewDescription('REVIEW-MARKDOWN') === converted, 'the converted story preview is what taigent preview renders (plan reports it as a description update)');
+}
+
+/**
+ * Issue form: "+ Issue" in the Issues group opens a form whose description holds the §6.4 template, with a Markdown
+ * preview; type / severity / priority are dropdowns of the project's Taiga values when `taigent projects --project
+ * <slug> --json` lists them (logged in, project on Taiga), free text otherwise. The saved issue is valid, "Chưa duyệt",
+ * and edits back through the "Sửa" button.
+ */
+async function issueFormScenario(page) {
+  await page.click('#add-issue');
+  await page.waitForSelector('#item-form[open] #form-type');
+  const template = await page.inputValue('#form-description');
+  check(['## Steps to reproduce', '## Expected', '## Actual'].every((label) => template.includes(label)), 'a new issue starts from the Steps to reproduce / Expected / Actual template');
+  await page.waitForFunction(() => !document.querySelector('#form-values-hint')?.textContent?.startsWith('Đang đọc'), null, { timeout: 120_000 });
+  const detail = await page.evaluate((slug) => window.taigent.readTaigaProject(slug), project);
+  const taiga = detail.ok ? detail.value.taiga : undefined;
+  const chosen = {};
+  if (taiga) {
+    for (const [name, list] of [['type', taiga.issueTypes], ['severity', taiga.severities], ['priority', taiga.priorities]]) {
+      const options = await page.$$eval(`select#form-${name} option`, (nodes) => nodes.map((node) => node.value).filter(Boolean));
+      check(JSON.stringify(options) === JSON.stringify(list), `the ${name} dropdown lists the project's values on Taiga (${list.join(', ')})`);
+      chosen[name] = list[0];
+      await page.selectOption(`#form-${name}`, chosen[name]);
+    }
+  } else {
+    log(`issue values are free text: ${await page.textContent('#form-values-hint')}`);
+    check((await page.$('input#form-type')) !== null, 'without the Taiga values, type / severity / priority are free text');
+    Object.assign(chosen, { type: 'Bug', severity: 'Normal', priority: 'High' });
+    for (const [name, value] of Object.entries(chosen)) await page.fill(`#form-${name}`, value);
+  }
+  await page.fill('#form-subject', 'Form issue mất mẫu mô tả khi lưu');
+  const issueKey = await page.inputValue('#form-key');
+  check(issueKey !== '', `the issue key is suggested (${issueKey})`);
+  const description = '## Steps to reproduce\n\n1. Mở form issue\n2. Lưu\n\n## Expected\n\nMô tả giữ nguyên.\n\n## Actual\n\nMô tả bị mất.';
+  await page.fill('#form-description', description);
+  await page.fill('#form-tags', 'area:review');
+  await page.waitForSelector('#form-preview-body h2');
+  check((await page.textContent('#form-preview-body h2')) === 'Steps to reproduce', 'the issue form previews its Markdown description');
+  await page.screenshot({ path: join(shots, '12-issue-form.png') });
+  await page.click('#form-save');
+  await page.waitForSelector('#item-form', { state: 'hidden' });
+  let saved = parse(await readFile(backlogFile, 'utf8')).issues.find((candidate) => candidate.key === issueKey);
+  check(
+    saved?.subject === 'Form issue mất mẫu mô tả khi lưu' && saved.description === description && saved.type === chosen.type && saved.severity === chosen.severity && saved.priority === chosen.priority && saved.tags?.[0] === 'area:review',
+    'backlog.yaml has the new issue with subject, description, type, severity, priority and tags',
+  );
+  check(taigent('validate', '--project', project).status === 0, 'taigent validate exits 0 after the issue form');
+  check(!(await readFile(reviewFile, 'utf8')).includes(issueKey), 'the new issue has no verdict in review.yaml (Chưa duyệt)');
+  await page.click(`#tree .node[data-key="${issueKey}"]`);
+  check((await page.textContent('.detail-head'))?.includes('Chưa duyệt'), 'the new issue shows as Chưa duyệt');
+
+  await page.click('.detail-head [data-action="edit"]');
+  await page.waitForSelector('#item-form[open] #form-type');
+  check((await page.inputValue('#form-type')) === chosen.type && (await page.inputValue('#form-description')) === description, 'editing the issue opens its saved values');
+  await page.fill('#form-subject', 'Form issue mất mẫu mô tả khi lưu (đã sửa)');
+  await page.click('#form-save');
+  await page.waitForSelector('#item-form', { state: 'hidden' });
+  saved = parse(await readFile(backlogFile, 'utf8')).issues.find((candidate) => candidate.key === issueKey);
+  check(saved?.subject.endsWith('(đã sửa)') && saved.type === chosen.type, 'the edited issue is saved in place');
+}
+
+/**
+ * Logged in: the issue form of a project on Taiga offers the project's values as dropdowns. The fixture is not on
+ * Taiga, so this opens an empty backlog for the first Taiga project the user is a member of (read-only: the form is
+ * cancelled, nothing is saved), then removes it and reopens the fixture.
+ */
+async function issueValuesOnTaiga(page) {
+  const listed = await page.evaluate(() => window.taigent.listTaigaProjects());
+  const onTaiga = listed.ok ? listed.value.rows.find((row) => row.taiga && row.slug !== project) : undefined;
+  if (!onTaiga) {
+    log('skipped issue dropdowns: no Taiga project listed');
+    return;
+  }
+  const dir = join(manifests, onTaiga.slug);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'backlog.yaml'), 'epics: []\n');
+  await page.click('#open-repo');
+  await page.waitForFunction((slug) => [...document.querySelectorAll('#project-select option')].some((option) => option.value === slug), onTaiga.slug);
+  await page.selectOption('#project-select', onTaiga.slug);
+  await page.click('#add-issue');
+  await page.waitForSelector('#item-form[open] select#form-type', { timeout: 120_000 });
+  const detail = await page.evaluate((slug) => window.taigent.readTaigaProject(slug), onTaiga.slug);
+  const taiga = detail.ok ? detail.value.taiga : undefined;
+  check(taiga !== undefined, `taigent projects --project ${onTaiga.slug} --json lists the issue values`);
+  for (const [name, list] of [['type', taiga.issueTypes], ['severity', taiga.severities], ['priority', taiga.priorities]]) {
+    const options = await page.$$eval(`select#form-${name} option`, (nodes) => nodes.map((node) => node.value).filter(Boolean));
+    check(options.length > 0 && JSON.stringify(options) === JSON.stringify(list), `logged in, the ${name} dropdown of ${onTaiga.slug} lists its Taiga values (${list.join(', ')})`);
+  }
+  await page.screenshot({ path: join(shots, '12b-issue-dropdowns.png') });
+  await page.click('#form-cancel');
+  await rm(dir, { recursive: true, force: true });
+  await page.click('#open-repo');
+  await page.waitForFunction((slug) => document.querySelector('#project-select')?.value === slug, project);
 }
