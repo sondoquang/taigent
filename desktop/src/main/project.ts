@@ -108,7 +108,7 @@ export async function readBacklog(root: string, slug: string): Promise<Result<Ba
   try {
     const file = await edit.readManifestFile(dir, 'backlog');
     const manifest = await project.loadProject(join(dir, project.PROJECT_FILE), slug).catch(() => undefined);
-    return { ok: true, value: { file, attributes: manifest?.customAttributes ?? { epic: [], story: [], task: [] } } };
+    return { ok: true, value: { file, attributes: manifest?.customAttributes ?? { epic: [], story: [], task: [], issue: [] } } };
   } catch (error) {
     return toFailure(error);
   }

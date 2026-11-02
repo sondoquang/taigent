@@ -51,6 +51,23 @@ hình tự cập nhật, không cần mở lại.
 
 ## Màn hình
 
+Bố cục gồm bốn phần, từ trên xuống:
+
+- **Thanh trên cùng**: mở thư mục repo, chọn **Dự án**, đăng nhập/đăng xuất Taiga. Các phần này dùng chung cho mọi
+  mục.
+- **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
+  - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
+  - **Wiki**, **Taiga** (Project, Ticket của tôi, Báo cáo), **Git**: chưa có nội dung. Mỗi mục chỉ hiện một trạng thái
+    trống ghi rõ là chưa có và cách làm việc đó bằng CLI trong lúc chờ. Không có nút nào.
+  - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
+  - **Settings**: phiên bản của ứng dụng, taigent, Electron và Node. Chưa có thiết lập nào.
+
+  Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở.
+- **Panel dưới đáy**: chỗ dành cho terminal. Panel chưa có và đang ẩn.
+- **Thanh trạng thái**: người duyệt và kết quả `taigent whoami`.
+
+Mục **Backlog** gồm:
+
 - **Thanh tổng quan**: số epic/story/task; *Mới* (chưa có trên Taiga) và *Đã đẩy*; *Đạt*, *Cần sửa*, *Chưa duyệt*,
   *Đã đổi sau khi duyệt*; số góp ý chưa xử lý; kết quả `taigent validate` (bấm *Manifest lỗi* để xem từng lỗi).
 - **Cây bên trái**: epic → story → task. Mỗi mục có nhãn *Mới* hoặc *Đã đẩy #ref*, trạng thái duyệt và số góp ý mở.
@@ -59,7 +76,7 @@ hình tự cập nhật, không cần mở lại.
 - **Chi tiết bên phải**: tiêu đề, mô tả hiển thị dạng Markdown, đúng nội dung ghi lên Taiga (với story, mô tả đã gồm
   tiêu chí chấp nhận dạng checklist `- [ ]` và link spec, nên không lặp lại thành mục riêng), task/story con, tag,
   custom attribute và chuỗi góp ý.
-- **Phím tắt**: `j`/`k` hoặc `↓`/`↑` để chuyển mục; `Ctrl+Enter` trong ô góp ý để gửi.
+- **Phím tắt**: `j`/`k` hoặc `↓`/`↑` để chuyển mục (chỉ khi đang ở mục Backlog); `Ctrl+Enter` trong ô góp ý để gửi.
 
 ## Duyệt và góp ý
 
@@ -115,6 +132,10 @@ kết quả `taigent whoami`. Nếu repo đặt `TAIGA_USERNAME`/`TAIGA_PASSWORD
 
 ## Xem thay đổi và đẩy lên Taiga
 
+Cả hai thao tác nằm ở mục **Thay đổi**. Mục này tóm tắt dự án đang mở (số mục mới, đã đẩy, trạng thái duyệt, manifest
+hợp lệ hay không) và hiện kết quả của lần chạy gần nhất ngay trong màn hình. Kết quả bị xoá khi đổi dự án hoặc mở repo
+khác.
+
 - **Xem thay đổi trên Taiga** chạy `taigent plan --project <slug> --json`: chỉ đọc Taiga, không ghi gì. Kết quả liệt
   kê các mục sẽ được tạo mới, cập nhật (kèm trường thay đổi) hoặc gắn vào epic, và các mục trên Taiga không còn trong
   backlog (taigent không bao giờ xoá chúng).
@@ -140,8 +161,11 @@ npm run dist             # build + scripts/stage-taigent.mjs + electron-builder
 - macOS: cấu hình `dmg` có sẵn trong `desktop/package.json`. Phải chạy `npm run dist` trên máy Mac để
   `@napi-rs/keyring` có bản prebuilt cho macOS.
 
-`scripts/stage-taigent.mjs` chép `bin/`, `dist/`, `package.json` của taigent và các dependency lúc chạy (`yaml`,
-`@napi-rs/keyring` kèm bản N-API prebuilt đã cài) vào `desktop/stage/`. electron-builder đặt chúng vào
+`scripts/stage-taigent.mjs` chép vào `desktop/stage/` đúng những gì gói npm của taigent mang theo: `package.json`,
+`LICENSE` và mọi file trong danh sách `files` (`bin/`, `dist/`, tài liệu mà skill trích dẫn, cùng những thứ
+`taigent init` cài vào repo: các skill Taigent, `tools/taiga/` có `run-skill` và allowlist, guard shell và execpolicy
+rule của Codex), kèm các dependency lúc chạy (`yaml`, `smol-toml`, `@napi-rs/keyring` kèm bản N-API prebuilt đã cài).
+electron-builder đặt chúng vào
 `resources/taigent/node_modules/taigent`, nên CLI chạy bằng file thực thi của ứng dụng, không cần Node trên máy.
 `taiga-mcp-server` không được đóng gói vì nó chỉ phục vụ `taigent mcp`, lệnh mà ứng dụng không dùng.
 
@@ -175,15 +199,17 @@ không bootstrap hay apply nó. Muốn smoke trên manifest của mình thì tru
 `taiga/<slug>`); khi đó script bỏ qua phần form, vì phần này dùng các key của fixture.
 
 Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
-không đụng tới file của bạn. Script lần lượt: mở repo, chụp cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt
-*Cần sửa*, kiểm tra `review.yaml`, kiểm tra nút đẩy bị chặn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã đổi sau khi
-duyệt*, thử phím `j`/`k`. Sau đó là phần form: tạo epic (key gợi ý, custom attribute) và task bằng form, kiểm tra
-`backlog.yaml` (giữ comment, task nằm dưới đúng story) và trạng thái *Chưa duyệt*; kiểm tra key của epic đã có trên
-Taiga bị khoá; mở form sửa task, giả lập agent sửa `backlog.yaml`, kiểm tra form báo file đổi, lưu bị từ chối (file vẫn
-là bản của agent), hộp thoại conflict hiện thay đổi, rồi *Áp lại*; kiểm tra cảnh báo mồ côi khi xoá story đã có trên
-Taiga (bấm *Huỷ*) và xoá task mới. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* (chỉ đọc; với fixture,
-Taiga báo không có project `smoke-taigent-desktop`). Hộp thoại xác nhận đẩy luôn được trả lời *Huỷ*. Ảnh chụp lưu ở
-`tmp/desktop-smoke/`.
+không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng và ứng dụng mở vào mục Backlog, mở repo, chụp
+cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
+đẩy bị chặn, đi qua Wiki, Taiga, Git, Settings (mỗi mục chỉ có trạng thái trống, không có nút; phím `j` không đổi
+mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
+đổi sau khi duyệt*, thử phím `j`/`k`. Sau đó là phần form: tạo epic (key gợi ý, custom attribute) và task bằng form,
+kiểm tra `backlog.yaml` (giữ comment, task nằm dưới đúng story) và trạng thái *Chưa duyệt*; kiểm tra key của epic đã
+có trên Taiga bị khoá; mở form sửa task, giả lập agent sửa `backlog.yaml`, kiểm tra form báo file đổi, lưu bị từ chối
+(file vẫn là bản của agent), hộp thoại conflict hiện thay đổi, rồi *Áp lại*; kiểm tra cảnh báo mồ côi khi xoá story
+đã có trên Taiga (bấm *Huỷ*) và xoá task mới. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
+Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Hộp thoại xác nhận đẩy luôn được
+trả lời *Huỷ*. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
 
 ## Bảo mật
 

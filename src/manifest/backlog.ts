@@ -1,6 +1,7 @@
 // Manifest module: loads and validates `taiga/<slug>/backlog.yaml`. No network I/O.
 
 import { isRecord } from '../guards.ts';
+import { ISSUE_VALUE_FIELDS, type IssueValueField } from '../items.ts';
 import { checkKey, checkTag } from './conventions.ts';
 import { ManifestError, type ManifestIssue } from './errors.ts';
 import { readManifestYaml } from './yaml.ts';
@@ -62,17 +63,25 @@ export interface EpicSpec extends ItemSpec {
   stories: StorySpec[];
 }
 
+/**
+ * An issue (bug, question, enhancement): a top-level backlog item, outside the epic tree. `type`, `severity` and
+ * `priority` are names of the project's own values on Taiga; plan/apply resolve them to ids.
+ */
+export interface IssueSpec extends ItemSpec, Record<IssueValueField, string> {}
+
 export interface Backlog {
   epics: EpicSpec[];
+  issues: IssueSpec[];
 }
 
-type Kind = 'epic' | 'story' | 'task';
+type Kind = 'epic' | 'story' | 'task' | 'issue';
 
 const ITEM_FIELDS = ['key', 'subject', 'description', 'tags', 'custom_attributes'];
 const KNOWN_FIELDS: Record<Kind, readonly string[]> = {
   epic: [...ITEM_FIELDS, 'stories'],
   story: [...ITEM_FIELDS, 'acceptance_criteria', 'use_case', 'scenarios', 'spec', 'tasks'],
   task: ITEM_FIELDS,
+  issue: [...ITEM_FIELDS, ...ISSUE_VALUE_FIELDS],
 };
 const USE_CASE_FIELDS = ['as_a', 'i_want_to', 'so_that'] as const;
 const SCENARIO_FIELDS = ['scenario', 'given', 'when', 'then'] as const;
@@ -93,6 +102,11 @@ export function storyPath(e: number, s: number): string {
   return `${epicPath(e)}.stories[${s}]`;
 }
 
+/** Manifest path of the `i`-th issue, as issues name it. */
+export function issuePath(i: number): string {
+  return `issues[${i}]`;
+}
+
 /** A story `plan` would create in the legacy format: `path` locates it in backlog.yaml. */
 export interface LegacyStoryCreate {
   key: string;
@@ -111,7 +125,30 @@ export function legacyStoryCreatesError(file: string, stories: readonly LegacySt
   );
 }
 
-/** Every item key declared in the backlog (epics, stories and tasks). */
+/** An issue value (`type`, `severity`, `priority`) whose name the project does not define on Taiga. */
+export interface UnknownIssueValue {
+  key: string;
+  /** `issues[i].<field>`. */
+  path: string;
+  field: IssueValueField;
+  value: string;
+  /** The names the project defines for `field`, in Taiga's order. */
+  names: readonly string[];
+}
+
+/** The `issue-value` issues of backlog `file`: names are matched exactly against the project's values. */
+export function unknownIssueValuesError(file: string, values: readonly UnknownIssueValue[]): ManifestError {
+  return new ManifestError(
+    values.map(({ key, path, field, value, names }) => ({
+      file,
+      path,
+      rule: 'issue-value',
+      message: `issue ${key}: ${field} "${value}" is not defined on the project; ${field} values on Taiga: ${names.map((name) => `"${name}"`).join(', ') || 'none'}`,
+    })),
+  );
+}
+
+/** Every key of the epic tree (epics, stories and tasks): the items attachments and review entries may name. */
 export function backlogKeys(backlog: Backlog): Set<string> {
   const keys = new Set<string>();
   for (const epic of backlog.epics) {
@@ -138,7 +175,7 @@ export function checkBacklog(doc: unknown, path: string): Backlog {
   const issue = (at: string, rule: string, message: string) => issues.push({ file: path, path: at, rule, message });
 
   if (!isRecord(doc)) {
-    issue('', 'type', 'backlog must be a mapping with an `epics` list');
+    issue('', 'type', 'backlog must be a mapping with an `epics` list and optional `issues` list');
     throw new ManifestError(issues);
   }
   const seenKeys = new Map<string, string>();
@@ -275,6 +312,16 @@ export function checkBacklog(doc: unknown, path: string): Backlog {
     epics.push({ key: epic.key, subject: epic.subject, description: epic.description, tags: epic.tags, customAttributes: epic.customAttributes, stories });
   });
 
+  const issueSpecs: IssueSpec[] = [];
+  children(doc.issues, 'issues').forEach((rawIssue, i) => {
+    const issueAt = issuePath(i);
+    const item = checkItem(rawIssue, issueAt, 'issue');
+    if (!item) return;
+    const [type, severity, priority] = ISSUE_VALUE_FIELDS.map((field) => checkText(item.raw[field], `${issueAt}.${field}`)) as [string, string, string];
+    const { key, subject, description, tags, customAttributes } = item;
+    issueSpecs.push({ key, subject, description, tags, customAttributes, type, severity, priority });
+  });
+
   if (issues.length > 0) throw new ManifestError(issues);
-  return { epics };
+  return { epics, issues: issueSpecs };
 }

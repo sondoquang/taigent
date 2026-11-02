@@ -122,6 +122,47 @@ test('fake Taiga enforces OCC versions on PATCH and unique epic ↔ story links'
   assert.equal(fake.state.epicRelatedUserStories.length, 1);
 });
 
+test('fake Taiga gives each project the template issue values and validates issue payloads like Taiga', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const other = fake.addProject({ slug: 'other' });
+  const token = await login(fake);
+  const names = async (path: string) => ((await send(fake, token, 'GET', `${path}?project=${project.id}`, undefined)).body as { name: string }[]).map((v) => v.name);
+
+  assert.deepEqual(await names('/issue-types'), ['Bug', 'Question', 'Enhancement']);
+  assert.deepEqual(await names('/severities'), ['Wishlist', 'Minor', 'Normal', 'Important', 'Critical']);
+  assert.deepEqual(await names('/priorities'), ['Low', 'Normal', 'High']);
+  assert.deepEqual(await names('/issue-statuses'), ['New', 'In progress', 'Ready for test', 'Closed', 'Needs Info', 'Rejected', 'Postponed']);
+
+  // Without values, a new issue gets the template defaults.
+  const created = await send(fake, token, 'POST', '/issues', { project: project.id, subject: 'Crash' });
+  assert.equal(created.status, 201);
+  const issue = fake.state.issues[0]!;
+  const nameOf = (list: 'issueTypes' | 'severities' | 'priorities' | 'issueStatuses', id: number | null) => fake.state[list].find((v) => v.id === id)?.name;
+  assert.deepEqual(
+    [nameOf('issueTypes', issue.type), nameOf('severities', issue.severity), nameOf('priorities', issue.priority), nameOf('issueStatuses', issue.status)],
+    ['Bug', 'Normal', 'Normal', 'New'],
+  );
+
+  assert.deepEqual(await send(fake, token, 'POST', '/issues', { project: project.id }), { status: 400, body: { subject: ['This field is required.'] } });
+  const unknown = await send(fake, token, 'POST', '/issues', { project: project.id, subject: 'X', type: 999999, issue_type: 1 });
+  assert.equal(unknown.status, 400);
+  assert.deepEqual(Object.keys(unknown.body as object).sort(), ['issue_type', 'type']);
+  const otherType = fake.state.issueTypes.find((v) => v.project === other.id)!.id;
+  assert.equal((await send(fake, token, 'POST', '/issues', { project: project.id, subject: 'X', type: otherType })).status, 403);
+  assert.equal(fake.state.issues.length, 1);
+
+  // PATCH needs the version (OCC) like every item.
+  assert.deepEqual(await send(fake, token, 'PATCH', `/issues/${issue.id}`, { subject: 'No version' }), {
+    status: 400,
+    body: { version: 'The version parameter is not valid' },
+  });
+  const closed = fake.state.issueStatuses.find((s) => s.project === project.id && s.name === 'Closed')!.id;
+  assert.equal((await send(fake, token, 'PATCH', `/issues/${issue.id}`, { status: closed, version: 1 })).status, 200);
+  assert.deepEqual([issue.is_closed, issue.version], [true, 2]);
+});
+
 test('fake Taiga keeps custom attribute values per item: string id keys, full replacement, own OCC version', async (t) => {
   const fake = await startFakeTaiga();
   t.after(() => fake.close());

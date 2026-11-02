@@ -1,9 +1,25 @@
 // Planner: pure function from (manifest, Taiga state read back) to an ordered plan. No I/O.
 
-import { ITEM_TYPES, type ItemType } from './items.ts';
-import { storyPath, type AttributeValue, type Backlog, type LegacyStoryCreate, type StorySpec } from './manifest/backlog.ts';
+import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
+import {
+  issuePath,
+  storyPath,
+  type AttributeValue,
+  type Backlog,
+  type LegacyStoryCreate,
+  type StorySpec,
+  type UnknownIssueValue,
+} from './manifest/backlog.ts';
 import { summarize, type Action, type PlanSummary } from './operations.ts';
-import { TaigaError, type TaigaAttributeValues, type TaigaCustomAttribute, type TaigaItem, type TaigaTask } from './taiga/client.ts';
+import {
+  TaigaError,
+  type TaigaAttributeValues,
+  type TaigaCustomAttribute,
+  type TaigaIssue,
+  type TaigaIssueValue,
+  type TaigaItem,
+  type TaigaTask,
+} from './taiga/client.ts';
 
 /** Identity tag of a manifest item on Taiga. Lowercase because Taiga lowercases every tag it stores. */
 export function srcTag(key: string): string {
@@ -20,6 +36,9 @@ export interface RemoteState {
   epics: TaigaItem[];
   stories: TaigaItem[];
   tasks: TaigaTask[];
+  issues: TaigaIssue[];
+  /** The project's issue types, severities and priorities (read only when the backlog has issues). */
+  issueValues: Record<IssueValueField, readonly TaigaIssueValue[]>;
   /** Ids of the user stories linked to each existing epic that carries a `src:` tag (`related_userstories`). */
   epicStories: ReadonlyMap<number, readonly number[]>;
   /** Custom attributes defined on the project, per item type. */
@@ -28,13 +47,26 @@ export interface RemoteState {
   attributeValues: Record<ItemType, ReadonlyMap<number, TaigaAttributeValues>>;
 }
 
-export interface ItemFields {
+/** Fields of a new item; an issue's also hold the ids of its type, severity and priority. */
+export interface ItemFields extends Partial<Record<IssueValueField, number>> {
   subject: string;
   description: string;
   tags: string[];
 }
 
-export interface FieldChanges {
+/**
+ * A changed issue type, severity or priority: `from`/`to` are value ids (`to` is what apply sends), `names` their
+ * names on Taiga for people reading the plan (`from` is null when the issue has no value, or one the project no
+ * longer lists).
+ */
+export interface IssueValueChange {
+  from: number | null;
+  to: number;
+  names: { from: string | null; to: string };
+}
+
+/** Changed fields of an existing item; `type`, `severity` and `priority` are an issue's. */
+export interface FieldChanges extends Partial<Record<IssueValueField, IssueValueChange>> {
   subject?: { from: string; to: string };
   description?: { from: string; to: string };
   /** `to` keeps every tag already on Taiga (user-added ones too) and appends the manifest's missing tags. */
@@ -106,6 +138,20 @@ export class LegacyStoryCreateError extends Error {
   }
 }
 
+/**
+ * Issues name a type, severity or priority the project does not define on Taiga. Only known once Taiga is read; the
+ * caller, which knows the backlog file, reports them as manifest issues (rule `issue-value`).
+ */
+export class UnknownIssueValueError extends Error {
+  readonly values: readonly UnknownIssueValue[];
+
+  constructor(values: readonly UnknownIssueValue[]) {
+    super(`issues use values the project does not define: ${values.map((value) => `${value.key} ${value.field} "${value.value}"`).join(', ')}`);
+    this.name = 'UnknownIssueValueError';
+    this.values = values;
+  }
+}
+
 /** ` Name: from -> to; …` for the attribute values an operation sets. */
 function formatAttributes(from: Record<string, unknown>, to: Record<string, unknown>): string {
   return Object.entries(to)
@@ -123,9 +169,11 @@ export function describePlanOperation(op: Operation): string {
     case 'update': {
       const { custom_attributes: changed, parent } = op.changes;
       const attributes = changed ? `  [custom attributes ${formatAttributes(changed.from, changed.to)}]` : '';
-      const fields = Object.keys(op.changes).map((field) =>
-        field === 'parent' && parent ? `parent (${parent.from ? `story ${parent.from}` : 'no story'} -> story ${parent.to})` : field,
-      );
+      const fields = Object.keys(op.changes).map((field) => {
+        if (field === 'parent' && parent) return `parent (${parent.from ? `story ${parent.from}` : 'no story'} -> story ${parent.to})`;
+        const value = (ISSUE_VALUE_FIELDS as readonly string[]).includes(field) ? op.changes[field as IssueValueField] : undefined;
+        return value ? `${field} (${value.names.from ?? 'none'} -> ${value.names.to})` : field;
+      });
       return `update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${fields.join(', ')}${attributes}`;
     }
     case 'link':
@@ -168,7 +216,7 @@ function keyOf(item: TaigaItem): string | undefined {
 }
 
 export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
-  const remoteItems: Record<ItemType, TaigaItem[]> = { epic: remote.epics, story: remote.stories, task: remote.tasks };
+  const remoteItems: Record<ItemType, TaigaItem[]> = { epic: remote.epics, story: remote.stories, task: remote.tasks, issue: remote.issues };
   const bySrcTag = {} as Record<ItemType, Map<string, TaigaItem>>;
   for (const type of ITEM_TYPES) {
     bySrcTag[type] = new Map();
@@ -179,23 +227,24 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
       }
     }
   }
-  const manifestTags: Record<ItemType, Set<string>> = { epic: new Set(), story: new Set(), task: new Set() };
+  const manifestTags = Object.fromEntries(ITEM_TYPES.map((type) => [type, new Set<string>()])) as Record<ItemType, Set<string>>;
   const operations: Operation[] = [];
   const unknownAttributes: string[] = [];
   const legacyCreates: LegacyStoryCreate[] = [];
+  const unknownIssueValues: UnknownIssueValue[] = [];
 
   type Spec = { key: string; subject: string; tags: string[]; customAttributes: Record<string, AttributeValue> };
 
   /**
-   * Plans create/update/skip for one manifest item and returns its Taiga counterpart, if any. `moved` tells whether
-   * an existing item has to move to another parent (tasks).
+   * Plans create/update/skip for one manifest item and returns its Taiga counterpart, if any. `parent`: the key of
+   * the epic (story) or story (task) a new item belongs to; `moved` tells whether an existing item has to move to
+   * another parent (tasks); `values`: an issue's type, severity and priority ids.
    */
   function reconcile(
     type: ItemType,
     spec: Spec,
     description: string,
-    parent?: string,
-    moved?: (existing: TaigaItem) => FieldChanges['parent'],
+    { parent, moved, values }: { parent?: string; moved?: (existing: TaigaItem) => FieldChanges['parent']; values?: Record<IssueValueField, number> } = {},
   ): TaigaItem | undefined {
     const tag = srcTag(spec.key);
     manifestTags[type].add(tag);
@@ -215,7 +264,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
         type,
         key: spec.key,
         ...(parent && { parent }),
-        fields: { subject: spec.subject, description, tags },
+        fields: { subject: spec.subject, description, tags, ...values },
         ...(attributes.length > 0 && { custom_attributes: spec.customAttributes }),
       });
       return undefined;
@@ -225,6 +274,13 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
     if (existing.description !== description) changes.description = { from: existing.description, to: description };
     const missingTags = tags.filter((t) => !existing.tags.includes(t));
     if (missingTags.length > 0) changes.tags = { from: existing.tags, to: [...existing.tags, ...missingTags] };
+    for (const field of values ? ISSUE_VALUE_FIELDS : []) {
+      const from = (existing as TaigaIssue)[field];
+      const to = values![field];
+      if (from === to) continue;
+      const name = (id: number | null) => remote.issueValues[field].find((v) => v.id === id)?.name ?? null;
+      changes[field] = { from, to, names: { from: name(from), to: name(to)! } };
+    }
     if (attributes.length > 0) {
       const current = remote.attributeValues[type].get(existing.id);
       if (!current) throw new Error(`planner: custom attribute values of ${type} ${spec.key} were not read`);
@@ -256,7 +312,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   for (const [e, epic] of backlog.epics.entries()) {
     const remoteEpic = reconcile('epic', epic, epic.description);
     for (const [s, story] of epic.stories.entries()) {
-      const remoteStory = reconcile('story', story, storyDescription(story), epic.key);
+      const remoteStory = reconcile('story', story, storyDescription(story), { parent: epic.key });
       if (!remoteStory && story.format === 'legacy') legacyCreates.push({ key: story.key, path: storyPath(e, s) });
       const linked = remoteEpic && remoteStory && remote.epicStories.get(remoteEpic.id)?.includes(remoteStory.id);
       if (!linked) operations.push({ action: 'link', type: 'story', key: story.key, epic: epic.key });
@@ -273,11 +329,25 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
         const from = current === null ? undefined : storiesById.get(current);
         return { from: (from && keyOf(from)) ?? null, to: story.key };
       };
-      for (const task of story.tasks) reconcile('task', task, task.description, story.key, inOtherStory);
+      for (const task of story.tasks) reconcile('task', task, task.description, { parent: story.key, moved: inOtherStory });
     }
   }
 
+  // Issues come after the epic tree: they have no parent and no link. Values are matched by exact name.
+  for (const [i, issue] of backlog.issues.entries()) {
+    const values: Partial<Record<IssueValueField, number>> = {};
+    for (const field of ISSUE_VALUE_FIELDS) {
+      const defined = remote.issueValues[field];
+      const value = defined.find((v) => v.name === issue[field]);
+      if (value) values[field] = value.id;
+      else unknownIssueValues.push({ key: issue.key, path: `${issuePath(i)}.${field}`, field, value: issue[field], names: defined.map((v) => v.name) });
+    }
+    // An issue with an unknown value is not planned: the plan fails below anyway.
+    if (ISSUE_VALUE_FIELDS.every((field) => values[field] !== undefined)) reconcile('issue', issue, issue.description, { values: values as Record<IssueValueField, number> });
+  }
+
   if (legacyCreates.length > 0) throw new LegacyStoryCreateError(legacyCreates);
+  if (unknownIssueValues.length > 0) throw new UnknownIssueValueError(unknownIssueValues);
 
   if (unknownAttributes.length > 0) {
     throw new TaigaError(

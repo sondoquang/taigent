@@ -14,9 +14,9 @@ Single-context: one root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain
 
 ## Taiga setup
 
-Each user logs in once with `npx taigent login`, in their own terminal: it stores a token in the OS credential store, never the password. Never ask for, type or write a Taiga password or token; the `taigent` CLI and the Taiga MCP server (`taigent mcp`, registered in `.mcp.json` and `.codex/config.toml`) both use that login. `TAIGA_*` variables (environment or a git-ignored `.env`) override it, for CI. To check or fix the CLI, the login or the MCP server, or to install the skills into another project, use the `taiga-setup` skill.
+Each user logs in once with `npx taigent login`, in their own terminal: it stores a token in the OS credential store, never the password. Never ask for, type or write a Taiga password or token; the `taigent` CLI and the Taiga MCP server (`taigent mcp`, registered in `.mcp.json` and `.codex/config.toml`) both use that login. `TAIGA_*` variables (environment or a git-ignored `.env`) override it, for CI. To check or fix the CLI, the login or the MCP server, or to install Taigent into another project (`taigent init`), use the `taiga-setup` skill.
 
-`package.json` pins `taiga-mcp-server` to an exact version (1.9.20), which `taiga-setup`, the `taiga-*` skills' tool notes, `docs/cli.md` and `docs/taiga/conventions.md` §10 are written against; bump them together. `npm test` fails when `.mcp.json`, `.codex/config.toml` and the entries in `taiga-setup` differ.
+`package.json` pins `taiga-mcp-server` to an exact version (1.9.20), which `taiga-setup`, the `taiga-*` skills' tool notes, `docs/cli.md` and `docs/taiga/conventions.md` §10 are written against; bump them together. `npm test` fails when `.mcp.json`, `.codex/config.toml`, the entries in `taiga-setup` and the ones `taigent init` writes (`src/init.ts`) differ. Everything `taigent init` copies (Taigent skills, headless kit) must stay in `files` of `package.json`, which Taigent Desktop stages too.
 
 ## Taiga conventions
 

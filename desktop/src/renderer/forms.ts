@@ -114,7 +114,7 @@ export function itemActions(item: PreviewItem): HTMLElement {
   return h(
     'div',
     { class: 'item-actions' },
-    item.type !== 'story' &&
+    (item.type === 'epic' || item.type === 'task') &&
       h('button', { type: 'button', class: 'btn small', 'data-action': 'edit', onclick: () => void openForm(item.type === 'epic' ? 'epic' : 'task', item) }, 'Sửa'),
     item.type === 'story' &&
       h('button', { type: 'button', class: 'btn small', 'data-action': 'add-task', onclick: () => void openForm('task', undefined, item.key) }, '+ Task'),
@@ -388,7 +388,7 @@ function showConflict(base: ManifestFile, current: ManifestFile, reapply: () => 
 
 // ---- removal --------------------------------------------------------------------------------------------------
 
-const KIND_LABEL: Record<PreviewItem['type'], string> = { epic: 'epic', story: 'story', task: 'task' };
+const KIND_LABEL: Record<PreviewItem['type'], string> = { epic: 'epic', story: 'story', task: 'task', issue: 'issue' };
 
 async function confirmRemove(item: PreviewItem): Promise<void> {
   const { api, view: currentView, toast } = requireHost();

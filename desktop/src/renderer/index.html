@@ -21,38 +21,121 @@
         </select>
       </label>
       <div class="spacer"></div>
-      <button id="plan-btn" class="btn" type="button" disabled>Xem thay đổi trên Taiga</button>
-      <button id="apply-btn" class="btn primary" type="button" disabled>Đẩy lên Taiga</button>
       <button id="login-btn" class="btn ghost" type="button">Đăng nhập</button>
     </header>
 
-    <section class="summary" id="summary" aria-label="Tổng quan"></section>
+    <div class="shell">
+      <nav id="nav" class="nav-rail" aria-label="Điều hướng">
+        <button type="button" class="nav-item" data-section="backlog">Backlog</button>
+        <button type="button" class="nav-item" data-section="wiki">Wiki</button>
+        <button type="button" class="nav-item" data-section="taiga">Taiga</button>
+        <button type="button" class="nav-item" data-section="changes">Thay đổi</button>
+        <button type="button" class="nav-item" data-section="git">Git</button>
+        <div class="spacer"></div>
+        <button type="button" class="nav-item" data-section="settings">Settings</button>
+      </nav>
 
-    <main class="layout">
-      <aside class="sidebar">
-        <div class="filters" role="tablist" aria-label="Lọc">
-          <button type="button" class="filter active" data-filter="all">Tất cả</button>
-          <button type="button" class="filter" data-filter="unreviewed">Chưa duyệt</button>
-          <button type="button" class="filter" data-filter="changes">Cần sửa</button>
-          <button type="button" class="filter" data-filter="stale">Đã đổi</button>
-        </div>
-        <nav class="tree" id="tree" aria-label="Backlog" tabindex="0"></nav>
-      </aside>
+      <section class="screen screen-backlog" id="screen-backlog" aria-label="Backlog">
+        <section class="summary" id="summary" aria-label="Tổng quan"></section>
 
-      <section class="detail" id="detail">
-        <div id="detail-content" class="detail-content">
-          <div class="empty">Mở thư mục repo có <code>taiga/&lt;slug&gt;/backlog.yaml</code>, rồi chọn dự án.</div>
-        </div>
-        <form id="composer" class="composer" hidden>
-          <label for="comment-text">Góp ý cho mục này</label>
-          <textarea id="comment-text" rows="3" placeholder="Viết góp ý cho agent… (Ctrl+Enter để gửi)"></textarea>
-          <div class="composer-actions">
-            <span class="hint">j/k hoặc ↑/↓ để chuyển mục</span>
-            <button type="submit" class="btn primary">Gửi góp ý</button>
-          </div>
-        </form>
+        <main class="layout">
+          <aside class="sidebar">
+            <div class="filters" role="tablist" aria-label="Lọc">
+              <button type="button" class="filter active" data-filter="all">Tất cả</button>
+              <button type="button" class="filter" data-filter="unreviewed">Chưa duyệt</button>
+              <button type="button" class="filter" data-filter="changes">Cần sửa</button>
+              <button type="button" class="filter" data-filter="stale">Đã đổi</button>
+            </div>
+            <nav class="tree" id="tree" aria-label="Backlog" tabindex="0"></nav>
+          </aside>
+
+          <section class="detail" id="detail">
+            <div id="detail-content" class="detail-content">
+              <div class="empty">Mở thư mục repo có <code>taiga/&lt;slug&gt;/backlog.yaml</code>, rồi chọn dự án.</div>
+            </div>
+            <form id="composer" class="composer" hidden>
+              <label for="comment-text">Góp ý cho mục này</label>
+              <textarea id="comment-text" rows="3" placeholder="Viết góp ý cho agent… (Ctrl+Enter để gửi)"></textarea>
+              <div class="composer-actions">
+                <span class="hint">j/k hoặc ↑/↓ để chuyển mục</span>
+                <button type="submit" class="btn primary">Gửi góp ý</button>
+              </div>
+            </form>
+          </section>
+        </main>
       </section>
-    </main>
+
+      <section class="screen" id="screen-wiki" aria-label="Wiki" hidden>
+        <div class="screen-body">
+          <h1>Wiki</h1>
+          <div class="empty-state">
+            <p><strong>Chưa có màn hình Wiki.</strong></p>
+            <p class="muted">
+              Trang wiki vẫn nằm trong <code>taiga/&lt;slug&gt;/docs.yaml</code> và các file mà nó tham chiếu. Trong
+              terminal, <code>npx taigent upload --project &lt;slug&gt; --dry-run</code> cho xem trước, rồi
+              <code>--yes</code> để đẩy lên Taiga.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-taiga" aria-label="Taiga" hidden>
+        <div class="screen-body">
+          <h1>Taiga</h1>
+          <div class="empty-state">
+            <p><strong>Chưa có màn hình Taiga</strong> (Project, Ticket của tôi, Báo cáo).</p>
+            <p class="muted">
+              Trong terminal: <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code> liệt kê ticket của
+              bạn, <code>npx taigent status</code> và <code>npx taigent comment</code> đổi status và comment.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-changes" aria-label="Thay đổi" hidden>
+        <div class="screen-body">
+          <h1>Thay đổi trên Taiga</h1>
+          <p class="muted">
+            So sánh backlog của dự án đang mở với Taiga (chỉ đọc), rồi đẩy lên sau khi bạn xác nhận. Các mục trên Taiga
+            không còn trong backlog chỉ được báo, taigent không bao giờ xoá chúng.
+          </p>
+          <div id="changes-overview" class="changes-overview"></div>
+          <div class="changes-actions">
+            <button id="plan-btn" class="btn" type="button" disabled>Xem thay đổi trên Taiga</button>
+            <button id="apply-btn" class="btn primary" type="button" disabled>Đẩy lên Taiga</button>
+          </div>
+          <div id="changes-result" class="changes-result" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-git" aria-label="Git" hidden>
+        <div class="screen-body">
+          <h1>Git</h1>
+          <div class="empty-state">
+            <p><strong>Chưa có panel git.</strong></p>
+            <p class="muted">
+              Commit và push <code>taiga/&lt;slug&gt;/</code> (gồm cả <code>review.yaml</code>) bằng git như bình thường để
+              cả team thấy manifest và kết quả review.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-settings" aria-label="Settings" hidden>
+        <div class="screen-body">
+          <h1>Settings</h1>
+          <div class="empty-state">
+            <p><strong>Chưa có thiết lập nào.</strong></p>
+            <p class="muted">Đăng nhập hoặc đăng xuất Taiga bằng nút ở góc trên bên phải.</p>
+          </div>
+          <h3>Phiên bản</h3>
+          <table class="attributes" id="settings-versions"></table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Bottom panel of the layout, reserved for the terminal (#39); empty and hidden until then. -->
+    <section id="terminal-dock" class="terminal-dock" aria-label="Terminal" hidden></section>
 
     <footer class="statusbar" id="statusbar"></footer>
 

@@ -287,6 +287,20 @@ test('the key of an item already on Taiga is locked; a new item can be re-keyed'
   assert.match(await backlogText(dir), /\n {2}- key: PAYMENTS\n {4}subject: Billing\n/);
 });
 
+test('issues share the key space and can be removed; epics are added before the issues list', async (t) => {
+  const issues = 'issues:\n  - key: LOGIN-SLOW\n    subject: Login times out on slow networks\n    type: Bug\n    severity: Normal\n    priority: Normal\n';
+  const dir = await project(t, BACKLOG + issues);
+  const epic = saved(await saveItem(dir, { baseDigest: await digest(dir), item: { type: 'epic', key: 'SEARCH', fields: { subject: 'Search' } } }));
+  assert.equal(await backlogText(dir), `${BACKLOG}  - key: SEARCH\n    subject: Search\n${issues}`);
+  assert.deepEqual(
+    issuesOf(await saveItem(dir, { baseDigest: epic.digest, item: { type: 'task', key: 'LOGIN-SLOW', parent: 'AUTH-LOGIN', fields: { subject: 'Twice' } } })),
+    [{ path: 'epics[0].stories[0].tasks[2].key', rule: 'key-unique' }],
+  );
+  const removed = saved(await removeItem(dir, { baseDigest: epic.digest, type: 'issue', key: 'LOGIN-SLOW' }));
+  assert.deepEqual([removed.removed, removed.orphaned], [['LOGIN-SLOW'], []]);
+  assert.equal(await backlogText(dir), `${BACKLOG}  - key: SEARCH\n    subject: Search\n`);
+});
+
 test('suggestKey follows the naming advice and skips taken keys', () => {
   assert.equal(suggestKey('Search', undefined, new Set()), 'SEARCH');
   assert.equal(suggestKey('Đăng nhập bằng Google', 'AUTH', new Set(['AUTH-DANG-NHAP'])), 'AUTH-DANG-NHAP-2');

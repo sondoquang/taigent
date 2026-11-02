@@ -46,6 +46,16 @@ const check = (condition, message) => {
   if (!condition) throw new Error(`FAILED: ${message}`);
   log('ok -', message);
 };
+const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'settings'];
+/** Switches to a section of the navigation shell and checks that only its screen shows. */
+const goTo = async (page, section) => {
+  await page.click(`#nav [data-section="${section}"]`);
+  await page.waitForSelector(`#screen-${section}`, { state: 'visible' });
+  const shown = [];
+  for (const name of SECTIONS) if (await page.isVisible(`#screen-${name}`)) shown.push(name);
+  if (shown.length !== 1 || shown[0] !== section) throw new Error(`FAILED: section ${section} shows screens ${shown.join(', ')}`);
+  if ((await page.getAttribute(`#nav [data-section="${section}"]`, 'aria-current')) !== 'page') throw new Error(`FAILED: nav does not mark ${section}`);
+};
 
 try {
   const versions = await app.evaluate(() => ({ electron: process.versions.electron, node: process.versions.node }));
@@ -58,6 +68,9 @@ try {
   const page = await app.firstWindow();
   await page.setViewportSize({ width: 1400, height: 900 }).catch(() => undefined);
   await page.waitForLoadState('domcontentloaded');
+  const sections = await page.locator('#nav [data-section]').evaluateAll((buttons) => buttons.map((button) => button.textContent?.trim()));
+  check(sections.join('|') === 'Backlog|Wiki|Taiga|Thay đổi|Git|Settings', `navigation shows ${sections.join(', ')}`);
+  check((await page.isVisible('#screen-backlog')) && !(await page.isVisible('#screen-changes')), 'the app opens on Backlog');
 
   await page.click('#open-repo');
   await page.waitForSelector('#tree .node');
@@ -86,12 +99,26 @@ try {
   await page.screenshot({ path: join(shots, '3-changes-comment.png') });
 
   // Push is blocked while an item marked "Cần sửa" has open comments (the confirm dialog is stubbed to cancel).
+  // Pushing lives in the "Thay đổi" section.
+  await goTo(page, 'changes');
   await page.click('#apply-btn');
-  await page.waitForSelector('#result-dialog[open]');
-  const blocked = await page.textContent('#result-content');
+  await page.waitForSelector('#changes-result h2');
+  const blocked = await page.textContent('#changes-result');
   check(blocked?.includes('Chưa thể đẩy lên Taiga') && blocked.includes(story), 'push blocked by the open comment');
   await page.screenshot({ path: join(shots, '4-push-blocked.png') });
-  await page.click('#result-close');
+
+  // Switching sections keeps the open project and the selected item; sections without content yet have no controls.
+  for (const section of ['wiki', 'taiga', 'git', 'settings']) {
+    await goTo(page, section);
+    const controls = await page.locator(`#screen-${section} :is(button, input, select, textarea, a)`).count();
+    check(controls === 0, `section ${section} shows an empty state without controls`);
+    await page.keyboard.press('j');
+    await page.screenshot({ path: join(shots, `nav-${section}.png`) });
+  }
+  await goTo(page, 'backlog');
+  check((await page.inputValue('#project-select')) === project, 'project still open after switching sections');
+  check((await page.getAttribute('#tree .node.selected', 'data-key')) === story, `${story} still selected after switching sections (j ignored outside Backlog)`);
+  check((await page.textContent('.breadcrumb'))?.includes(story), `detail still shows ${story}`);
 
   // Approve, then change the story's description as an agent would: the approval turns stale.
   await page.click('.verdict-bar [data-verdict="approved"]');
@@ -126,11 +153,12 @@ try {
   const login = await page.evaluate(() => window.taigent.whoami());
   log('login', JSON.stringify({ loggedIn: login.loggedIn, username: login.username, apiUrl: login.apiUrl, message: login.message }));
   if (login.loggedIn) {
+    await goTo(page, 'changes');
     await page.click('#plan-btn');
-    await page.waitForSelector('#result-dialog[open]', { timeout: 120_000 });
-    log('plan dialog:', (await page.textContent('#result-content h2'))?.trim());
+    await page.waitForSelector('#changes-result h2', { timeout: 120_000 });
+    log('plan result:', (await page.textContent('#changes-result h2'))?.trim());
     await page.screenshot({ path: join(shots, '9-plan.png') });
-    await page.click('#result-close');
+    await goTo(page, 'backlog');
   } else {
     log('skipped plan: not logged in');
   }

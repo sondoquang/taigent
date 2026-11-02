@@ -398,7 +398,7 @@ function shortTime(at: string): string {
   return at.slice(0, 16).replace('T', ' ');
 }
 
-const TYPE_LABEL: Record<ItemType, string> = { epic: 'Epic', story: 'Story', task: 'Task' };
+const TYPE_LABEL: Record<ItemType, string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
 
 function renderItem(item: PreviewItem, level: number): string[] {
   const lines = [`${'#'.repeat(level)} ${TYPE_LABEL[item.type]} ${item.key}: ${item.subject}`, ''];

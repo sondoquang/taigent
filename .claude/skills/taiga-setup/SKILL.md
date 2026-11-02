@@ -23,7 +23,7 @@ Passes when Node is v24 or later and the second command prints taigent's usage. 
 Fix, by where the user works:
 
 - **A clone of the taigent repository** (`github.com/sondoquang/taigent`): `npm install` in the clone.
-- **Another project**: `npm install -D github:sondoquang/taigent` at the project root (creates `package.json` when there is none). npm builds the CLI on install; it needs read access to the repository. Append `#<tag>` to pin a release.
+- **Another project**: at the project root, `npm install -D github:sondoquang/taigent` (creates `package.json` when there is none; npm builds the CLI on install and needs read access to the repository), then `npx --no -- taigent init` (below), then `npm install`.
 
 ## 2. Taiga login
 
@@ -63,7 +63,7 @@ An older entry that starts `npx -y taiga-mcp-server@…` with `TAIGA_*` values i
 
 ### Registering the server: Claude Code
 
-**Default: `.mcp.json` at the project root.** It holds no secret, so it can be committed; each user accepts the project server once, when Claude Code asks at startup. Show the user this entry; once they agree, merge it into `.mcp.json`, keeping the file's other entries.
+**Default: `.mcp.json` at the project root, written by `taigent init`** (below), which merges this entry and keeps the file's other servers. It holds no secret, so it can be committed; each user accepts the project server once, when Claude Code asks at startup. To add it by hand instead, show the user this entry; once they agree, merge it into `.mcp.json`, keeping the file's other entries.
 
 ```json
 {
@@ -80,7 +80,7 @@ An older entry that starts `npx -y taiga-mcp-server@…` with `TAIGA_*` values i
 
 ### Registering the server: Codex
 
-`.codex/config.toml` at the project root, read once the project is trusted. Codex passes a stdio server only a few variables; `env_vars` forwards the ones taigent may need when the user sets them.
+`.codex/config.toml` at the project root, read once the project is trusted; `taigent init` writes this table and leaves the rest of the file as it is. Codex passes a stdio server only a few variables; `env_vars` forwards the ones taigent may need when the user sets them.
 
 ```toml
 [mcp_servers.taiga]
@@ -92,9 +92,11 @@ required = true
 
 `taigent mcp` runs the `taiga-mcp-server` version pinned in taigent's `package.json` (1.9.20): the skills' tool notes and the banned-tool list of `docs/taiga/conventions.md` §10 are written against it.
 
-## Installing the skills into another project
+## Installing Taigent into another project
 
-When the user asks for it: `npx skills add sondoquang/taigent` at the project root installs the ten Taigent skills (every `taiga-*` and `ask-taigent`) for the agents it detects, into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code); `npx skills update` refreshes them. It installs neither the CLI nor the MCP server: run the checks above.
+`taigent init` installs everything the skills need from the installed taigent, into the project root: the ten Taigent skills (every `taiga-*` and `ask-taigent`) into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code), the `taiga` entries above in `.mcp.json` and `.codex/config.toml`, the headless kit (`tools/taiga/allowlist.txt`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules`), and `taigent` in `devDependencies`, pinned to the installed version's release tag. It keeps other skills, MCP servers and dependencies, never logs in and never runs `npm install`.
+
+When the user asks for it, or a check above needs the skills or an MCP entry: run `npx --no -- taigent init --dry-run` at the project root (exit 3 lists the files it would create, update or remove; exit 0: nothing to do), show the user that list, and once they agree run `npx --no -- taigent init`. Then `npm install` installs the pinned version. Exit 2 names a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge (not valid JSON/TOML): the user fixes that file, then init runs again. After a taigent upgrade, running init again updates the skills and removes the ones taigent no longer ships. The files it wrote are committed with the project.
 
 ## Report
 

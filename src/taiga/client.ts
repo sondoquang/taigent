@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { openAsBlob } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
-import { ITEM_TYPES, type ItemType } from '../items.ts';
+import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from '../items.ts';
 import { Secrets } from '../secrets.ts';
 
 /** Thrown for any Taiga/network failure. Maps to ExitCode.Taiga. Never contains credentials. */
@@ -97,7 +97,7 @@ export interface TaigaProject {
   customAttributes: Record<ItemType, TaigaCustomAttribute[]>;
 }
 
-/** Custom attribute values of one item (`/{epics,userstories,tasks}/custom-attributes-values/{id}`). */
+/** Custom attribute values of one item (`/{epics,userstories,tasks,issues}/custom-attributes-values/{id}`). */
 export interface TaigaAttributeValues {
   /** Attribute id (as a string, like Taiga's JSON keys) → value. */
   values: Record<string, unknown>;
@@ -105,7 +105,7 @@ export interface TaigaAttributeValues {
   version: number;
 }
 
-/** Common shape of epics, user stories and tasks. */
+/** Common shape of epics, user stories, tasks and issues. */
 export interface TaigaItem {
   id: number;
   ref: number;
@@ -122,6 +122,15 @@ export interface TaigaTask extends TaigaItem {
   userStory: number | null;
 }
 
+/** An issue: an item plus the ids of its type, severity and priority (null when the project has none set). */
+export interface TaigaIssue extends TaigaItem, Record<IssueValueField, number | null> {}
+
+/** One issue type, severity or priority of a project (`GET /issue-types`, `/severities`, `/priorities`). */
+export interface TaigaIssueValue {
+  id: number;
+  name: string;
+}
+
 export interface NewItem {
   project: number;
   subject: string;
@@ -129,10 +138,17 @@ export interface NewItem {
   tags: string[];
   /** Tasks only: the parent user story. */
   user_story?: number;
+  /** Issues only: ids of the project's issue type, severity and priority. */
+  type?: number;
+  severity?: number;
+  priority?: number;
 }
 
-/** Manifest-managed fields an update may change (`user_story`: a task's parent); everything else is left alone. */
-export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'>> & { user_story?: number };
+/**
+ * Manifest-managed fields an update may change (`user_story`: a task's parent; `type`, `severity`, `priority`: an
+ * issue's value ids); everything else is left alone.
+ */
+export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'> & Record<IssueValueField, number>> & { user_story?: number };
 
 interface RequestOptions {
   query?: Record<string, string | number>;
@@ -182,6 +198,13 @@ function parseTask(raw: unknown): TaigaTask {
   return { ...task, userStory };
 }
 
+function parseIssue(raw: unknown): TaigaIssue {
+  const issue = parseItem(raw, 'issue');
+  const r = isRecord(raw) ? raw : {};
+  const ids = Object.fromEntries(ISSUE_VALUE_FIELDS.map((name) => [name, typeof r[name] === 'number' ? r[name] : null]));
+  return { ...issue, ...(ids as Record<IssueValueField, number | null>) };
+}
+
 /**
  * Taiga's names for each item type: its REST collection (`/userstories`, also used under attachments and custom
  * attribute values), its custom attribute prefix (`/userstory-custom-attributes`, `userstory_custom_attributes`
@@ -191,10 +214,20 @@ const TAIGA_ITEM: Record<ItemType, { collection: string; attributes: string; wha
   epic: { collection: 'epics', attributes: 'epic', what: 'epic' },
   story: { collection: 'userstories', attributes: 'userstory', what: 'user story' },
   task: { collection: 'tasks', attributes: 'task', what: 'task' },
+  issue: { collection: 'issues', attributes: 'issue', what: 'issue' },
+};
+
+/** Taiga's collection of each issue value field's project values (`GET /issue-types?project=`). */
+const TAIGA_ISSUE_VALUES: Record<IssueValueField, { collection: string; what: string }> = {
+  type: { collection: 'issue-types', what: 'issue type' },
+  severity: { collection: 'severities', what: 'severity' },
+  priority: { collection: 'priorities', what: 'priority' },
 };
 
 function parseItemOf(type: ItemType, raw: unknown): TaigaItem {
-  return type === 'task' ? parseTask(raw) : parseItem(raw, TAIGA_ITEM[type].what);
+  if (type === 'task') return parseTask(raw);
+  if (type === 'issue') return parseIssue(raw);
+  return parseItem(raw, TAIGA_ITEM[type].what);
 }
 
 function parseList<T>(raw: unknown, what: string, parse: (item: unknown) => T): T[] {
@@ -594,10 +627,21 @@ export class TaigaClient {
 
   /** All items of one type in a project, unfiltered: every `src:` tag is needed to find orphans. */
   listItems(type: 'task', projectId: number): Promise<TaigaTask[]>;
+  listItems(type: 'issue', projectId: number): Promise<TaigaIssue[]>;
   listItems(type: ItemType, projectId: number): Promise<TaigaItem[]>;
   async listItems(type: ItemType, projectId: number): Promise<TaigaItem[]> {
     const raw = await this.#request('GET', `/${TAIGA_ITEM[type].collection}`, { query: { project: projectId } });
     return parseList(raw, TAIGA_ITEM[type].what, (item) => parseItemOf(type, item));
+  }
+
+  /** The issue types, severities or priorities a project defines, in Taiga's order. */
+  async listIssueValues(valueField: IssueValueField, projectId: number): Promise<TaigaIssueValue[]> {
+    const { collection, what } = TAIGA_ISSUE_VALUES[valueField];
+    const raw = await this.#request('GET', `/${collection}`, { query: { project: projectId } });
+    return parseList(raw, what, (value) => {
+      const r = record(value, what);
+      return { id: field<number>(r, 'id', 'number', what), name: field<string>(r, 'name', 'string', what) };
+    });
   }
 
   async createItem(type: ItemType, item: NewItem): Promise<TaigaItem> {

@@ -102,10 +102,12 @@ const KINDS: Record<ItemType, ItemKind> = {
     order: ['key', 'subject', 'use_case', 'scenarios', 'acceptance_criteria', 'description', 'spec', 'tags', 'custom_attributes', 'tasks'],
   },
   task: { list: 'tasks', parent: 'story', order: ['key', 'subject', 'description', 'tags', 'custom_attributes'] },
+  // Issues share the key space and can be removed; the form input for them (`BacklogItem`) comes with the issue form.
+  issue: { list: 'issues', order: ['key', 'subject', 'description', 'type', 'severity', 'priority', 'tags', 'custom_attributes'] },
 };
 
 /** Top-level fields of backlog.yaml, in order. */
-const ROOT_ORDER = ['epics'];
+const ROOT_ORDER = ['epics', 'issues'];
 
 /** Manifest field name of each input field. */
 const FIELD_NAMES: Record<string, string> = {
@@ -304,7 +306,7 @@ async function open(dir: string, manifest: EditableManifest, baseDigest: string)
   const invalid = (rule: string, message: string): Opened => ({ ok: false, result: { status: 'invalid', issues: [{ file: current.file, path: '', rule, message }] } });
   if (doc.errors.length > 0) return invalid('yaml-syntax', doc.errors.map((error) => error.message).join('\n'));
   if (doc.contents === null) doc.contents = doc.createNode({});
-  if (!isMap(doc.contents)) return invalid('type', 'backlog must be a mapping with an `epics` list');
+  if (!isMap(doc.contents)) return invalid('type', 'backlog must be a mapping with an `epics` list and optional `issues` list');
   recordPadding(doc, current.text);
   return { ok: true, manifest: current, doc, root: doc.contents };
 }

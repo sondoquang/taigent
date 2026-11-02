@@ -1,7 +1,9 @@
-// Taigent Desktop UI: the backlog tree, the item detail with its review, and the Taiga actions. Everything it
-// knows comes through `window.taigent` (preload); it never reaches the file system or the network itself.
+// Taigent Desktop UI: the navigation shell (navigation.ts) with the Backlog section (tree, item detail and its
+// review) and the Thay đổi section (plan and push to Taiga). Everything it knows comes through `window.taigent`
+// (preload); it never reaches the file system or the network itself.
 
 import type {
+  AppState,
   ApplyOutcome,
   Failure,
   LoginStatus,
@@ -18,6 +20,7 @@ import type {
 import { byId, h } from './dom.ts';
 import { itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
+import { currentSection, onSectionChange, wireNavigation } from './navigation.ts';
 
 declare global {
   interface Window {
@@ -47,7 +50,7 @@ const drafts = new Map<string, string>();
 
 // ---- status vocabulary ----------------------------------------------------------------------------------------
 
-const TYPE_LABEL: Record<PreviewItem['type'], string> = { epic: 'Epic', story: 'Story', task: 'Task' };
+const TYPE_LABEL: Record<PreviewItem['type'], string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
 
 function reviewStatus(item: PreviewItem): { label: string; css: string } {
   if (item.review.stale) return { label: 'Đã đổi sau khi duyệt', css: 'stale' };
@@ -129,6 +132,15 @@ function failureBlock(failure: Failure): HTMLElement {
 function showResult(title: string, ...content: HTMLElement[]): void {
   byId('result-content').replaceChildren(h('h2', {}, title), ...content);
   byId<HTMLDialogElement>('result-dialog').showModal();
+}
+
+/** Shows the outcome of a plan or a push for `slug` in the Thay đổi section. */
+function showChangesResult(slug: string, title: string, ...content: HTMLElement[]): void {
+  byId('changes-result').replaceChildren(
+    h('h2', {}, title),
+    h('p', { class: 'muted' }, `Dự án ${slug} · ${new Date().toLocaleTimeString('vi-VN')}`),
+    ...content,
+  );
 }
 
 // ---- rendering ------------------------------------------------------------------------------------------------
@@ -384,11 +396,45 @@ function renderButtons(): void {
     .join('   ·   ');
 }
 
+/** The Thay đổi section's overview of the open project: what a push would carry and its review state. */
+function renderChanges(): void {
+  const overview = byId('changes-overview');
+  const view = state.view;
+  if (!view) {
+    overview.replaceChildren(h('div', { class: 'empty-state' }, 'Mở thư mục repo và chọn dự án để xem thay đổi.'));
+    return;
+  }
+  const s = view.preview.summary;
+  overview.replaceChildren(
+    h(
+      'p',
+      {},
+      h('strong', {}, view.slug),
+      ` · ${s.epics} epic, ${s.stories} story, ${s.tasks} task · Mới ${s.new} · Đã đẩy ${s.applied}`,
+    ),
+    h(
+      'p',
+      { class: 'muted' },
+      `Đạt ${s.approved} · Cần sửa ${s.changes} · Chưa duyệt ${s.unreviewed} · Đã đổi sau khi duyệt ${s.stale} · Góp ý mở ${s.openComments} · `,
+      view.validation.valid ? 'Manifest hợp lệ' : h('strong', { class: 'error' }, 'Manifest lỗi'),
+    ),
+  );
+}
+
+function renderVersions(versions: AppState['versions']): void {
+  byId('settings-versions').replaceChildren(
+    ...Object.entries({ 'Taigent Desktop': versions.app, taigent: versions.taigent, Electron: versions.electron, Node: versions.node }).map(
+      ([name, value]) => h('tr', {}, h('th', {}, name), h('td', {}, value)),
+    ),
+  );
+}
+
 function render(): void {
   renderRepo();
   renderSummary();
   renderTree();
   renderDetail();
+  renderChanges();
   renderButtons();
 }
 
@@ -421,7 +467,13 @@ function applyView(result: Result<ProjectView>): void {
   render();
 }
 
+/** Forgets the plan or push result shown in Thay đổi: it belongs to the project that was open, or to a run before. */
+function clearChangesResult(note?: string): void {
+  byId('changes-result').replaceChildren(...(note ? [h('p', { class: 'muted' }, note)] : []));
+}
+
 async function openProject(slug: string): Promise<void> {
+  clearChangesResult();
   if (!slug) {
     state.view = undefined;
     state.selected = undefined;
@@ -515,27 +567,34 @@ function planTable(plan: Plan): HTMLElement {
 async function showPlan(): Promise<void> {
   if (!state.view) return;
   const slug = state.view.slug;
+  clearChangesResult('Đang chạy taigent plan…');
   const result = await withBusy(() => api.plan(slug));
-  if (!result.ok) return showResult('Xem thay đổi trên Taiga', failureBlock(result));
-  showResult(
+  if (!result.ok) return showChangesResult(slug, 'Xem thay đổi trên Taiga', failureBlock(result));
+  showChangesResult(
+    slug,
     result.value.changes ? 'Thay đổi sẽ ghi lên Taiga' : 'Taiga đã khớp với backlog',
     result.value.changes ? planTable(result.value) : h('p', {}, 'Không có thay đổi nào cần đẩy.'),
   );
 }
 
-function applyOutcome(outcome: ApplyOutcome): void {
-  if (outcome.status === 'cancelled') return toast('Đã huỷ, chưa ghi gì lên Taiga.');
+function applyOutcome(slug: string, outcome: ApplyOutcome): void {
+  if (outcome.status === 'cancelled') {
+    toast('Đã huỷ, chưa ghi gì lên Taiga.');
+    return showChangesResult(slug, 'Đã huỷ đẩy lên Taiga', h('p', {}, 'Chưa ghi gì lên Taiga.'));
+  }
   if (outcome.status === 'blocked') {
-    return showResult(
+    return showChangesResult(
+      slug,
       'Chưa thể đẩy lên Taiga',
       h('ul', { class: 'issues' }, ...outcome.reasons.map((reason) => h('li', {}, reason))),
-      h('p', { class: 'muted' }, 'Nhờ agent xử lý góp ý (skill taiga-plan-backlog), rồi duyệt lại.'),
+      h('p', { class: 'muted' }, 'Nhờ agent xử lý góp ý (skill taiga-plan-backlog), rồi duyệt lại trong mục Backlog.'),
     );
   }
-  if (outcome.status === 'no-changes') return showResult('Taiga đã khớp với backlog', h('p', {}, 'Không có thay đổi nào cần đẩy.'));
+  if (outcome.status === 'no-changes') return showChangesResult(slug, 'Taiga đã khớp với backlog', h('p', {}, 'Không có thay đổi nào cần đẩy.'));
   const { report } = outcome;
   const RESULT: Record<string, string> = { created: 'Đã tạo', updated: 'Đã cập nhật', linked: 'Đã gắn', unchanged: 'Không đổi' };
-  showResult(
+  showChangesResult(
+    slug,
     'Đã đẩy lên Taiga',
     h(
       'p',
@@ -565,9 +624,10 @@ function applyOutcome(outcome: ApplyOutcome): void {
 async function pushToTaiga(): Promise<void> {
   if (!state.view) return;
   const slug = state.view.slug;
+  clearChangesResult('Đang kiểm tra trước khi đẩy…');
   const result = await withBusy(() => api.apply(slug));
-  if (!result.ok) return showResult('Đẩy lên Taiga', failureBlock(result));
-  applyOutcome(result.value);
+  if (!result.ok) return showChangesResult(slug, 'Đẩy lên Taiga', failureBlock(result));
+  applyOutcome(slug, result.value);
 }
 
 async function refreshLogin(): Promise<void> {
@@ -620,6 +680,7 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
   state.repo = result.value;
   state.view = undefined;
   state.selected = undefined;
+  clearChangesResult();
   render();
   const only = result.value.projects.length === 1 ? result.value.projects[0] : undefined;
   if (only) void openProject(only.slug);
@@ -628,6 +689,11 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
 // ---- wiring ---------------------------------------------------------------------------------------------------
 
 function wire(): void {
+  wireNavigation();
+  onSectionChange((section) => {
+    // A hidden tree cannot scroll: bring the selected item back into view when Backlog shows again.
+    if (section === 'backlog') byId('tree').querySelector('.node.selected')?.scrollIntoView({ block: 'nearest' });
+  });
   byId('open-repo').addEventListener('click', async () => useRepo(await api.openRepo()));
   byId<HTMLSelectElement>('project-select').addEventListener('change', (event) => {
     const target = event.currentTarget;
@@ -672,6 +738,7 @@ function wire(): void {
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
     if (document.querySelector('dialog[open]') || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (currentSection() !== 'backlog') return;
     if (event.key === 'j' || event.key === 'ArrowDown') {
       event.preventDefault();
       move(1);
@@ -701,6 +768,7 @@ async function start(): Promise<void> {
   const initial = await api.getState();
   state.repo = initial.repo;
   document.title = `Taigent Desktop ${initial.versions.app}`;
+  renderVersions(initial.versions);
   render();
   if (initial.repo?.projects.length === 1 && initial.repo.projects[0]) await openProject(initial.repo.projects[0].slug);
   await refreshLogin();

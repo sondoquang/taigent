@@ -33,7 +33,7 @@ body {
 
 body {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   overflow: hidden;
 }
 
@@ -232,6 +232,109 @@ textarea:focus {
   background: var(--amber-soft);
   color: var(--amber);
   margin-left: 6px;
+}
+
+/* ---- navigation shell ---- */
+.shell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.nav-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 112px;
+  padding: 8px 6px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+}
+
+.nav-item {
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background: #f3f5f8;
+}
+
+.nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.screen {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.screen[hidden],
+.terminal-dock[hidden] {
+  display: none;
+}
+
+.screen-backlog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.screen-body {
+  padding: 20px 28px;
+  max-width: 980px;
+}
+
+.screen-body h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.empty-state {
+  margin: 16px 0;
+  padding: 16px 20px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.empty-state p {
+  margin: 4px 0;
+}
+
+.changes-overview {
+  margin: 12px 0;
+}
+
+.changes-overview p {
+  margin: 4px 0;
+}
+
+.changes-actions {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 20px;
+}
+
+.changes-result h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+/* Reserved for the terminal panel (#39). */
+.terminal-dock {
+  min-height: 0;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
 }
 
 /* ---- layout ---- */
