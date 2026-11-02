@@ -23,6 +23,7 @@ import { itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
 import { mountTaigaProjects } from './taiga-projects.ts';
+import { mountTaigaReport } from './taiga-report.ts';
 
 declare global {
   interface Window {
@@ -795,6 +796,7 @@ function wire(): void {
     toast,
     failureBlock,
   });
+  mountTaigaReport({ api, failureBlock });
 }
 
 async function start(): Promise<void> {

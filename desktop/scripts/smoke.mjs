@@ -2,7 +2,7 @@
 // it copies the committed fixture `scripts/fixture/smoke-taigent-desktop` (or `taiga/<slug>` of the repository with
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
 // user-data folder. It never writes to Taiga: every native confirm dialog (push, bootstrap) is stubbed to "Huỷ", and
-// "Xem thay đổi trên Taiga" and bootstrap --dry-run (read-only) run only when the app reports a login.
+// "Xem thay đổi trên Taiga", bootstrap --dry-run and the Báo cáo report (read-only) run only when the app reports a login.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -218,6 +218,23 @@ try {
     await page.screenshot({ path: join(shots, '11-bootstrap-cancelled.png') });
   } else {
     log('skipped bootstrap: not logged in');
+  }
+
+  // Taiga > Báo cáo, below Project: its project choice lists the Taiga projects read above. Logged in, the first one's
+  // report (read-only `taigent report`) opens; without a login there is nothing to choose.
+  check(await page.isVisible('#taiga-report'), 'Taiga shows the Báo cáo panel');
+  const reportSlugs = await page.locator('#taiga-report-project option').evaluateAll((options) => options.map((option) => option.value));
+  if (login.loggedIn && reportSlugs.length > 0) {
+    await page.selectOption('#taiga-report-project', reportSlugs[0]);
+    await page.click('#taiga-report-run');
+    await page.waitForSelector('#taiga-report-body :is(#taiga-report-result, .failure)', { timeout: 120_000 });
+    check(await page.isVisible('#taiga-report-result'), `report of ${reportSlugs[0]} shown`);
+    log('report:', (await page.textContent('#taiga-report-status'))?.trim());
+    await page.locator('#taiga-report').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(shots, '12-report.png') });
+  } else {
+    check(reportSlugs.length === 0 && (await page.isDisabled('#taiga-report-run')), 'Báo cáo has no project to choose');
+    log('skipped report:', (await page.textContent('#taiga-report-status'))?.trim());
   }
   log('screenshots in', shots);
   log('temporary manifests in', manifests);
