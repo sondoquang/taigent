@@ -88,6 +88,10 @@ for the shell, its PreToolUse hook reads the `Bash(…)`/`PowerShell(…)` rules
 `.codex/rules/taigent.rules` repeats the taigent commands in Codex's rule language, which cannot read
 files (`test/headless.test.ts` fails when the two lists differ).
 
+`taigent init` installs the allowlist, the hook and the rule into another repository at these same paths, with the
+Taigent skills and the MCP entries (`docs/cli.md` §Using the skills in another project); re-running it after a
+taigent upgrade brings them up to date.
+
 ## Platform notes
 
 - **Git Bash/MSYS** would rewrite the prompt `/taiga-…` into a Windows path (`C:/Program Files/Git/taiga-…`)

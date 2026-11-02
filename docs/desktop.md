@@ -133,8 +133,11 @@ npm run dist             # build + scripts/stage-taigent.mjs + electron-builder
 - macOS: cấu hình `dmg` có sẵn trong `desktop/package.json`. Phải chạy `npm run dist` trên máy Mac để
   `@napi-rs/keyring` có bản prebuilt cho macOS.
 
-`scripts/stage-taigent.mjs` chép `bin/`, `dist/`, `package.json` của taigent và các dependency lúc chạy (`yaml`,
-`@napi-rs/keyring` kèm bản N-API prebuilt đã cài) vào `desktop/stage/`. electron-builder đặt chúng vào
+`scripts/stage-taigent.mjs` chép vào `desktop/stage/` đúng những gì gói npm của taigent mang theo: `package.json`,
+`LICENSE` và mọi file trong danh sách `files` (`bin/`, `dist/`, tài liệu mà skill trích dẫn, cùng những thứ
+`taigent init` cài vào repo: các skill Taigent, `tools/taiga/` có `run-skill` và allowlist, guard shell và execpolicy
+rule của Codex), kèm các dependency lúc chạy (`yaml`, `smol-toml`, `@napi-rs/keyring` kèm bản N-API prebuilt đã cài).
+electron-builder đặt chúng vào
 `resources/taigent/node_modules/taigent`, nên CLI chạy bằng file thực thi của ứng dụng, không cần Node trên máy.
 `taiga-mcp-server` không được đóng gói vì nó chỉ phục vụ `taigent mcp`, lệnh mà ứng dụng không dùng.
 
