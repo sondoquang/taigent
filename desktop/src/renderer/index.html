@@ -4,10 +4,11 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Taigent Desktop</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="xterm.css" />
   </head>
   <body>
     <header class="topbar">
@@ -21,6 +22,7 @@
         </select>
       </label>
       <div class="spacer"></div>
+      <button id="terminal-toggle" class="btn ghost" type="button" title="Terminal (Ctrl+`)" aria-controls="terminal-dock" aria-expanded="false">Terminal</button>
       <button id="login-btn" class="btn ghost" type="button">Đăng nhập</button>
     </header>
 
@@ -122,8 +124,8 @@
           <h1>Git</h1>
           <p class="muted">
             Chỉ thao tác trên thư mục manifest (<code>taiga/</code>) và các file mà <code>docs.yaml</code> tham chiếu.
-            Ứng dụng không bao giờ merge, rebase hay force push: khi cần, nó dừng lại, giải thích và mở repo để bạn xử
-            lý trong terminal.
+            Ứng dụng không bao giờ merge, rebase hay force push: khi cần, nó dừng lại, giải thích và mở một tab terminal
+            ở repo để bạn xử lý.
           </p>
           <div id="git-overview" class="git-overview"></div>
           <div class="changes-actions">
@@ -156,8 +158,23 @@
       </section>
     </div>
 
-    <!-- Bottom panel of the layout, reserved for the terminal (#39); empty and hidden until then. -->
-    <section id="terminal-dock" class="terminal-dock" aria-label="Terminal" hidden></section>
+    <!-- Bottom panel: the terminal (src/renderer/terminal.ts), hidden until toggled with the top-bar button or Ctrl+`. -->
+    <section id="terminal-dock" class="terminal-dock" aria-label="Terminal" hidden>
+      <div id="terminal-resizer" class="terminal-resizer" role="separator" aria-orientation="horizontal" aria-label="Đổi cỡ terminal" title="Kéo để đổi cỡ"></div>
+      <div class="terminal-bar">
+        <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="Tab terminal"></div>
+        <button id="terminal-new" class="btn small" type="button" title="Tab shell mới ở thư mục repo">+ Shell</button>
+        <span class="terminal-launch-label">Mở nhanh</span>
+        <button class="btn small" type="button" data-launch="claude" title="Tab mới chạy claude ở thư mục repo">claude</button>
+        <button class="btn small" type="button" data-launch="codex" title="Tab mới chạy codex ở thư mục repo">codex</button>
+        <button class="btn small" type="button" data-launch="omp" title="Tab mới chạy omp ở thư mục repo">omp</button>
+        <div class="spacer"></div>
+        <button id="terminal-hide" class="btn small ghost" type="button" title="Ẩn terminal (Ctrl+`)">Ẩn</button>
+      </div>
+      <div id="terminal-views" class="terminal-views">
+        <p id="terminal-empty" class="terminal-empty">Chưa có tab nào. Bấm <b>+ Shell</b> hoặc mở nhanh <code>claude</code>, <code>codex</code>, <code>omp</code>. Tab chạy ở thư mục repo đang mở.</p>
+      </div>
+    </section>
 
     <footer class="statusbar" id="statusbar"></footer>
 

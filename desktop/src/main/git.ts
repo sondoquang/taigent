@@ -1,17 +1,17 @@
 // The Git section (spec #35 §Git): status, pull and commit + push of the manifests folder (`taiga/`) and the files
 // its docs.yaml files reference, and nothing else. git runs through execFile, never a shell. The app never merges,
 // rebases or force-pushes and never adds a path outside that scope: whatever would need it stops with a Vietnamese
-// explanation and hands the repository over to a terminal (`openTerminalAt`).
+// explanation and opens a shell tab at the repository in the terminal panel, with the commands to run there.
 
 import { execFile } from 'node:child_process';
 import { readdir } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { shell } from 'electron';
 import type * as YamlModule from '../../../src/manifest/yaml.ts';
 import type { GitChange, GitOutcome, GitStatus, GitStop, Result } from '../shared/api.ts';
 import { manifestsDir } from './repo.ts';
 import { taigentRoot } from './taigent.ts';
+import { terminals } from './terminal.ts';
 
 interface GitRun {
   code: number;
@@ -255,14 +255,6 @@ async function push(repo: Repo): Promise<GitRun> {
   return git(repo.root, ['push', repo.remote!, `HEAD:${repo.merge!}`]);
 }
 
-/**
- * Hands the repository over to the user for what the app will not do. Until the terminal panel exists (#39), opens
- * the repository folder; the stop message lists the commands to run there.
- */
-async function openTerminalAt(root: string): Promise<void> {
-  await shell.openPath(root);
-}
-
 type Action = (repo: Repo) => Promise<GitOutcome>;
 
 let queue: Promise<unknown> = Promise.resolve();
@@ -280,7 +272,7 @@ function run(root: string, action: Action | undefined): Promise<Result<GitOutcom
       outcome = { kind: 'stopped', stop: stop('no-git', 'Không tìm thấy git trên máy. Hãy cài Git rồi mở lại ứng dụng.', ['winget install --id Git.Git -e']) };
     }
     if (action && outcome.kind === 'stopped' && outcome.stop.reason !== 'behind') {
-      await openTerminalAt(root);
+      terminals.open({ kind: 'shell', cwd: root });
       outcome.stop.terminal = true;
     }
     return { ok: true, value: outcome };

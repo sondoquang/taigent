@@ -24,6 +24,7 @@ import {
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
 import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
+import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
 
@@ -32,7 +33,9 @@ const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs'
 const CSP = [
   "default-src 'none'",
   "script-src 'self'",
-  "style-src 'self'",
+  // xterm.js (terminal panel) styles its rows with <style> elements and style attributes. Scripts stay 'self' only,
+  // and agent-written Markdown cannot use inline styles: DOMPurify drops <style> and style="" (markdown.ts).
+  "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",
   "connect-src 'none'",
@@ -297,6 +300,7 @@ void app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   protocol.handle('app', serveRenderer);
   registerIpc();
+  registerTerminalIpc(() => window, requireRepo);
   window = createWindow();
 });
 
@@ -304,6 +308,9 @@ app.on('window-all-closed', () => {
   watcher.close();
   app.quit();
 });
+
+// Quitting kills every terminal tab's process tree, so no shell or agent outlives the app.
+app.on('will-quit', () => terminals.killAll());
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-navigate', (event) => event.preventDefault());
