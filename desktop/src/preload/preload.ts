@@ -43,6 +43,9 @@ const api: TaigentApi = {
   gitPull: () => ipcRenderer.invoke(CHANNELS.gitPull),
   gitCommitPush: (message) => ipcRenderer.invoke(CHANNELS.gitCommitPush, message),
   gitPush: () => ipcRenderer.invoke(CHANNELS.gitPush),
+  readMyTickets: (from, to) => ipcRenderer.invoke(CHANNELS.readMyTickets, from, to),
+  setTicketStatus: (request) => ipcRenderer.invoke(CHANNELS.setTicketStatus, request),
+  commentTicket: (request) => ipcRenderer.invoke(CHANNELS.commentTicket, request),
   terminal: {
     open: (kind) => ipcRenderer.invoke(CHANNELS.terminalOpen, kind),
     write: (id, data) => ipcRenderer.send(CHANNELS.terminalWrite, id, data),

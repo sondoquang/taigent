@@ -6,15 +6,18 @@ import type { BacklogItem, EditResult, ManifestFile, RemoveItemRequest, SaveItem
 import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
-import type { ProjectDetailReport } from '../../../src/projects.ts';
+import type { ProjectDetailReport, StoryStatusEntry } from '../../../src/projects.ts';
 import type { ProjectReport } from '../../../src/report.ts';
 import type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
+import type { CommentAdded, StatusChange } from '../../../src/ticket.ts';
+import type { DueStatus, Ticket, TicketsReport } from '../../../src/tickets.ts';
 import type { UploadOperation, UploadPlan, UploadReport } from '../../../src/upload.ts';
 
 export type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict };
 export type { BacklogItem, CustomAttributeSpec, EditResult, ItemType, ManifestFile, RemoveItemRequest, SaveItemRequest };
 export type { SaveWikiPageRequest, UploadOperation, UploadPlan, UploadReport, WikiPageFile, WikiSnapshot };
 export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult };
+export type { CommentAdded, DueStatus, StatusChange, StoryStatusEntry, Ticket, TicketsReport };
 export type { ProjectReport };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
@@ -263,6 +266,33 @@ export type BootstrapOutcome =
   | { status: 'no-changes' }
   | { status: 'cancelled' }
   | { status: 'bootstrapped'; report: BootstrapReport };
+
+/** Taiga > Ticket của tôi: `tickets --from --to --json`, with the user story statuses of each project holding a ticket. */
+export interface MyTickets {
+  report: TicketsReport;
+  /** By project slug: `projects --project <slug> --json`'s `storyStatuses`, or why they could not be read. */
+  statuses: Record<string, { statuses: StoryStatusEntry[] } | { message: string }>;
+}
+
+/** One write to a ticket of the user; `subject` and `from` only word the confirmation. */
+export interface TicketStatusRequest {
+  slug: string;
+  ref: number;
+  subject: string;
+  from: string;
+  to: string;
+  /** `to` is a closed status: the confirmation says the ticket gets closed. */
+  closes: boolean;
+}
+
+export interface TicketCommentRequest {
+  slug: string;
+  ref: number;
+  subject: string;
+  text: string;
+}
+
+export type TicketWriteOutcome<T> = { status: 'cancelled' } | { status: 'done'; value: T };
 export interface TaigentApi {
   getState(): Promise<AppState>;
   /** Shows the folder dialog; undefined when cancelled. */
@@ -310,6 +340,12 @@ export interface TaigentApi {
   gitCommitPush(message: string): Promise<Result<GitOutcome>>;
   /** Pushes local commits that only touch the scope. */
   gitPush(): Promise<Result<GitOutcome>>;
+  /** Taiga > Ticket của tôi: the Period's tickets from `from` to `to` (YYYY-MM-DD, both included). */
+  readMyTickets(from: string, to: string): Promise<Result<MyTickets>>;
+  /** A native confirmation, then `status --project <slug> --json <ref> -- <to>`. */
+  setTicketStatus(request: TicketStatusRequest): Promise<Result<TicketWriteOutcome<StatusChange>>>;
+  /** A native confirmation, then `comment --project <slug> --json <ref> -- <text>`. */
+  commentTicket(request: TicketCommentRequest): Promise<Result<TicketWriteOutcome<CommentAdded>>>;
 }
 
 export const CHANNELS = {
@@ -349,4 +385,7 @@ export const CHANNELS = {
   gitPull: 'taigent:git-pull',
   gitCommitPush: 'taigent:git-commit-push',
   gitPush: 'taigent:git-push',
+  readMyTickets: 'taigent:read-my-tickets',
+  setTicketStatus: 'taigent:set-ticket-status',
+  commentTicket: 'taigent:comment-ticket',
 } as const;

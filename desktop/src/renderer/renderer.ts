@@ -25,6 +25,7 @@ import { currentSection, onSectionChange, showSection, wireNavigation } from './
 import { mountTaigaProjects } from './taiga-projects.ts';
 import { mountTaigaReport } from './taiga-report.ts';
 import { gitRepoChanged, wireGit } from './git.ts';
+import { mountMyTickets } from './my-tickets.ts';
 import { wireTerminal } from './terminal.ts';
 import { mountWiki, refreshWiki } from './wiki.ts';
 
@@ -804,6 +805,7 @@ function wire(): void {
   });
   mountTaigaReport({ api, failureBlock });
   wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
+  mountMyTickets({ api, loginKey: () => `${state.login?.loggedIn}:${state.login?.apiUrl}:${state.login?.username}`, toast, failureBlock });
   mountWiki({ api, view: () => state.view, toast, failureBlock });
 }
 

@@ -2,8 +2,9 @@
 // it copies the committed fixture `scripts/fixture/smoke-taigent-desktop` (or `taiga/<slug>` of the repository with
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
 // user-data folder. It never writes to a real Taiga: every native confirm dialog (push, bootstrap, wiki upload) is
-// stubbed to "Huỷ", "Xem thay đổi trên Taiga", bootstrap --dry-run and the Báo cáo report (read-only) run only when the
-// app reports a login, and "Đẩy wiki lên Taiga" runs against an in-process fake Taiga (test/support/fake-taiga.ts).
+// stubbed to "Huỷ", "Xem thay đổi trên Taiga", bootstrap --dry-run, the Báo cáo report and Ticket của tôi (read-only)
+// use the login only when the app reports one, and "Đẩy wiki lên Taiga" and Ticket của tôi's writes (status, comment)
+// run against an in-process fake Taiga (test/support/fake-taiga.ts; smoke-tickets.mjs for the tickets).
 // Terminal steps: scripts/smoke-terminal.mjs.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
@@ -19,6 +20,7 @@ import { _electron as electron } from 'playwright-core';
 import { parse } from 'yaml';
 import { agentPath, descendants, smokeTerminal, waitGone } from './smoke-terminal.mjs';
 import { smokeGit } from './smoke-git.mjs';
+import { smokeTickets } from './smoke-tickets.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -255,6 +257,7 @@ try {
     check(reportSlugs.length === 0 && (await page.isDisabled('#taiga-report-run')), 'Báo cáo has no project to choose');
     log('skipped report:', (await page.textContent('#taiga-report-status'))?.trim());
   }
+  await smokeTickets({ app, page, work, shots, check, log, login });
   await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
   log('screenshots in', shots);
   log('temporary manifests in', manifests);

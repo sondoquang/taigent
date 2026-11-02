@@ -533,10 +533,12 @@ admin (bootstrap needs it) and whether the repository holds its manifest directo
 (`TAIGENT_MANIFESTS_DIR`, default `./taiga`; an empty directory counts). `--json` prints
 `{ "projects": [{ "id", "slug", "name", "admin", "manifest" }] }`.
 
-`taigent projects --project <slug> [--json]` reads one project the user can see (exit 5 when there is none) and the
+`taigent projects --project <slug> [--json]` reads one project the user can see (exit 5 when there is none), the
 names of its issue types, severities and priorities, in Taiga's order (`GET /issue-types`, `/severities`,
-`/priorities`): the values an issue of `backlog.yaml` may name. `--json` prints
-`{ "project": { "id", "slug", "name", "admin", "manifest" }, "issueTypes": ["Bug", …], "severities": […], "priorities": […] }`.
+`/priorities`): the values an issue of `backlog.yaml` may name; and its user story statuses, in Taiga's order
+(`GET /userstory-statuses`): the statuses [`status`](#status-and-comment) accepts, with whether moving a ticket there
+closes it. `--json` prints
+`{ "project": { "id", "slug", "name", "admin", "manifest" }, "issueTypes": ["Bug", …], "severities": […], "priorities": […], "storyStatuses": [{ "name": "New", "isClosed": false }, …] }`.
 
 Read-only: it never writes to Taiga or to the repository. Errors are those of every command that reads Taiga: exit 2
 when not logged in, exit 5 when Taiga refuses the login (kind `taiga`) or cannot be reached.
@@ -664,7 +666,10 @@ status; `taigent comment --project <slug> <ref> <text> [--json]` adds a comment 
 `--yes`: they touch one **ticket** (`GLOSSARY.md`) of the user, named on the command line, which is the request
 itself (the skill `taiga-update-ticket` runs them from a chat message). The ref is `84` or `#84`. The words after it
 are joined with spaces, so `status --project vigo-auth 84 Ready for test` needs no quotes (PowerShell 5.1 mangles
-them); the status matches a status of the project by name (trimmed, any case) or slug.
+them); the status matches a status of the project by name (trimmed, any case) or slug. Words after `--` are taken as
+they are, so a text that starts with `-` goes there (`comment --project vigo-auth 84 -- -x was the cause`); Taigent
+Desktop passes the whole comment as one argument after `--`, line breaks included. `projects --project <slug>` lists
+the project's statuses.
 
 Both read `GET /users/me`, `GET /projects/by_slug` and the user's stories of the project
 (`GET /userstories?assigned_users=<me>&project=<id>`); a ref that is not one of them (someone else's story, or no
@@ -898,7 +903,7 @@ skill checks all of it and names each fix.
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `ask-taigent`), `.agents/skills/` → `.claude/skills/`; `compareSkillDirs(source, target)` (file by file, `same` included) and `copySkills(source, target, comparison)` for any two directories |
 | Init | `src/init.ts` | `initRepository(root, { dryRun })` → `InitReport` (`files: [{ path, status }]`), `InitError` (exit 2): the offline `init` command, copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed) |
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
-| Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport`, `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
+| Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |

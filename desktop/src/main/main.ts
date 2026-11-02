@@ -19,6 +19,8 @@ import {
   type RepoInfo,
   type Result,
   type SaveItemRequest,
+  type TicketCommentRequest,
+  type TicketStatusRequest,
   type SaveWikiPageRequest,
   type VerdictChoice,
 } from '../shared/api.ts';
@@ -29,6 +31,7 @@ import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
 import { readTaigaReport } from './taiga-report.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
+import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
 import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
@@ -299,6 +302,10 @@ function registerIpc(): void {
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
   handle(CHANNELS.gitPush, async () => gitPush(requireRepo()));
+  // Tickets need no repository; with one open, its .env (TAIGA_*) applies, as for whoami.
+  handle(CHANNELS.readMyTickets, async (from: string, to: string) => readMyTickets(repoRoot ?? app.getPath('home'), String(from), String(to)));
+  handle(CHANNELS.setTicketStatus, async (request: TicketStatusRequest) => setTicketStatus(repoRoot ?? app.getPath('home'), request, window!));
+  handle(CHANNELS.commentTicket, async (request: TicketCommentRequest) => commentTicket(repoRoot ?? app.getPath('home'), request, window!));
 }
 
 app.enableSandbox();

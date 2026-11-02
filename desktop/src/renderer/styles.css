@@ -1328,6 +1328,67 @@ textarea:focus {
   max-width: 520px;
 }
 
+/* Taiga > Ticket của tôi (my-tickets.ts). */
+.taiga-tickets {
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.taiga-tickets .taiga-project-head {
+  flex-wrap: wrap;
+}
+
+.taiga-tickets label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.tickets-table tr.closed td {
+  color: var(--muted);
+}
+
+.tickets-table .small {
+  font-size: 12px;
+}
+
+.ticket-status-cell {
+  white-space: nowrap;
+}
+
+.ticket-status-cell select {
+  margin-right: 6px;
+}
+
+.ticket-comment-row textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+
+.badge.due-on-time,
+.badge.due-on-track {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.badge.due-late,
+.badge.due-overdue {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.badge.due-no-due-date,
+.badge.due-unknown {
+  background: var(--gray-soft);
+  color: #4b5563;
+}
+
+#tickets-result p.ok {
+  color: var(--green);
+}
+
 /* ---- story form (src/renderer/story-form.ts) ---- */
 
 .modal.wide:has(.with-preview) {

@@ -98,6 +98,21 @@
             <div id="taiga-projects-list"></div>
             <div id="taiga-project-detail"></div>
           </div>
+          <div class="taiga-tickets" id="taiga-tickets">
+            <div class="taiga-project-head">
+              <h2>Ticket của tôi</h2>
+              <div class="spacer"></div>
+              <button id="tickets-prev" class="btn ghost" type="button">‹ Tuần trước</button>
+              <button id="tickets-this-week" class="btn ghost" type="button">Tuần này</button>
+              <button id="tickets-next" class="btn ghost" type="button">Tuần sau ›</button>
+              <label class="inline">Từ <input id="tickets-from" type="date" /></label>
+              <label class="inline">đến <input id="tickets-to" type="date" /></label>
+              <button id="tickets-refresh" class="btn ghost" type="button">Làm mới</button>
+            </div>
+            <p class="muted" id="tickets-status"></p>
+            <div id="tickets-result" aria-live="polite"></div>
+            <div id="tickets-list"></div>
+          </div>
           <div class="taiga-report" id="taiga-report">
             <div class="taiga-project-head">
               <h2>Báo cáo</h2>
@@ -108,11 +123,6 @@
             <p class="muted" id="taiga-report-status">Chọn project khi mục Project ở trên đã đọc xong danh sách.</p>
             <div id="taiga-report-body"></div>
           </div>
-          <p class="muted">
-            Ticket của tôi chưa có trong ứng dụng. Trong terminal:
-            <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code> liệt kê ticket của bạn,
-            <code>npx taigent status</code> và <code>npx taigent comment</code> đổi status và comment.
-          </p>
         </div>
       </section>
 
