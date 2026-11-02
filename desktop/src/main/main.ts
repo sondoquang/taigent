@@ -18,6 +18,8 @@ import {
   type RepoInfo,
   type Result,
   type SaveItemRequest,
+  type TicketCommentRequest,
+  type TicketStatusRequest,
   type VerdictChoice,
 } from '../shared/api.ts';
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
@@ -25,6 +27,7 @@ import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
+import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -288,6 +291,10 @@ function registerIpc(): void {
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
   handle(CHANNELS.gitPush, async () => gitPush(requireRepo()));
+  // Tickets need no repository; with one open, its .env (TAIGA_*) applies, as for whoami.
+  handle(CHANNELS.readMyTickets, async (from: string, to: string) => readMyTickets(repoRoot ?? app.getPath('home'), String(from), String(to)));
+  handle(CHANNELS.setTicketStatus, async (request: TicketStatusRequest) => setTicketStatus(repoRoot ?? app.getPath('home'), request, window!));
+  handle(CHANNELS.commentTicket, async (request: TicketCommentRequest) => commentTicket(repoRoot ?? app.getPath('home'), request, window!));
 }
 
 app.enableSandbox();

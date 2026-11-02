@@ -15,10 +15,11 @@
   muốn lên Taiga vẫn phải review rồi đẩy như mọi thay đổi khác;
 - **đăng nhập / đăng xuất**: `storeLogin` / `removeLogin` (`dist/login.js`), dùng chung kho thông tin đăng nhập với
   `taigent login`;
-- **trạng thái đăng nhập, xem thay đổi, đẩy lên Taiga, project trên Taiga**: chạy CLI `bin/taigent.js` (`whoami --json`,
-  `plan --project <slug> --json`, `apply --project <slug> --yes --json`, `projects --json`,
-  `bootstrap --project <slug> --dry-run --json` rồi `--yes --json`) bằng chính file thực thi của ứng dụng ở chế độ
-  Node (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là repo đang mở, không qua shell;
+- **trạng thái đăng nhập, xem thay đổi, đẩy lên Taiga, project trên Taiga, ticket của tôi**: chạy CLI `bin/taigent.js`
+  (`whoami --json`, `plan --project <slug> --json`, `apply --project <slug> --yes --json`, `projects --json`,
+  `projects --project <slug> --json`, `bootstrap --project <slug> --dry-run --json` rồi `--yes --json`,
+  `tickets --from <ngày> --to <ngày> --json`, `status`/`comment --project <slug> --json <ref> -- <…>`) bằng chính file
+  thực thi của ứng dụng ở chế độ Node (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là repo đang mở, không qua shell;
 - **form `project.yaml`**: `readProjectSettings` / `saveProjectSettings` trong `dist/project-settings.js`. Form chỉ ghi
   file trong repo, không ghi lên Taiga.
 
@@ -60,8 +61,8 @@ Bố cục gồm bốn phần, từ trên xuống:
   mục.
 - **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
   - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
-  - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)). Ticket của tôi và Báo cáo chưa có:
-    màn hình ghi cách làm việc đó bằng CLI trong lúc chờ.
+  - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)) và **Ticket của tôi** (xem
+    [Ticket của tôi](#ticket-của-tôi)). Báo cáo chưa có: màn hình ghi cách làm việc đó bằng CLI trong lúc chờ.
   - **Wiki**: chưa có nội dung. Mục này chỉ hiện một trạng thái trống ghi rõ là chưa có và cách làm việc đó bằng CLI
     trong lúc chờ. Không có nút nào.
   - **Git**: pull, commit và push thư mục manifest (xem [Git](#git)).
@@ -187,6 +188,44 @@ bật module, tạo tag, custom attribute, mời member, tạo wiki home). **B�
 ý bootstrap** (conventions §1). Chỉ sau đó ứng dụng mới chạy `taigent bootstrap --project <slug> --yes --json`.
 Bootstrap không bao giờ tắt, đổi tên hay xoá gì trên Taiga, và cần quyền admin với project đã có.
 
+## Ticket của tôi
+
+Mục **Taiga** › **Ticket của tôi** là các **ticket** của bạn (user story được giao cho tài khoản đang đăng nhập, cả
+task lẫn issue đều không tính) trong một kỳ, đọc bằng `taigent tickets --from <ngày> --to <ngày> --json`
+([docs/cli.md § Tickets](cli.md#tickets)):
+
+- **Kỳ** mặc định là tuần hiện tại, thứ Hai tới Chủ nhật. **‹ Tuần trước**, **Tuần này**, **Tuần sau ›** chuyển tuần;
+  hai ô *Từ*/*đến* chọn kỳ bất kỳ. Đổi kỳ là đọc lại ngay. **Làm mới** đọc lại kỳ đang chọn.
+- Danh sách gồm ticket **đóng trong kỳ**, ticket **có hạn trong kỳ** và **mọi ticket còn mở** (đúng như `tickets`): ticket
+  đã đóng trước, rồi ticket mở theo *Quá hạn*, *Còn hạn*, *Không có hạn*. Mỗi ticket có project, status, hạn kèm
+  **due status** (*Đúng hạn*, *Trễ hạn*, *Quá hạn*, *Còn hạn*, *Không có hạn*), lúc đóng và **effort** (giờ, từ Spent
+  Time; không có thì *ước tính từ points*; không có cả hai thì *Chưa có effort*). Dòng tổng kết đếm ticket theo due
+  status và cộng effort. Ticket không có effort và các lần đóng hàng loạt (3 ticket trở lên trong một phút) được ghi
+  chú dưới bảng.
+- **Đổi status**: chọn status trong dropdown rồi bấm **Đổi status**. Dropdown liệt kê các user story status của project
+  theo thứ tự trên Taiga (`taigent projects --project <slug> --json`, trường `storyStatuses`); status đóng ghi *(đóng)*.
+  Ứng dụng hỏi xác nhận (status đóng thì báo ticket sẽ được đóng, Taiga ghi lại thời điểm đóng). **Bấm "Đổi status"
+  trong hộp thoại này chính là đồng ý ghi**; chỉ sau đó ứng dụng mới chạy `taigent status --project <slug> --json <ref>
+  -- <status>`.
+- **Comment**: bấm **Comment…** ở một ticket, viết rồi bấm **Gửi comment** (hoặc `Ctrl+Enter`). Sau hộp thoại xác nhận,
+  ứng dụng chạy `taigent comment --project <slug> --json <ref> -- <nội dung>`: nội dung đi nguyên vẹn thành một tham
+  số, kể cả xuống dòng hay dấu `-` ở đầu. Comment đang viết dở được giữ khi bạn đóng ô hoặc chuyển mục.
+- Sau **mỗi lần ghi**, xong hay lỗi, danh sách được đọc lại từ Taiga. Kết quả lần ghi gần nhất hiện trên danh sách.
+
+Lỗi hiện bằng tiếng Việt kèm cách sửa, chi tiết của CLI để bên dưới:
+
+| Tình huống | Ứng dụng báo | Cách sửa |
+|---|---|---|
+| Chưa đăng nhập | *Chưa đăng nhập Taiga* | Bấm **Đăng nhập** (hoặc `npx taigent login`), rồi **Làm mới** |
+| Đăng nhập hết hạn hoặc bị từ chối | *Đăng nhập Taiga đã hết hạn hoặc bị từ chối* | Đăng xuất rồi đăng nhập lại; hoặc sửa `TAIGA_TOKEN`/`TAIGA_USERNAME`/`TAIGA_PASSWORD` của repo |
+| Ticket vừa bị đổi trên Taiga (conflict) | *Ticket #84 vừa được đổi trên Taiga…*, chưa ghi gì | Xem lại ticket trong danh sách đã đọc lại, rồi thử lại |
+| Ticket không còn là của bạn | *#84 không phải ticket của bạn*, chưa ghi gì | Nhờ người được giao, hoặc nhờ giao lại cho bạn trên Taiga |
+| Status không còn trong project | *Project … không còn status này*, chưa ghi gì | Chọn lại status trong danh sách đã đọc lại |
+| Taiga không trả lời | *Không ghi được lên ticket…* / *Không đọc được ticket…* | Kiểm tra mạng và URL API, **Làm mới** để xem ticket trên Taiga trước khi thử lại |
+
+Không cần mở repo để dùng mục này. Khi đã mở repo, CLI chạy trong repo đó nên `.env` của repo (`TAIGA_*`) được dùng,
+như `whoami`. Đăng nhập hay đăng xuất xong, lần mở mục Taiga kế tiếp tự đọc lại.
+
 ## Git
 
 Mục **Git** chia sẻ manifest và kết quả review với team mà không cần biết git. Nó chỉ thao tác trên **phạm vi** gồm:
@@ -287,7 +326,15 @@ có trên Taiga bị khoá; mở form sửa task, giả lập agent sửa `backl
 Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Sau đó script mở Taiga › Project,
 kiểm tra fixture có trong danh sách, mở form `project.yaml`, sửa mô tả, lưu và kiểm tra file giữ comment và tag. Nếu
 đã đăng nhập, script bấm *Bootstrap lên Taiga…*: `bootstrap --dry-run` chạy rồi hộp thoại xác nhận hiện ra. Mọi hộp
-thoại xác nhận (đẩy, bootstrap) luôn được trả lời *Huỷ*. 
+thoại xác nhận (đẩy, bootstrap) luôn được trả lời *Huỷ*.
+Tiếp theo là **Ticket của tôi** (`scripts/smoke-tickets.mjs`): kiểm tra kỳ mặc định là tuần này (thứ Hai tới Chủ
+nhật). Nếu đã đăng nhập, script đọc ticket thật của tuần này rồi bấm *‹ Tuần trước* và chờ kỳ trước được đọc (chỉ
+đọc); nếu chưa, kiểm tra lỗi *Chưa đăng nhập* kèm cách sửa và kỳ vẫn đổi được. Thao tác ghi chỉ chạy trên FakeTaiga
+(`test/support/fake-taiga.ts`, khởi động trong script): script tạm trỏ CLI của ứng dụng vào FakeTaiga (biến `TAIGA_*`
+của tiến trình chính, kho đăng nhập tạm), kiểm tra hai ticket với due status và effort, dropdown status, *Huỷ* trong hộp
+thoại không ghi gì, đổi status và gửi comment (có xuống dòng) rồi kiểm tra danh sách được đọc lại, conflict, ticket
+không còn là của bạn và đăng nhập bị từ chối đều hiện lỗi tiếng Việt kèm cách sửa; xong thì trả lại biến môi trường.
+Không có gì được ghi lên Taiga thật: muốn thử ghi thật thì làm bằng tay trên một project thử.
 Cuối cùng script kiểm tra mục **Git** (`scripts/smoke-git.mjs`) trên một repo tạm có remote là một repo bare tạm, chứa
 fixture trong `taiga/<slug>/`, một `docs.yaml` tham chiếu `docs/huong-dan.md` và một file ngoài phạm vi: sửa một file
 trong `taiga/` và một file ngoài, kiểm tra danh sách chỉ có file trong `taiga/`, Commit + Push rồi kiểm tra remote chỉ

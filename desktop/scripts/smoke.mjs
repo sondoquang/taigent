@@ -2,7 +2,8 @@
 // it copies the committed fixture `scripts/fixture/smoke-taigent-desktop` (or `taiga/<slug>` of the repository with
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
 // user-data folder. It never writes to Taiga: every native confirm dialog (push, bootstrap) is stubbed to "Huỷ", and
-// "Xem thay đổi trên Taiga" and bootstrap --dry-run (read-only) run only when the app reports a login.
+// "Xem thay đổi trên Taiga", bootstrap --dry-run and Ticket của tôi (read-only) use the login only when the app
+// reports one. Ticket của tôi's writes (status, comment) run only against FakeTaiga (smoke-tickets.mjs).
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -14,6 +15,7 @@ import { parseArgs } from 'node:util';
 import { createRequire } from 'node:module';
 import { _electron as electron } from 'playwright-core';
 import { smokeGit } from './smoke-git.mjs';
+import { smokeTickets } from './smoke-tickets.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -220,6 +222,7 @@ try {
   } else {
     log('skipped bootstrap: not logged in');
   }
+  await smokeTickets({ app, page, work, shots, check, log, login });
   await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
   log('screenshots in', shots);
   log('temporary manifests in', manifests);

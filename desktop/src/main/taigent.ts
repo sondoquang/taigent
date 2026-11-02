@@ -95,6 +95,8 @@ export interface CliError {
   kind?: string;
   message: string;
   issues?: { file: string; path: string; rule: string; message: string }[];
+  /** Taiga's HTTP status, for kinds `taiga` and `conflict` (null when Taiga gave none). */
+  status?: number | null;
 }
 
 /** The `--json` body of a run, or its `{ error }` (stdout), falling back to the `taigent: <message>` stderr lines. */

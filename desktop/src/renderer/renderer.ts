@@ -24,6 +24,7 @@ import { renderMarkdown } from './markdown.ts';
 import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
 import { mountTaigaProjects } from './taiga-projects.ts';
 import { gitRepoChanged, wireGit } from './git.ts';
+import { mountMyTickets } from './my-tickets.ts';
 
 declare global {
   interface Window {
@@ -798,6 +799,7 @@ function wire(): void {
     failureBlock,
   });
   wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
+  mountMyTickets({ api, loginKey: () => `${state.login?.loggedIn}:${state.login?.apiUrl}:${state.login?.username}`, toast, failureBlock });
 }
 
 async function start(): Promise<void> {
