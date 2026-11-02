@@ -34,7 +34,7 @@ Beside the main flow:
 
 Starting situations, and where each merges onto the flow.
 
-- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npx skills add sondoquang/taigent` for the skills, `npm install -D github:sondoquang/taigent` for the CLI; neither registers the Taiga MCP server. `taiga-setup` checks the CLI, the login (`taigent whoami`; the user runs `npx taigent login` in their own terminal, which stores a token in the OS credential store, never the password) and the MCP server (`taigent mcp`), including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
+- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npm install -D github:sondoquang/taigent`, then `npx taigent init` (the skills, the `taiga` MCP server entries of `.mcp.json` and `.codex/config.toml`, the headless kit, and `taigent` pinned to its release tag; safe to re-run after an upgrade), then `npm install`. `taiga-setup` checks the CLI, the login (`taigent whoami`; the user runs `npx taigent login` in their own terminal, which stores a token in the OS credential store, never the password) and the MCP server (`taigent mcp`), including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
 - **Brand-new Taiga project** → `taiga-bootstrap-project`, then `taiga-plan-backlog` and `taiga-upload-docs`.
 - **Project already on Taiga, no manifest yet** → `taiga-plan-backlog`. Hand-made items carry no `src:` tag; it lists them and asks before adding the same work. `taiga-bootstrap-project` completes the existing project when you are its admin.
 - **Add one user story under an existing epic** → `taiga-create-user-story`.
@@ -74,6 +74,7 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 | `taigent status --project <slug> <ref> <status>` | Move your ticket to that status, at once | update-ticket |
 | `taigent comment --project <slug> <ref> <text>` | Comment on your ticket, at once | update-ticket |
 | `taigent notify week\|day\|eod [--dry-run]` | Your tickets of the week, of the day, or due by today and still open, to your Telegram chat | a scheduled task (Task Scheduler, cron) |
+| `taigent init [--dry-run]` | Install or update Taigent in a project: skills, MCP entries, headless kit, pinned devDependency; offline | taiga-setup, you |
 | `taigent skills sync\|check` | Skill maintenance, below | you |
 
 ## Maintaining the skills

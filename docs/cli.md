@@ -261,12 +261,16 @@ so a deleted or stale `state.json` never causes duplicates. `state.json` is a ca
 
 ## Commands
 
-Common options: `--project <slug>` (required except for `validate`, `tickets`, `notify`, `skills`, `login`, `logout`, `whoami` and `mcp`), `--json` (machine-readable stdout),
+Common options: `--project <slug>` (required except for `init`, `validate`, `tickets`, `notify`, `skills`, `login`, `logout`, `whoami` and `mcp`), `--json` (machine-readable stdout),
 `--yes`, `--dry-run`, `-h/--help`. `--dry-run` lists the operations a writing command (`bootstrap`, `apply`, `upload`)
 would run and writes nothing, not even `state.json`; it exits 3 when there are changes, 0 otherwise (`apply --dry-run`
-is the same as `plan`). Without `--yes` or `--dry-run`, a writing command prints the same operations, writes nothing
-and exits 2 when there are changes.
+is the same as `plan`; `init --dry-run` lists the files it would write). Without `--yes` or `--dry-run`, a writing
+command prints the same operations, writes nothing and exits 2 when there are changes.
 
+- `taigent init [--dry-run] [--json]`: installs Taigent into the repository at the working directory, from the
+  running taigent: the Taigent skills, the Taiga MCP server entries, the headless kit and the pinned `taigent`
+  devDependency. Offline; writes at once (no `--yes`). See
+  [Using the skills in another project](#using-the-skills-in-another-project).
 - `taigent validate [--project <slug>] [--json]`: checks every manifest present in `taiga/<slug>/` (all project
   directories without `--project`) against the schema and the conventions, and `review.yaml` when present (see
   [Review](#review)). Offline: needs no `TAIGA_*` variable and never contacts Taiga. Exit 0 when valid, 4 otherwise.
@@ -736,7 +740,7 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | Skill | Invocation | Does |
 |---|---|---|
 | `ask-taigent` | User only (as below) | Router: which Taigent skill, workflow step or CLI command fits a situation, the plan → review → apply rules, and how to maintain the skills. Reads only |
-| `taiga-setup` | Model or user | Checks `npx --no -- taigent --help`, the login (`taigent whoami`; the fix is the user running `npx taigent login` in their own terminal), and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (the `taiga` entry for `.mcp.json`/`.codex/config.toml`, running `taigent mcp`, once the user agrees), and installs the skills into another project on request (`npx skills add`) |
+| `taiga-setup` | Model or user | Checks `npx --no -- taigent --help`, the login (`taigent whoami`; the fix is the user running `npx taigent login` in their own terminal), and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (`npx taigent init` for the skills and the `taiga` entries of `.mcp.json`/`.codex/config.toml`, or that entry by hand; running `taigent mcp`, once the user agrees), and installs Taigent into another project on request (`taigent init`) |
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys) → answers the open comments of `review.yaml` (`resolved` + `reply`, never verdicts; `taigent preview` offline), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-create-user-story` | User only (as above) | One user story in the conventions §6.1 format under an existing manifest epic: drafts it, checks for duplicates (manifest, `taigent plan --json`, MCP read tools), adds it to `backlog.yaml`, `taigent validate` → `taigent plan --json` → asks → `taigent apply --yes`; hands over to `taiga-plan-backlog` when no epic fits and to `taiga-apply-backlog` when the plan holds other changes. Creates no epic or task |
@@ -760,26 +764,47 @@ execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell ho
 
 The CLI skills run `npx taigent` from the **project root** and first check that its `package.json` is taigent's own
 or lists `taigent` as a dependency: otherwise npx would fetch an unrelated `taigent` package from the npm registry.
-Another project needs two commands at its root:
+Another project needs, at its root:
 
 ```sh
-npx skills add sondoquang/taigent          # the ten Taigent skills, for the agents it detects
-npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite (append #<tag> to pin)
+npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite
+npx taigent init                          # the skills, the MCP entries, the headless kit; pins taigent to its tag
+npm install                               # installs the pinned version
 ```
 
-`skills add` finds only the Taigent skills (the vendored mattpocock ones are not offered) and writes them to
-`.agents/skills/` and `.claude/skills/`; `npx skills update` refreshes them. `npm install` from git runs the
-`prepare` script, which compiles `src/` to `dist/` (`tsconfig.build.json`): under `node_modules` Node strips no
-types, so `bin/taigent.js` runs `dist/` there and the TypeScript sources everywhere else. Both commands need read
-access to the repository while it is private. The package ships `bin/`, `dist/`, `docs/cli.md` and `docs/taiga/`
-(`files` in `package.json`): the docs the skills cite, read from `node_modules/taigent/`.
-Neither command logs in or registers the Taiga MCP server. Each user runs `npx taigent login` once, in their own
-terminal, at the project root; the project commits the `.mcp.json` / `.codex/config.toml` entries of `taiga-setup`
-(`node node_modules/taigent/bin/taigent.js mcp`, no secrets) and each user approves the project server once.
+`taigent init [--dry-run] [--json]` installs into the repository at the working directory everything Taigent needs,
+taken from the running taigent (Taigent Desktop runs the copy it ships):
+
+| Writes | What |
+|---|---|
+| `.agents/skills/<skill>/`, `.claude/skills/<skill>/` | The ten Taigent skills (`taiga-*`, `ask-taigent`). A Taigent skill that differs is replaced; one the running taigent does not ship is removed |
+| `mcpServers.taiga` of `.mcp.json`, `[mcp_servers.taiga]` of `.codex/config.toml` | The Taiga MCP server, `node node_modules/taigent/bin/taigent.js mcp`: the entries of `taiga-setup`, no secrets |
+| `tools/taiga/allowlist.txt`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules` | The headless kit, where `run-skill` and the Codex shell guard look for it ([docs/headless.md](headless.md)) |
+| `devDependencies.taigent` of `package.json` | `github:sondoquang/taigent#v<version>`, the git tag of the running version (moved out of `dependencies`). A missing `package.json` is created |
+
+Running it again is safe. Other skills, MCP servers, keys and dependencies stay as they are: `.mcp.json` and
+`package.json` are merged by key and keep their indentation, and `.codex/config.toml` gets its `[mcp_servers.taiga]`
+table (subtables included) replaced in place or appended, every other line untouched. Every file is merged before the
+first write: a file that is not valid JSON or TOML, or defines `mcp_servers.taiga` other than as a table, is exit 2
+and nothing is written (so is running it in taigent's own repository). It is offline (no `TAIGA_*`), never logs in and
+never runs `npm install`. `--dry-run` writes nothing and exits 3 when a file would change. `--json` prints
+`{ "files": [{ "path", "status" }] }`, every file sorted by path, with `status` one of `created`, `updated`,
+`unchanged` and `removed` (a file of a Taigent skill the running taigent does not have); the text form lists the files
+that change.
+
+The pin needs releases tagged `v<version>` (`v0.1.0` for 0.1.0). `npm install` from git runs the `prepare` script,
+which compiles `src/` to `dist/` (`tsconfig.build.json`): under `node_modules` Node strips no types, so
+`bin/taigent.js` runs `dist/` there and the TypeScript sources everywhere else. It needs read access to the repository
+while it is private. The package (`files` in `package.json`) ships `bin/`, `dist/`, `docs/cli.md` and `docs/taiga/`
+(the docs the skills cite, read from `node_modules/taigent/`) and what `init` installs: the Taigent skills of
+`.agents/skills/`, `tools/taiga/` (with `run-skill`), the Codex hook and rule.
+`init` neither logs in nor approves the MCP server. Each user runs `npx taigent login` once, in their own terminal, at
+the project root; the project commits the files `init` wrote and each user approves the project server once.
 `taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets` and `taiga-update-ticket` need only the CLI
 (`taigent tickets`, `status`, `comment`). For chats from Telegram, also add the six `tickets|status|comment` rules of
 the README's step 6e to the project's `.claude/settings.json`.
-The `taiga-setup` skill checks all of it and names each fix.
+`npx skills add sondoquang/taigent` still installs the skills alone (no MCP entries, kit or pin). The `taiga-setup`
+skill checks all of it and names each fix.
 
 ## Exit codes
 
@@ -787,8 +812,8 @@ The `taiga-setup` skill checks all of it and names each fix.
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat |
-| 3 | `plan` or `--dry-run` found changes; `skills check` found differing copies |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository |
+| 3 | `plan` or `--dry-run` found changes (`init --dry-run`: a file would change); `skills check` found differing copies |
 | 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
 
@@ -810,7 +835,8 @@ The `taiga-setup` skill checks all of it and names each fix.
 | Executor | `src/executor.ts` | `executePlan(plan, client, statePath, customAttributes)`, `describeAppliedOperation` |
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
-| Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `ask-taigent`), `.agents/skills/` → `.claude/skills/` |
+| Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `ask-taigent`), `.agents/skills/` → `.claude/skills/`; `compareSkillDirs(source, target)` (file by file, `same` included) and `copySkills(source, target, comparison)` for any two directories |
+| Init | `src/init.ts` | `initRepository(root, { dryRun })` → `InitReport` (`files: [{ path, status }]`), `InitError` (exit 2): the offline `init` command, copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed) |
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |
