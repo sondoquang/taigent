@@ -4,10 +4,13 @@
 import type { BacklogItem, EditResult, ManifestFile, RemoveItemRequest, SaveItemRequest } from '../../../src/edit.ts';
 import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
+import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
+import type { ProjectDetailReport } from '../../../src/projects.ts';
 import type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
 
 export type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict };
 export type { BacklogItem, CustomAttributeSpec, EditResult, ItemType, ManifestFile, RemoveItemRequest, SaveItemRequest };
+export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
 export interface Failure {
@@ -121,6 +124,53 @@ export interface BacklogSnapshot {
 export type SaveOutcome = EditResult<{ path: string; view: Result<ProjectView> }>;
 export type RemoveOutcome = EditResult<{ removed: string[]; orphaned: string[]; view: Result<ProjectView> }>;
 
+/** One row of Taiga > Project: a Taiga project the user is a member of, or a manifest directory not on Taiga yet. */
+export interface TaigaProjectRow {
+  slug: string;
+  /** Taiga's name, else project.yaml's. */
+  name?: string;
+  /** Set for a project on Taiga (`taigent projects --json`). */
+  taiga?: { id: number; admin: boolean };
+  /** `<manifests>/<slug>/` exists. */
+  manifest: boolean;
+  hasProjectYaml: boolean;
+  hasBacklog: boolean;
+}
+
+export interface TaigaProjectsOverview {
+  rows: TaigaProjectRow[];
+  /** Why the Taiga projects are missing from `rows` (not logged in, Taiga unreachable…); unset when they are listed. */
+  taigaMessage?: string;
+}
+
+/** One project opened in Taiga > Project: its project.yaml for the form and, when on Taiga, its issue values. */
+export interface TaigaProjectDetail {
+  slug: string;
+  file: ProjectSettingsFile;
+  hasBacklog: boolean;
+  /** `taigent projects --project <slug> --json`; unset when the project is not on Taiga or Taiga could not be read. */
+  taiga?: ProjectDetailReport;
+  taigaMessage?: string;
+}
+
+/** A project.yaml save from the form: `slug` unset for a new project (derived from the name). */
+export interface ProjectSettingsInput {
+  slug?: string;
+  settings: ProjectSettings;
+  baseDigest: string | null;
+}
+
+export interface BootstrapReport {
+  project: { id: number; slug: string };
+  operations: { action: string; type: string; result: string }[];
+  summary: { created: number; updated: number; unchanged: number };
+}
+
+export type BootstrapOutcome =
+  | { status: 'no-changes' }
+  | { status: 'cancelled' }
+  | { status: 'bootstrapped'; report: BootstrapReport };
+
 export interface TaigentApi {
   getState(): Promise<AppState>;
   /** Shows the folder dialog; undefined when cancelled. */
@@ -144,6 +194,13 @@ export interface TaigentApi {
   saveItem(slug: string, request: SaveItemRequest): Promise<Result<SaveOutcome>>;
   /** Removes an item with its children (a story's tasks); items on Taiga stay there as orphans. */
   removeItem(slug: string, request: RemoveItemRequest): Promise<Result<RemoveOutcome>>;
+  /** Taiga > Project: the user's Taiga projects (`taigent projects --json`) and the repository's manifest directories. */
+  listTaigaProjects(): Promise<Result<TaigaProjectsOverview>>;
+  readTaigaProject(slug: string): Promise<Result<TaigaProjectDetail>>;
+  /** Writes the form into project.yaml; refused (`conflict`) when the file is no longer the one `baseDigest` names. */
+  saveProjectSettings(input: ProjectSettingsInput): Promise<Result<SaveProjectSettingsResult>>;
+  /** `bootstrap --dry-run --json`, a native confirmation listing the operations, then `bootstrap --yes --json`. */
+  bootstrapProject(slug: string): Promise<Result<BootstrapOutcome>>;
 }
 
 export const CHANNELS = {
@@ -163,4 +220,8 @@ export const CHANNELS = {
   readBacklog: 'taigent:read-backlog',
   saveItem: 'taigent:save-item',
   removeItem: 'taigent:remove-item',
+  listTaigaProjects: 'taigent:list-taiga-projects',
+  readTaigaProject: 'taigent:read-taiga-project',
+  saveProjectSettings: 'taigent:save-project-settings',
+  bootstrapProject: 'taigent:bootstrap-project',
 } as const;

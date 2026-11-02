@@ -82,13 +82,22 @@
       <section class="screen" id="screen-taiga" aria-label="Taiga" hidden>
         <div class="screen-body">
           <h1>Taiga</h1>
-          <div class="empty-state">
-            <p><strong>Chưa có màn hình Taiga</strong> (Project, Ticket của tôi, Báo cáo).</p>
-            <p class="muted">
-              Trong terminal: <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code> liệt kê ticket của
-              bạn, <code>npx taigent status</code> và <code>npx taigent comment</code> đổi status và comment.
-            </p>
+          <div class="taiga-project" id="taiga-project">
+            <div class="taiga-project-head">
+              <h2>Project</h2>
+              <div class="spacer"></div>
+              <button id="taiga-projects-refresh" class="btn ghost" type="button">Làm mới</button>
+              <button id="taiga-project-new" class="btn" type="button">Tạo project mới…</button>
+            </div>
+            <p class="muted" id="taiga-projects-status"></p>
+            <div id="taiga-projects-list"></div>
+            <div id="taiga-project-detail"></div>
           </div>
+          <p class="muted">
+            Ticket của tôi và Báo cáo chưa có trong ứng dụng. Trong terminal:
+            <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code> liệt kê ticket của bạn,
+            <code>npx taigent status</code> và <code>npx taigent comment</code> đổi status và comment.
+          </p>
         </div>
       </section>
 

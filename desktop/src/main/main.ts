@@ -13,6 +13,7 @@ import {
   type LoginInput,
   type LoginStatus,
   type Plan,
+  type ProjectSettingsInput,
   type RemoveItemRequest,
   type RepoInfo,
   type Result,
@@ -22,6 +23,7 @@ import {
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
 import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
+import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -277,6 +279,10 @@ function registerIpc(): void {
   handle(CHANNELS.readBacklog, async (slug: string) => readBacklog(requireRepo(), slug));
   handle(CHANNELS.saveItem, async (slug: string, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
   handle(CHANNELS.removeItem, async (slug: string, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
+  handle(CHANNELS.listTaigaProjects, async () => listTaigaProjects(requireRepo()));
+  handle(CHANNELS.readTaigaProject, async (slug: string) => readTaigaProject(requireRepo(), slug));
+  handle(CHANNELS.saveProjectSettings, async (input: ProjectSettingsInput) => saveProjectFile(requireRepo(), input));
+  handle(CHANNELS.bootstrapProject, async (slug: string) => bootstrapProject(requireRepo(), slug, window!));
 }
 
 app.enableSandbox();
