@@ -9,6 +9,7 @@ import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
 import { legacyStoryCreatesError, unknownIssueValuesError } from './manifest/backlog.ts';
+import { PROJECT_SLUG_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
@@ -80,12 +81,15 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
+  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap --yes, status, comment) with
+                                   exit 2; plan, preview, validate and --dry-run still work (Taigent Desktop's headless runs)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
                                    .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
                                    (default: <CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram)
 
-Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in),
-            3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
+Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in,
+            a write under TAIGENT_READ_ONLY), 3 plan/--dry-run/skills check has changes, 4 manifest invalid,
+            5 Taiga/network error`;
 
 const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'report', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
@@ -98,7 +102,26 @@ type Command = (typeof COMMANDS)[number];
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
 class UsageError extends Error {}
 
-const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+/** A Taiga write refused under TAIGENT_READ_ONLY. Maps to ExitCode.Usage, kind `read-only`. */
+class ReadOnlyError extends Error {}
+
+/** Commands that write to Taiga with `--yes` (without `--dry-run`), and those that write at once. */
+const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap'];
+const IMMEDIATE_WRITES: readonly Command[] = ['status', 'comment'];
+
+/**
+ * TAIGENT_READ_ONLY=1 (Taigent Desktop sets it on its headless skill runs, and the agent's shell inherits it): a
+ * command that would write to Taiga is refused before it contacts Taiga, whatever the agent was told.
+ */
+function refuseReadOnlyWrite({ options, env }: Run): void {
+  if (env.TAIGENT_READ_ONLY !== '1') return;
+  const writes = IMMEDIATE_WRITES.includes(options.command) || (CONFIRMED_WRITES.includes(options.command) && options.yes && !options.dryRun);
+  if (!writes) return;
+  throw new ReadOnlyError(
+    `${options.command} writes to Taiga, refused because TAIGENT_READ_ONLY is set (a headless run of Taigent Desktop); ` +
+      'plan, preview, validate and --dry-run still work. Push from the app, or run it in a terminal without TAIGENT_READ_ONLY',
+  );
+}
 
 interface Options {
   command: Command;
@@ -193,7 +216,7 @@ function parseOptions(argv: string[]): Options | 'help' {
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
     if (!PROJECTLESS.includes(command as Command)) throw new UsageError('--project <slug> is required');
-  } else if (!SLUG_PATTERN.test(values.project)) {
+  } else if (!PROJECT_SLUG_PATTERN.test(values.project)) {
     throw new UsageError(`invalid project slug "${values.project}"`);
   }
   if (values.application !== undefined && command !== 'login') throw new UsageError('--application applies only to login');
@@ -799,7 +822,9 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
       process.stdout.write(`${USAGE}\n`);
       return ExitCode.Ok;
     }
-    return await dispatch({ options, env, cwd, secrets });
+    const run = { options, env, cwd, secrets };
+    refuseReadOnlyWrite(run);
+    return await dispatch(run);
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(json ? '' : `${USAGE}\n\n`);
@@ -817,6 +842,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
       return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
     }
     if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
+    if (error instanceof ReadOnlyError) return fail(secrets, ExitCode.Usage, 'read-only', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
     if (error instanceof TicketError || error instanceof NotifyConfigError || error instanceof InitError) return fail(secrets, ExitCode.Usage, 'usage', error, json);
     if (error instanceof TelegramError) return fail(secrets, ExitCode.Taiga, 'telegram', error, json);

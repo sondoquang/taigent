@@ -121,6 +121,17 @@ the request (Windows PowerShell 5.1, below). On Windows the app runs the script 
 `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command`, switching the console output to UTF-8
 first; elsewhere with `/bin/sh`.
 
+The prompt is not the guard: the allowlist still allows `npx taigent apply *`. The app starts every run with
+`TAIGENT_READ_ONLY=1` in its environment; the agent and the shell it runs commands in inherit it, and under it the CLI
+refuses `apply --yes`, `upload --yes`, `bootstrap --yes`, `status` and `comment` with exit 2 before contacting Taiga,
+while `plan`, `validate`, `preview` and `--dry-run` still work (`docs/cli.md` §Read-only runs, tested in
+`test/read-only.test.ts`). Writes to Taiga then go through the app's own confirmation (**Đẩy lên Taiga**). Claude Code
+passes its environment to its shell commands. `[UNVERIFIED]` for Codex: its `shell_environment_policy` inherits the
+environment by default and drops only names with `KEY`, `SECRET` or `TOKEN` in them
+([Config reference](https://learn.chatgpt.com/docs/config-file/config-reference)), so the variable passes; a personal
+policy that inherits nothing (`inherit = "none"`, `include_only`) would drop it. The wrapper outside the app does not
+set it: there the user confirms in their own session.
+
 ## Platform notes
 
 - **Git Bash/MSYS** would rewrite the prompt `/taiga-…` into a Windows path (`C:/Program Files/Git/taiga-…`)
