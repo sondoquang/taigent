@@ -177,6 +177,24 @@ export function checkKeyReference(ref: string, at: string, issue: IssueSink, key
   if (!keys.has(ref)) issue(at, 'key-reference', `no epic, story or task with key ${ref} in backlog.yaml`);
 }
 
+/** How many words of the subject a suggested key keeps. */
+const KEY_SUGGESTION_WORDS = 2;
+
+/**
+ * A key for a new item, after the naming advice of conventions §5: the first words of its subject (transliterated
+ * like a project slug) under its parent's key (`<EPIC>-<việc>`, `<STORY>-<bước>`), with `-2`, `-3`… while `taken`
+ * has it. Empty when there is neither a parent nor a letter or digit in the subject. Pure: Taigent Desktop's forms
+ * use it.
+ */
+export function suggestKey(subject: string, parent: string | undefined, taken: ReadonlySet<string>): string {
+  const words = projectSlug(subject).split(/[-_]+/).filter(Boolean).slice(0, KEY_SUGGESTION_WORDS);
+  const base = [parent, ...words].filter(Boolean).join('-').toUpperCase();
+  if (base === '' || !taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
+}
+
 // ---- Wiki and attachments -----------------------------------------------------------------------
 
 /** Wiki slugs: lowercase kebab-case, e.g. `home`, `spec-auth-login`, `adr-0001-use-rest`. */
