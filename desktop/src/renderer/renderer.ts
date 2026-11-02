@@ -25,6 +25,7 @@ import { currentSection, onSectionChange, showSection, wireNavigation } from './
 import { mountTaigaProjects } from './taiga-projects.ts';
 import { gitRepoChanged, wireGit } from './git.ts';
 import { wireTerminal } from './terminal.ts';
+import { mountSetup, setupLoginChanged, setupRepoChanged } from './setup.ts';
 
 declare global {
   interface Window {
@@ -656,6 +657,7 @@ async function pushToTaiga(): Promise<void> {
 async function refreshLogin(): Promise<void> {
   state.login = await api.whoami();
   renderButtons();
+  setupLoginChanged();
 }
 
 async function onLoginButton(): Promise<void> {
@@ -706,6 +708,7 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
   clearChangesResult();
   render();
   gitRepoChanged();
+  setupRepoChanged();
   const only = result.value.projects.length === 1 ? result.value.projects[0] : undefined;
   if (only) void openProject(only.slug);
 }
@@ -800,6 +803,15 @@ function wire(): void {
     failureBlock,
   });
   wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
+  mountSetup({
+    api,
+    failureBlock,
+    repoRoot: () => state.repo?.root,
+    useRepo,
+    login: () => void onLoginButton(),
+    refreshLogin,
+    loginStatus: () => state.login,
+  });
 }
 
 async function start(): Promise<void> {
@@ -809,6 +821,7 @@ async function start(): Promise<void> {
   document.title = `Taigent Desktop ${initial.versions.app}`;
   renderVersions(initial.versions);
   render();
+  setupRepoChanged();
   if (initial.repo?.projects.length === 1 && initial.repo.projects[0]) await openProject(initial.repo.projects[0].slug);
   await refreshLogin();
 }

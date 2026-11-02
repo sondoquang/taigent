@@ -2,6 +2,7 @@
 // shapes and the manifest edit shapes come from taigent's core (`src/review.ts`, `src/edit.ts`, compiled to `dist/`), as types only.
 
 import type { BacklogItem, EditResult, ManifestFile, RemoveItemRequest, SaveItemRequest } from '../../../src/edit.ts';
+import type { InitFile, InitReport } from '../../../src/init.ts';
 import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
@@ -11,6 +12,7 @@ import type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, Pre
 export type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict };
 export type { BacklogItem, CustomAttributeSpec, EditResult, ItemType, ManifestFile, RemoveItemRequest, SaveItemRequest };
 export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult };
+export type { InitFile, InitReport };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
 export interface Failure {
@@ -252,6 +254,60 @@ export type BootstrapOutcome =
   | { status: 'no-changes' }
   | { status: 'cancelled' }
   | { status: 'bootstrapped'; report: BootstrapReport };
+
+/** The tools the setup checklist looks for on PATH; the app never installs them. */
+export const SETUP_TOOLS = ['git', 'claude', 'codex', 'omp'] as const;
+export type SetupTool = (typeof SETUP_TOOLS)[number];
+
+/** One tool of the setup checklist, from its `--version` run without a shell. */
+export interface ToolCheck {
+  tool: SetupTool;
+  /**
+   * `ok`: `--version` answered (`version`); `missing`: not on PATH; `timeout`: `--version` did not answer in time;
+   * `error`: `--version` failed (`message`); `found`: on PATH but its version cannot be read without a shell.
+   */
+  state: 'ok' | 'missing' | 'timeout' | 'error' | 'found';
+  /** Where it was found on PATH. */
+  path?: string;
+  version?: string;
+  message?: string;
+  /** The command that installs it, run on request in a terminal tab (`installTool`). */
+  install: string;
+}
+
+/**
+ * Whether the opened repository has Taigent, from `taigent init --dry-run --json` of the app's own taigent:
+ * `none` (no Taigent skill yet), `outdated` (init would change files: skills or entries older than the app's),
+ * `current` (init would change nothing), `unavailable` (the dry run failed: `message`).
+ */
+export interface SetupStatus {
+  state: 'none' | 'outdated' | 'current' | 'unavailable';
+  /** The files init would create, update or remove. */
+  changes: InitFile[];
+  /** The app's taigent version, the one init installs. */
+  taigent: string;
+  message?: string;
+}
+
+/** A new repository `<parent>/<name>`. */
+export interface NewRepoInput {
+  parent: string;
+  name: string;
+}
+
+/** A clone of `url` into `<parent>/<name>`. */
+export interface CloneRepoInput {
+  url: string;
+  parent: string;
+  name: string;
+}
+
+/** A repository the wizard created and opened, with the outcome of the `taigent init` it ran there. */
+export interface CreatedRepo {
+  repo: RepoInfo;
+  init: Result<InitReport>;
+}
+
 export interface TaigentApi {
   getState(): Promise<AppState>;
   /** Shows the folder dialog; undefined when cancelled. */
@@ -291,6 +347,22 @@ export interface TaigentApi {
   gitCommitPush(message: string): Promise<Result<GitOutcome>>;
   /** Pushes local commits that only touch the scope. */
   gitPush(): Promise<Result<GitOutcome>>;
+  /** Shows a folder dialog for the folder that holds a new or cloned repository; undefined when cancelled. */
+  pickParentFolder(): Promise<string | undefined>;
+  /** Creates `<parent>/<name>` with `git init` and `taiga/`, opens it and runs `taigent init` there. */
+  createRepo(input: NewRepoInput): Promise<Result<CreatedRepo>>;
+  /** `git clone` into `<parent>/<name>` (never prompts), then opens it; a failed clone leaves no folder behind. */
+  cloneRepo(input: CloneRepoInput): Promise<Result<RepoInfo>>;
+  /** `taigent init --dry-run --json` of the app's taigent on the opened repository. */
+  setupStatus(): Promise<Result<SetupStatus>>;
+  /** `taigent init --json` of the app's taigent on the opened repository. */
+  runInit(): Promise<Result<InitReport>>;
+  /** Opens a terminal tab running `npm install` in the opened repository. */
+  runNpmInstall(): Promise<Result<TerminalTab>>;
+  /** Looks for each of SETUP_TOOLS on PATH and runs its `--version` without a shell, with a timeout. */
+  checkTools(): Promise<ToolCheck[]>;
+  /** Opens a terminal tab running `tool`'s install command (`ToolCheck.install`). */
+  installTool(tool: SetupTool): Promise<Result<TerminalTab>>;
 }
 
 export const CHANNELS = {
@@ -326,4 +398,12 @@ export const CHANNELS = {
   gitPull: 'taigent:git-pull',
   gitCommitPush: 'taigent:git-commit-push',
   gitPush: 'taigent:git-push',
+  pickParentFolder: 'taigent:pick-parent-folder',
+  createRepo: 'taigent:create-repo',
+  cloneRepo: 'taigent:clone-repo',
+  setupStatus: 'taigent:setup-status',
+  runInit: 'taigent:run-init',
+  runNpmInstall: 'taigent:run-npm-install',
+  checkTools: 'taigent:check-tools',
+  installTool: 'taigent:install-tool',
 } as const;

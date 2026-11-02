@@ -1344,3 +1344,129 @@ textarea:focus {
 .convert {
   margin-top: 10px;
 }
+
+/* ---- setup wizard (src/renderer/setup.ts) ---- */
+.setup-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.setup-banner[hidden] {
+  display: none;
+}
+
+.setup h2 {
+  margin: 20px 0 8px;
+  font-size: 16px;
+}
+
+.setup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.setup-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.setup-row input.setup-name {
+  flex: 0 0 180px;
+}
+
+.setup-label {
+  flex: 0 0 150px;
+  color: var(--muted);
+}
+
+.setup-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-result,
+.setup-status {
+  margin: 8px 0;
+}
+
+.setup-status p {
+  margin: 4px 0;
+}
+
+.setup-changes {
+  margin: 4px 0;
+  padding-left: 20px;
+  font-size: 12px;
+}
+
+.setup-files {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.setup-files td,
+.setup-files th {
+  padding: 2px 10px 2px 0;
+  text-align: left;
+}
+
+.setup-files tr.unchanged {
+  color: var(--muted);
+}
+
+.setup-checklist {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+
+.setup-checklist li {
+  margin: 6px 0;
+  line-height: 1.6;
+}
+
+.setup-mark {
+  display: inline-block;
+  width: 20px;
+  font-weight: 700;
+}
+
+.setup-mark.ok {
+  color: var(--green);
+}
+
+.setup-mark.bad {
+  color: var(--red);
+}
+
+.setup-mark.warn {
+  color: var(--amber);
+}
+
+.setup-version {
+  font-weight: 600;
+}
+
+.setup-where {
+  font-size: 12px;
+}
+
+.setup-install {
+  margin: 2px 0 0 20px;
+  font-size: 12px;
+}
+
+.setup-install .btn {
+  margin-left: 8px;
+}

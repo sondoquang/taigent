@@ -3,7 +3,7 @@
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
 // user-data folder. It never writes to Taiga: every native confirm dialog (push, bootstrap) is stubbed to "Huỷ", and
 // "Xem thay đổi trên Taiga" and bootstrap --dry-run (read-only) run only when the app reports a login. Terminal steps:
-// scripts/smoke-terminal.mjs.
+// scripts/smoke-terminal.mjs; Git: scripts/smoke-git.mjs; setup wizard (last): scripts/smoke-wizard.mjs.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -18,6 +18,7 @@ import { _electron as electron } from 'playwright-core';
 import { parse } from 'yaml';
 import { agentPath, descendants, smokeTerminal, waitGone } from './smoke-terminal.mjs';
 import { smokeGit } from './smoke-git.mjs';
+import { smokeWizard } from './smoke-wizard.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -51,7 +52,7 @@ const check = (condition, message) => {
   if (!condition) throw new Error(`FAILED: ${message}`);
   log('ok -', message);
 };
-const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'settings'];
+const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'setup', 'settings'];
 /** Switches to a section of the navigation shell and checks that only its screen shows. */
 const goTo = async (page, section) => {
   await page.click(`#nav [data-section="${section}"]`);
@@ -74,8 +75,10 @@ try {
   await page.setViewportSize({ width: 1400, height: 900 }).catch(() => undefined);
   await page.waitForLoadState('domcontentloaded');
   const sections = await page.locator('#nav [data-section]').evaluateAll((buttons) => buttons.map((button) => button.textContent?.trim()));
-  check(sections.join('|') === 'Backlog|Wiki|Taiga|Thay đổi|Git|Settings', `navigation shows ${sections.join(', ')}`);
+  check(sections.join('|') === 'Backlog|Wiki|Taiga|Thay đổi|Git|Setup repo|Settings', `navigation shows ${sections.join(', ')}`);
   check((await page.isVisible('#screen-backlog')) && !(await page.isVisible('#screen-changes')), 'the app opens on Backlog');
+  await page.waitForSelector('#setup-banner[data-state="no-repo"]');
+  log('ok - without a repository, the app points to Setup repo');
 
   await page.click('#open-repo');
   await page.waitForSelector('#tree .node');
@@ -230,6 +233,7 @@ try {
     log('skipped bootstrap: not logged in');
   }
   await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
+  await smokeWizard({ app, page, repo, work, shots, check, goTo, log });
   log('screenshots in', shots);
   log('temporary manifests in', manifests);
 } catch (error) {

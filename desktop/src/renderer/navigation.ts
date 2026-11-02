@@ -1,7 +1,7 @@
 // The navigation shell: one screen per section, switched from the rail `#nav`. Switching only shows and hides
 // screens; the open project, the selected item and every draft stay as they are.
 
-export const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'settings'] as const;
+export const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'setup', 'settings'] as const;
 export type Section = (typeof SECTIONS)[number];
 
 let current: Section = 'backlog';
