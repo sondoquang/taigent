@@ -113,6 +113,43 @@ export type ApplyOutcome =
 
 export type VerdictChoice = Verdict | 'clear';
 
+/** The agents the terminal can start in a new tab (quick launch). */
+export const TERMINAL_AGENTS = ['claude', 'codex', 'omp'] as const;
+export type TerminalAgent = (typeof TERMINAL_AGENTS)[number];
+/** `skill` tabs run a given command and are opened by the main process only. */
+export type TerminalKind = 'shell' | TerminalAgent | 'skill';
+
+export interface TerminalTab {
+  id: number;
+  kind: TerminalKind;
+  title: string;
+  cwd: string;
+  pid: number;
+}
+
+export interface TerminalExit {
+  exitCode: number;
+  signal?: number;
+  /** Killed by closing or cancelling the tab, or by quitting. */
+  cancelled: boolean;
+}
+
+/** The embedded terminal; every tab runs in the open repository. */
+export interface TerminalApi {
+  /** Opens a shell (pwsh, else powershell.exe; $SHELL elsewhere) or an agent in it; `onOpened` delivers the tab. */
+  open(kind: 'shell' | TerminalAgent): Promise<Result<TerminalTab>>;
+  write(id: number, data: string): void;
+  resize(id: number, cols: number, rows: number): void;
+  /** Kills the tab's process tree; the tab stays. */
+  cancel(id: number): Promise<void>;
+  /** Kills the tab's process tree and forgets the tab. */
+  close(id: number): Promise<void>;
+  /** A tab was opened, from the renderer or by the main process (e.g. a skill run). */
+  onOpened(listener: (tab: TerminalTab) => void): () => void;
+  onData(listener: (id: number, data: string) => void): () => void;
+  onExit(listener: (id: number, exit: TerminalExit) => void): () => void;
+}
+
 /** A changed file in the Git section's scope, repo-relative with `/`. */
 export interface GitChange {
   path: string;
@@ -144,7 +181,7 @@ export interface GitStop {
   detail?: string;
   /** Commands to run in a terminal at the repository. */
   commands: string[];
-  /** True when the app opened the repository for the user to continue in a terminal. */
+  /** True when the app opened a terminal tab at the repository for the user to continue there. */
   terminal: boolean;
 }
 
@@ -207,7 +244,6 @@ export type BootstrapOutcome =
   | { status: 'no-changes' }
   | { status: 'cancelled' }
   | { status: 'bootstrapped'; report: BootstrapReport };
-
 export interface TaigentApi {
   getState(): Promise<AppState>;
   /** Shows the folder dialog; undefined when cancelled. */
@@ -225,6 +261,7 @@ export interface TaigentApi {
   openExternal(url: string): Promise<void>;
   /** Subscribes to live refreshes of the open project; returns the unsubscribe function. */
   onProjectChanged(listener: (view: Result<ProjectView>) => void): () => void;
+  terminal: TerminalApi;
   /** Reads backlog.yaml for a form. */
   readBacklog(slug: string): Promise<Result<BacklogSnapshot>>;
   /** Adds or edits an item; refused (`conflict`) when backlog.yaml is no longer the file `baseDigest` names. */
@@ -262,6 +299,14 @@ export const CHANNELS = {
   apply: 'taigent:apply',
   openExternal: 'taigent:open-external',
   projectChanged: 'taigent:project-changed',
+  terminalOpen: 'taigent:terminal-open',
+  terminalWrite: 'taigent:terminal-write',
+  terminalResize: 'taigent:terminal-resize',
+  terminalCancel: 'taigent:terminal-cancel',
+  terminalClose: 'taigent:terminal-close',
+  terminalOpened: 'taigent:terminal-opened',
+  terminalData: 'taigent:terminal-data',
+  terminalExit: 'taigent:terminal-exit',
   readBacklog: 'taigent:read-backlog',
   saveItem: 'taigent:save-item',
   removeItem: 'taigent:remove-item',

@@ -3,7 +3,7 @@
 // that references `docs/huong-dan.md`, and a file outside both. It then opens that repository in the app and checks:
 //   - the section lists only the changed files in `taiga/` and those docs.yaml references;
 //   - Commit + Push sends the remote exactly the changed file under `taiga/`, never the file outside it;
-//   - Pull on a diverged history stops, explains, opens the repository (the terminal hook) and changes nothing.
+//   - Pull on a diverged history stops, explains, opens a terminal tab at the repository and changes nothing.
 // The app's process env loses TAIGENT_MANIFESTS_DIR for this step, so the manifests are the repository's `taiga/`.
 
 import { execFileSync } from 'node:child_process';
@@ -37,17 +37,10 @@ export async function smokeGit({ app, page, work, project, source, shots, check,
   git(repo, 'push', '--quiet', '--set-upstream', 'origin', 'main');
 
   const backlog = join('taiga', project, 'backlog.yaml');
-  await app.evaluate(({ dialog, shell }, root) => {
+  await app.evaluate(({ dialog }, root) => {
     delete process.env.TAIGENT_MANIFESTS_DIR;
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [root] });
-    // The terminal hook: record what the app opens instead of opening a window.
-    globalThis.smokeOpened = [];
-    shell.openPath = async (path) => {
-      globalThis.smokeOpened.push(path);
-      return '';
-    };
   }, repo);
-  const opened = () => app.evaluate(() => globalThis.smokeOpened);
   const result = async () => (await page.textContent('#git-result')) ?? '';
   const waitResult = async (before) => {
     await page.waitForFunction((previous) => {
@@ -103,10 +96,17 @@ export async function smokeGit({ app, page, work, project, source, shots, check,
   const status = git(repo, 'status', '--porcelain');
   const guide = await readFile(join(repo, 'docs', 'huong-dan.md'), 'utf8');
   const beforePull = await result();
+  const tabsBefore = await page.locator('.terminal-tab').count();
   await page.click('#git-pull');
   const stopped = await waitResult(beforePull);
   check(stopped.includes('tách nhánh'), `git: pull on a diverged history explains it (${stopped.trim().slice(0, 80)})`);
-  check((await opened()).includes(repo), 'git: the repository is opened for the terminal');
+  await page.waitForFunction((count) => document.querySelectorAll('.terminal-tab').length === count + 1, tabsBefore);
+  const terminalTab = page.locator('.terminal-tab.active');
+  const terminalAt = (await terminalTab.getAttribute('title')) ?? '';
+  check(
+    (await page.isVisible('#terminal-dock')) && (await terminalTab.getAttribute('data-kind')) === 'shell' && terminalAt.toLowerCase().endsWith(` — ${repo}`.toLowerCase()),
+    `git: a terminal tab opened at the repository (${terminalAt})`,
+  );
   check(git(repo, 'rev-parse', 'HEAD') === head, 'git: HEAD unchanged after the refused pull');
   check(git(repo, 'status', '--porcelain') === status, 'git: working tree status unchanged after the refused pull');
   check((await readFile(join(repo, 'docs', 'huong-dan.md'), 'utf8')) === guide, 'git: working tree files unchanged after the refused pull');
