@@ -13,7 +13,7 @@
     "start": "npm run build && electron .",
     "stage": "node scripts/stage-taigent.mjs",
     "dist": "npm run build && node scripts/stage-taigent.mjs && electron-builder --publish never",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "npm run build && node scripts/smoke.mjs"
   },
   "build": {
     "appId": "io.github.sondoquang.taigent-desktop",

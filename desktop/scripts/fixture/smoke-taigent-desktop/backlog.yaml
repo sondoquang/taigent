@@ -1,0 +1,129 @@
+# Fixture of the desktop smoke (desktop/scripts/smoke.mjs): stories in user story format, one legacy story already
+# on Taiga (state.json), and tasks. The smoke copies this folder to a temporary directory before touching it.
+epics:
+  - key: REVIEW
+    subject: "Duyệt backlog trước khi đẩy lên Taiga"
+    description: "BA/PO đọc, góp ý và duyệt từng item ngay trên bản xem trước, trước khi có gì được ghi lên Taiga."
+    tags: [type:feature, area:review]
+    stories:
+      - key: REVIEW-COMMENT
+        subject: "Góp ý ngay trên item để agent biết chính xác chỗ cần sửa"
+        use_case:
+          as_a: "BA đang duyệt backlog của một spec mới"
+          i_want_to: "viết góp ý ngay trên một story và đánh dấu nó Cần sửa"
+          so_that: "agent sửa đúng story đó mà tôi không phải nhắn lại qua kênh khác"
+        scenarios:
+          - scenario: "Góp ý trên một story"
+            given:
+              - "Tôi đang xem chi tiết một story"
+            when: "Tôi gửi một góp ý"
+            then: "Góp ý hiện dưới story với trạng thái chưa xử lý và được lưu vào review.yaml"
+          - scenario: "Đánh dấu Cần sửa"
+            given:
+              - "Tôi đang xem chi tiết một story"
+              - "Story có một góp ý chưa xử lý"
+            when: "Tôi bấm Cần sửa"
+            then: "Story hiện nhãn Cần sửa và nút đẩy lên Taiga bị chặn"
+        description: "Góp ý chỉ nằm trong review.yaml, không bao giờ được ghi lên Taiga."
+        spec: docs/desktop.md
+        tags: [type:feature, area:review]
+        tasks:
+          - key: REVIEW-COMMENT-COMPOSER
+            subject: "Ô soạn góp ý dưới chi tiết item"
+            description: "Done khi: gửi góp ý thì nó hiện ngay dưới item và có trong review.yaml."
+          - key: REVIEW-COMMENT-YAML
+            subject: "Ghi góp ý vào review.yaml"
+            description: "Done khi: review.yaml giữ nguyên comment và thứ tự các item không liên quan."
+      - key: REVIEW-APPROVE
+        subject: "Duyệt từng item để biết phần nào của backlog đã sẵn sàng"
+        use_case:
+          as_a: "PO chịu trách nhiệm backlog của dự án"
+          i_want_to: "đánh dấu Đạt cho từng item tôi đã đọc"
+          so_that: "biết còn bao nhiêu item chưa duyệt trước khi đẩy lên Taiga"
+        scenarios:
+          - scenario: "Duyệt một story"
+            given:
+              - "Tôi đang xem chi tiết một story chưa duyệt"
+            when: "Tôi bấm Đạt"
+            then: "Story hiện nhãn Đạt và số item chưa duyệt giảm một"
+          - scenario: "Story bị sửa sau khi duyệt"
+            given:
+              - "Một story đã được đánh dấu Đạt"
+            when: "Agent sửa mô tả của story đó"
+            then: "Story hiện nhãn Đã đổi sau khi duyệt"
+        spec: docs/desktop.md
+        tags: [type:feature, area:review]
+        tasks:
+          - key: REVIEW-APPROVE-STALE
+            subject: "Phát hiện item đổi sau khi duyệt"
+            description: "Done khi: sửa mô tả của item đã Đạt thì bản xem trước báo item đó là stale."
+      # Legacy format: kept because the story is already on Taiga (state.json).
+      - key: REVIEW-MARKDOWN
+        subject: "Hiển thị mô tả story như trên Taiga"
+        description: "Là BA, tôi muốn thấy mô tả story đúng như Taiga sẽ hiển thị, để duyệt đúng thứ sẽ được ghi."
+        acceptance_criteria:
+          - "Mô tả được hiển thị dạng Markdown đã làm sạch."
+          - "Tiêu chí chấp nhận hiện thành checkbox không bấm được."
+        spec: docs/desktop.md
+        tags: [type:feature, area:review]
+  - key: PUSH
+    subject: "Đẩy backlog đã duyệt lên Taiga"
+    description: "Chỉ đẩy lên Taiga sau khi người dùng xem thay đổi và đồng ý tường minh."
+    tags: [type:feature, area:push]
+    stories:
+      - key: PUSH-CONFIRM
+        subject: "Xác nhận trước khi ghi để không ai đẩy nhầm lên Taiga"
+        use_case:
+          as_a: "PO sắp đẩy backlog đã duyệt lên Taiga"
+          i_want_to: "xem danh sách thay đổi và xác nhận trước khi ghi"
+          so_that: "không có item nào bị tạo hay sửa trên Taiga mà tôi chưa đồng ý"
+        scenarios:
+          - scenario: "Huỷ ở hộp thoại xác nhận"
+            given:
+              - "Backlog có thay đổi chưa đẩy"
+            when: "Tôi bấm Đẩy lên Taiga rồi chọn Huỷ"
+            then: "Không có gì được ghi lên Taiga"
+        spec: docs/desktop.md
+        tags: [type:feature, area:push]
+        tasks:
+          - key: PUSH-CONFIRM-DIALOG
+            subject: "Hộp thoại xác nhận gốc của hệ điều hành"
+            description: "Done khi: hộp thoại liệt kê số item sẽ tạo và sửa, nút mặc định là Huỷ."
+      - key: PUSH-BLOCK
+        subject: "Chặn đẩy khi còn góp ý để backlog trên Taiga luôn là bản đã sửa"
+        use_case:
+          as_a: "PO sắp đẩy backlog lên Taiga"
+          i_want_to: "bị chặn khi còn item Cần sửa có góp ý chưa xử lý"
+          so_that: "Taiga không nhận một item mà người duyệt đã yêu cầu sửa"
+        scenarios:
+          - scenario: "Còn góp ý chưa xử lý"
+            given:
+              - "Một story được đánh dấu Cần sửa"
+              - "Story đó còn một góp ý chưa xử lý"
+            when: "Tôi bấm Đẩy lên Taiga"
+            then: "Ứng dụng báo Chưa thể đẩy lên Taiga và nêu key của story đó"
+        spec: docs/desktop.md
+        tags: [type:feature, area:push]
+  - key: SMOKE
+    subject: "Hạ tầng smoke test của desktop"
+    description: "Smoke test chạy được trên một bản clone mới mà không đụng tới file của người dùng."
+    tags: [type:chore]
+    stories:
+      - key: SMOKE-FIXTURE
+        subject: "Fixture riêng để smoke chạy được ngay sau khi clone"
+        use_case:
+          as_a: "maintainer vừa clone repo"
+          i_want_to: "chạy smoke của desktop mà không truyền tham số"
+          so_that: "kiểm thử lặp lại được mà không cần manifest chưa commit"
+        scenarios:
+          - scenario: "Smoke trên bản clone mới"
+            given:
+              - "Tôi vừa clone repo và đã build"
+            when: "Tôi chạy npm run smoke trong desktop"
+            then: "Smoke chạy hết và không file nào của tôi bị sửa"
+        spec: docs/desktop.md
+        tags: [type:chore]
+        tasks:
+          - key: SMOKE-FIXTURE-COPY
+            subject: "Chép fixture sang thư mục tạm"
+            description: "Done khi: smoke chỉ ghi vào thư mục tạm và user-data tạm."
