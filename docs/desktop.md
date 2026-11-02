@@ -50,8 +50,8 @@ hình tự cập nhật, không cần mở lại.
 
 Bố cục gồm bốn phần, từ trên xuống:
 
-- **Thanh trên cùng**: mở thư mục repo, chọn **Dự án**, đăng nhập/đăng xuất Taiga. Các phần này dùng chung cho mọi
-  mục.
+- **Thanh trên cùng**: mở thư mục repo, chọn **Dự án**, bật/tắt **Terminal**, đăng nhập/đăng xuất Taiga. Các phần này
+  dùng chung cho mọi mục.
 - **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
   - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
   - **Wiki**, **Taiga** (Project, Ticket của tôi, Báo cáo), **Git**: chưa có nội dung. Mỗi mục chỉ hiện một trạng thái
@@ -60,7 +60,7 @@ Bố cục gồm bốn phần, từ trên xuống:
   - **Settings**: phiên bản của ứng dụng, taigent, Electron và Node. Chưa có thiết lập nào.
 
   Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở.
-- **Panel dưới đáy**: chỗ dành cho terminal. Panel chưa có và đang ẩn.
+- **Panel dưới đáy**: terminal (xem [Terminal](#terminal)), ẩn mặc định.
 - **Thanh trạng thái**: người duyệt và kết quả `taigent whoami`.
 
 Mục **Backlog** gồm:
@@ -120,6 +120,36 @@ khác.
 
 Verdict *Đạt* không thay cho bước đồng ý này: `plan`/`apply` không đọc `review.yaml`.
 
+## Terminal
+
+Panel terminal nằm dưới đáy cửa sổ, **ẩn mặc định**. Bật hoặc tắt bằng nút **Terminal** trên thanh trên cùng hoặc
+`` Ctrl+` `` (phím tắt vẫn chạy khi con trỏ đang ở trong terminal). Nút **Ẩn** cũng tắt panel. Ẩn panel không dừng
+process nào: các tab vẫn chạy và hiện lại nguyên vẹn khi bật panel. Kéo mép trên của panel để đổi chiều cao, terminal
+tự đổi số cột và số dòng theo panel và báo cho process.
+
+- **+ Shell** mở một tab shell mới: `pwsh` nếu có trên `PATH`, nếu không thì Windows PowerShell (`powershell.exe`).
+  Trên macOS là `$SHELL`. Trên Windows, shell chuyển console sang UTF-8 trước khi chạy, nên output tiếng Việt của
+  các chương trình khác (git, agent) cũng hiện đúng.
+- **Mở nhanh** `claude`, `codex`, `omp` mở một tab mới chạy agent đó trong shell. Agent chưa cài thì tab hiện lỗi
+  của shell và vẫn giữ shell để bạn gõ tiếp. Ứng dụng không cài, không đăng nhập agent giúp bạn.
+- Mọi tab chạy ở **thư mục repo đang mở**. Chưa mở repo thì không mở được tab. Môi trường của tab kế thừa từ ứng
+  dụng; ứng dụng chỉ thêm `COLORTERM=truecolor` (và `TERM=xterm-256color` ngoài Windows), không thêm thông tin đăng
+  nhập hay bí mật nào.
+- Có nhiều tab cùng lúc. Bấm tên tab để chuyển. Khi process trong tab kết thúc, tab ghi mã thoát và giữ nguyên nội
+  dung cho tới khi bạn đóng.
+- **Đóng tab (×) thì kill cả cây process** của tab: shell, agent và mọi process con của chúng (`taskkill /T /F` trên
+  Windows, cả process group trên macOS). **Thoát ứng dụng thì kill mọi cây process** của mọi tab trước khi thoát.
+- Tab **skill** do ứng dụng mở (chạy một lệnh cho trước, ví dụ một lần chạy skill headless) có thêm nút **Huỷ**: kill
+  cả cây process nhưng giữ tab để bạn đọc output.
+
+Đăng nhập Taiga trong ứng dụng bằng hộp thoại **Đăng nhập**, không gõ mật khẩu vào tab terminal. Lần đăng nhập đó
+dùng chung với `npx taigent` và agent chạy trong terminal.
+
+Cho các ticket sau (nút skill headless, panel git): main process mở tab qua `terminals.open(...)` trong
+`desktop/src/main/terminal.ts`. `{ kind: 'shell', cwd }` mở một shell; `{ kind: 'skill', cwd, title, command: { file,
+args, env? } }` chạy thẳng lệnh đó trong pty (không qua shell). Kết quả có `tab`, `cancel()` (kill cả cây process),
+`exited` (Promise `{ exitCode, signal?, cancelled }`) và `onData(listener)`. Renderer tự hiện panel và chọn tab mới.
+
 ## Đóng gói
 
 ```sh
@@ -140,6 +170,15 @@ rule của Codex), kèm các dependency lúc chạy (`yaml`, `smol-toml`, `@napi
 electron-builder đặt chúng vào
 `resources/taigent/node_modules/taigent`, nên CLI chạy bằng file thực thi của ứng dụng, không cần Node trên máy.
 `taiga-mcp-server` không được đóng gói vì nó chỉ phục vụ `taigent mcp`, lệnh mà ứng dụng không dùng.
+
+Terminal dùng `node-pty` (dependency của `desktop/`, ghim `1.1.0`). Bản này là module N-API kèm sẵn bản prebuilt cho
+Windows x64/arm64 và macOS (`prebuilds/`), nên cùng một file `pty.node` chạy được với mọi bản Electron mà không phải
+rebuild, và máy build hay máy người dùng đều không cần Visual Studio/Python. Vì vậy `npmRebuild` tắt trong cấu hình
+electron-builder: rebuild bằng node-gyp sẽ tạo `build/Release/pty.node`, được ưu tiên hơn bản prebuilt và đòi build
+tool. `node-pty` được giải nén khỏi `app.asar` (`asarUnpack`) vì Windows cần chạy file thật (`conpty.node`, worker
+đọc output, `winpty-agent.exe`); main process nạp nó từ `resources/app.asar.unpacked/node_modules/node-pty`. Bộ cài
+Windows chỉ kèm bản prebuilt của Windows, bỏ mã nguồn C++ và file `.pdb`. Smoke chạy trên bản đóng gói kiểm tra
+chính việc nạp module này.
 
 ### Ký số (người làm)
 
@@ -178,10 +217,33 @@ mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn đư�
 (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Hộp thoại xác nhận đẩy luôn được trả lời
 *Huỷ*. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
 
+Phần terminal (`scripts/smoke-terminal.mjs`): panel ẩn lúc mở, bật/tắt bằng `` Ctrl+` `` và nút; mở tab shell, gõ
+lệnh và thấy output, in tiếng Việt, in chữ đỏ bằng mã ANSI, kéo panel cao lên rồi kiểm tra shell thấy đúng số cột và
+dòng mới; chạy một process con (`ping`), đóng tab rồi kiểm tra shell và process con đã dừng. Ứng dụng được mở với
+`PATH` có một `claude` giả (in thư mục làm việc) đứng đầu và không có thư mục nào chứa `omp`: nút mở nhanh `claude`
+phải chạy ở thư mục repo, còn `omp` phải hiện lỗi của shell mà tab và ứng dụng vẫn chạy. Cuối cùng script để một
+shell chạy `ping`, thoát ứng dụng và kiểm tra mọi process con của ứng dụng đã dừng.
+
 ## Bảo mật
 
-- Cửa sổ chạy với `contextIsolation`, `sandbox`, không có `nodeIntegration`, CSP chặt (không script inline, không tải
-  tài nguyên mạng) và chặn mọi điều hướng hay cửa sổ mới. Link trong mô tả mở bằng trình duyệt hệ thống (chỉ http/https).
+- Cửa sổ chạy với `contextIsolation`, `sandbox`, không có `nodeIntegration`, CSP chặt (chỉ script của ứng dụng, không
+  script inline, không tải tài nguyên mạng) và chặn mọi điều hướng hay cửa sổ mới. Link trong mô tả mở bằng trình
+  duyệt hệ thống (chỉ http/https).
+- CSP cho phép style inline (`style-src 'self' 'unsafe-inline'`) vì xterm.js tô màu và đặt kích thước dòng bằng thẻ
+  `<style>` và thuộc tính `style`. Nội dung do agent viết không dùng được quyền này: DOMPurify bỏ mọi thẻ `<style>` và
+  thuộc tính `style` trong Markdown, và script vẫn chỉ được nạp từ ứng dụng.
 - Markdown trong mô tả do agent viết được làm sạch bằng DOMPurify trước khi hiển thị.
 - Renderer chỉ dùng được API có kiểu trong `desktop/src/shared/api.ts`, qua preload. Nó không đọc file và không gọi
   mạng.
+- **Terminal không phải ranh giới bảo mật.** Shell và agent trong terminal chạy với đúng quyền của bạn, như một
+  terminal bình thường: chúng đọc, sửa file và gọi mạng được, và `npx taigent apply --yes` gõ trong terminal sẽ ghi
+  lên Taiga. Ứng dụng chỉ chặn việc ghi ở các nút của chính nó (CLI + hộp thoại xác nhận).
+- Renderer chỉ mở được tab **shell** hoặc **agent** (`claude`, `codex`, `omp`), luôn ở thư mục repo đang mở. Nó không
+  chọn được lệnh, tham số, thư mục hay biến môi trường. Tab chạy lệnh cho trước (kind `skill`) chỉ main process mở.
+  Main process chỉ nhận các kênh terminal từ chính trang của ứng dụng (`app://taigent`), và kiểm tra kiểu từng tham
+  số.
+- Nội dung do agent viết (Markdown, output trong terminal) không điều khiển được shell: Markdown đã được làm sạch và
+  không có script; output của terminal chỉ được xterm.js vẽ ra, không bao giờ được chạy hay chèn vào DOM dạng HTML.
+- Môi trường của tab kế thừa từ ứng dụng, không thêm token hay mật khẩu. Mật khẩu Taiga chỉ nhập trong hộp thoại
+  đăng nhập, không đi qua terminal hay log.
+- Đóng tab hoặc thoát ứng dụng kill cả cây process, nên không còn agent nào chạy ngầm sau khi bạn đóng.
