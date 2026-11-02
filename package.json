@@ -16,7 +16,12 @@
     "dist/",
     "docs/cli.md",
     "docs/taiga/",
-    "docs/telegram-reply.md"
+    "docs/telegram-reply.md",
+    ".agents/skills/ask-taigent/",
+    ".agents/skills/taiga-*/**",
+    ".codex/hooks/taigent-shell-guard.mjs",
+    ".codex/rules/taigent.rules",
+    "tools/taiga/"
   ],
   "engines": {
     "node": ">=24"
@@ -31,6 +36,7 @@
   },
   "dependencies": {
     "@napi-rs/keyring": "^2.1.2",
+    "smol-toml": "^1.9.1",
     "taiga-mcp-server": "1.9.20",
     "yaml": "^2.9.1"
   },
