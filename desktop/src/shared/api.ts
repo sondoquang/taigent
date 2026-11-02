@@ -1,9 +1,13 @@
 // The contract between the main process and the renderer: what `window.taigent` (preload) exposes. Review
-// shapes come from taigent's core (`src/review.ts`, compiled to `dist/review.js`), as types only.
+// shapes and the manifest edit shapes come from taigent's core (`src/review.ts`, `src/edit.ts`, compiled to `dist/`), as types only.
 
+import type { BacklogItem, EditResult, ManifestFile, RemoveItemRequest, SaveItemRequest } from '../../../src/edit.ts';
+import type { ItemType } from '../../../src/items.ts';
+import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { Preview, PreviewEpic, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
 
 export type { Preview, PreviewEpic, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict };
+export type { BacklogItem, CustomAttributeSpec, EditResult, ItemType, ManifestFile, RemoveItemRequest, SaveItemRequest };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
 export interface Failure {
@@ -106,6 +110,17 @@ export type ApplyOutcome =
 
 export type VerdictChoice = Verdict | 'clear';
 
+/** backlog.yaml as a form opens it (its digest guards the save), with what the forms offer from project.yaml. */
+export interface BacklogSnapshot {
+  file: ManifestFile;
+  /** Custom attributes project.yaml declares, per item type; empty without a valid project.yaml. */
+  attributes: Record<ItemType, CustomAttributeSpec[]>;
+}
+
+/** A save through the manifest edit API (`src/edit.ts`); once saved, `view` is the project read again. */
+export type SaveOutcome = EditResult<{ path: string; view: Result<ProjectView> }>;
+export type RemoveOutcome = EditResult<{ removed: string[]; orphaned: string[]; view: Result<ProjectView> }>;
+
 export interface TaigentApi {
   getState(): Promise<AppState>;
   /** Shows the folder dialog; undefined when cancelled. */
@@ -123,6 +138,12 @@ export interface TaigentApi {
   openExternal(url: string): Promise<void>;
   /** Subscribes to live refreshes of the open project; returns the unsubscribe function. */
   onProjectChanged(listener: (view: Result<ProjectView>) => void): () => void;
+  /** Reads backlog.yaml for a form. */
+  readBacklog(slug: string): Promise<Result<BacklogSnapshot>>;
+  /** Adds or edits an item; refused (`conflict`) when backlog.yaml is no longer the file `baseDigest` names. */
+  saveItem(slug: string, request: SaveItemRequest): Promise<Result<SaveOutcome>>;
+  /** Removes an item with its children (a story's tasks); items on Taiga stay there as orphans. */
+  removeItem(slug: string, request: RemoveItemRequest): Promise<Result<RemoveOutcome>>;
 }
 
 export const CHANNELS = {
@@ -139,4 +160,7 @@ export const CHANNELS = {
   apply: 'taigent:apply',
   openExternal: 'taigent:open-external',
   projectChanged: 'taigent:project-changed',
+  readBacklog: 'taigent:read-backlog',
+  saveItem: 'taigent:save-item',
+  removeItem: 'taigent:remove-item',
 } as const;

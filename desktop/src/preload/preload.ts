@@ -21,6 +21,9 @@ const api: TaigentApi = {
     ipcRenderer.on(CHANNELS.projectChanged, handler);
     return () => ipcRenderer.off(CHANNELS.projectChanged, handler);
   },
+  readBacklog: (slug) => ipcRenderer.invoke(CHANNELS.readBacklog, slug),
+  saveItem: (slug, request) => ipcRenderer.invoke(CHANNELS.saveItem, slug, request),
+  removeItem: (slug, request) => ipcRenderer.invoke(CHANNELS.removeItem, slug, request),
 };
 
 contextBridge.exposeInMainWorld('taigent', api);
