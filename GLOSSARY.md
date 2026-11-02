@@ -38,3 +38,7 @@ _Avoid_: Duration (for the reported figure)
 
 **Bulk close**:
 Three or more tickets closed one after another, each within 60 seconds of the previous one.
+
+**End-of-day reminder**:
+The message, near the end of a working day, listing your open tickets whose due date is today or earlier. "Close them" in answer to it means those tickets.
+_Avoid_: Stale tickets (it is about due dates, not about how long a status has stood)

@@ -161,7 +161,7 @@ test('skills commands outside a repository root are a usage error (exit 2)', asy
   assert.match(noAction.stderr, /skills needs one of: sync, check/);
 });
 
-const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 
 test('the repository holds exactly the Taigent skills, with Claude copies that match .agents/skills', async () => {
   const result = await skills(['check', '--json'], REPO_ROOT);
@@ -200,8 +200,11 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
   };
 }
 
-/** `taigent` commands a skill may pre-approve; the writing ones make a skill explicit-only. */
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets'];
+/**
+ * `taigent` commands a skill may pre-approve. The plan-gated writing ones make a skill explicit-only; `status` and
+ * `comment` edit one of the user's own tickets, named in the request itself, so their skill may run implicitly.
+ */
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
 
@@ -240,6 +243,7 @@ test('each taiga-* skill pre-approves only the taigent commands of its step', as
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),
     'taiga-my-tickets': shellRules('tickets'),
+    'taiga-update-ticket': shellRules('tickets', 'status', 'comment'),
     'taiga-status-report': [],
     'taiga-setup': [],
   };
@@ -272,6 +276,16 @@ test('taiga-my-tickets pre-approves only taigent tickets, may be invoked implici
   assert.deepEqual(allowedTools, shellRules('tickets'));
   const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
   assert.match(router, /`taiga-my-tickets`/);
+});
+
+test('taiga-update-ticket edits your tickets through taigent only, may be invoked implicitly, and ask-taigent routes to it', async () => {
+  const { frontmatter, allowedTools, openai } = await readSkill('taiga-update-ticket');
+
+  assert.notEqual(frontmatter['disable-model-invocation'], true);
+  assert.equal(openai.policy?.allow_implicit_invocation, true);
+  assert.deepEqual(allowedTools, shellRules('tickets', 'status', 'comment'));
+  const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
+  assert.match(router, /`taiga-update-ticket`/);
 });
 
 test('taiga-setup gives the repository MCP server entries, run from node_modules, and the server version is pinned exactly', async () => {

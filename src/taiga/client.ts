@@ -316,6 +316,8 @@ export interface NewAttachment {
 export interface TaigaAssignedStory {
   id: number;
   ref: number;
+  /** OCC version, for a later edit (`editStory`). */
+  version: number;
   subject: string;
   status: string;
   isClosed: boolean;
@@ -330,6 +332,21 @@ export interface TaigaAssignedStory {
   totalPoints: number | null;
 }
 
+/** A user story status of one project (`GET /userstory-statuses?project=`), e.g. `Done` with `is_closed`. */
+export interface TaigaStoryStatus {
+  id: number;
+  name: string;
+  slug: string;
+  isClosed: boolean;
+}
+
+/** What `taigent status` and `taigent comment` change on a story: its status (by id), and/or a comment. */
+export interface StoryEdit {
+  status?: number;
+  /** Taiga records it as a comment in the story's history. */
+  comment?: string;
+}
+
 function parseAssignedStory(raw: unknown): TaigaAssignedStory {
   const what = 'user story';
   const r = record(raw, what);
@@ -338,6 +355,7 @@ function parseAssignedStory(raw: unknown): TaigaAssignedStory {
   return {
     id: field(r, 'id', 'number', what),
     ref: field(r, 'ref', 'number', what),
+    version: field(r, 'version', 'number', what),
     subject: field(r, 'subject', 'string', what),
     status: field(status, 'name', 'string', `${what} status`),
     isClosed: field(r, 'is_closed', 'boolean', what),
@@ -674,6 +692,25 @@ export class TaigaClient {
     if (projectId !== undefined) query.project = projectId;
     const { collection, what } = TAIGA_ITEM.story;
     return parseList(await this.#request('GET', `/${collection}`, { query }), what, parseAssignedStory);
+  }
+
+  /** The user story statuses of a project, in Taiga's order. */
+  async listStoryStatuses(projectId: number): Promise<TaigaStoryStatus[]> {
+    const raw = await this.#request('GET', '/userstory-statuses', { query: { project: projectId } });
+    return list(raw, 'user story status list').map((item) => {
+      const r = record(item, 'user story status');
+      return {
+        id: field(r, 'id', 'number', 'user story status'),
+        name: field(r, 'name', 'string', 'user story status'),
+        slug: field(r, 'slug', 'string', 'user story status'),
+        isClosed: field(r, 'is_closed', 'boolean', 'user story status'),
+      };
+    });
+  }
+
+  /** Changes a story's status and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
+  async editStory(id: number, edit: StoryEdit, version: number): Promise<void> {
+    await this.#patch(`/${TAIGA_ITEM.story.collection}/${id}`, { ...edit }, version);
   }
 
   async listProjectTemplates(): Promise<TaigaProjectTemplate[]> {

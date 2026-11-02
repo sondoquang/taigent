@@ -94,7 +94,7 @@ required = true
 
 ## Installing the skills into another project
 
-When the user asks for it: `npx skills add sondoquang/taigent` at the project root installs the eight Taigent skills (every `taiga-*` and `ask-taigent`) for the agents it detects, into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code); `npx skills update` refreshes them. It installs neither the CLI nor the MCP server: run the checks above.
+When the user asks for it: `npx skills add sondoquang/taigent` at the project root installs the nine Taigent skills (every `taiga-*` and `ask-taigent`) for the agents it detects, into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code); `npx skills update` refreshes them. It installs neither the CLI nor the MCP server: run the checks above.
 
 ## Report
 

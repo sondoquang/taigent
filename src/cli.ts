@@ -14,11 +14,13 @@ import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, st
 import { serveMcp, startProxy } from './mcp.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
 import { buildPlan, describePlanOperation, type Plan } from './planner.ts';
+import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { readBacklogRemote } from './remote.ts';
 import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
+import { commentTicket, parseRef, setTicketStatus, TicketError } from './ticket.ts';
 import { dayRange, formatTicketsText, parseDay, readTickets } from './tickets.ts';
 import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
 
@@ -31,6 +33,10 @@ Commands:
   apply     Apply the manifest to Taiga (requires --yes)
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
   tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
+  status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
+  comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
+  notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
+            Telegram chat (--dry-run prints the message instead)
   skills sync   Copy the Taigent skills (taiga-*, ask-taigent) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
   login     Log in once, in your own terminal: the password is exchanged for a token kept in the OS credential
@@ -40,13 +46,14 @@ Commands:
   mcp       Run the Taiga MCP server on stdin/stdout for an agent (.mcp.json, .codex/config.toml)
 
 Options:
-  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets)
+  --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets and notify)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
   --application <id>  login: store an application token of this Application (created by the instance admin)
                     instead of a refresh token
   --json            Machine-readable output on stdout
   --yes             Confirm writes (bootstrap, apply, upload)
-  --dry-run         List the operations without writing anything (exit 3 when there are changes)
+  --dry-run         List the operations without writing anything (exit 3 when there are changes); notify: print the
+                    message without sending it (exit 0)
   -h, --help        Show this help
 
 Credentials: TAIGA_USERNAME + TAIGA_PASSWORD or TAIGA_TOKEN when set, else the stored login (taigent login).
@@ -59,13 +66,16 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
+  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
+                                   .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
+                                   (default: <CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram)
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in),
             3 plan/--dry-run/skills check has changes, 4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['validate', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
-const PROJECTLESS: readonly Command[] = ['validate', 'skills', 'tickets', 'login', 'logout', 'whoami', 'mcp'];
+const PROJECTLESS: readonly Command[] = ['validate', 'skills', 'tickets', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
@@ -85,6 +95,12 @@ interface Options {
   to?: string;
   /** `skills` subcommand. */
   skillsAction?: SkillsAction;
+  /** `status`, `comment`: the ticket's ref. */
+  ref?: number;
+  /** `status`: the status name (its words joined by spaces); `comment`: the comment text. */
+  text?: string;
+  /** `notify`: which message. */
+  notifyKind?: NotifyKind;
   /** `login`: Application id for an application token. */
   application?: string;
   json: boolean;
@@ -140,6 +156,23 @@ function parseOptions(argv: string[]): Options | 'help' {
     if (!SKILLS_ACTIONS.includes(action as SkillsAction)) throw new UsageError(`skills needs one of: ${SKILLS_ACTIONS.join(', ')}`);
     skillsAction = action as SkillsAction;
   }
+  let ref: number | undefined;
+  let text: string | undefined;
+  if (command === 'status' || command === 'comment') {
+    // The rest of the words, so `status 84 In progress` needs no quotes (PowerShell 5.1 mangles them).
+    const [refArg, ...words] = extra.splice(0);
+    const what = command === 'status' ? '<status>' : '<text>';
+    ref = refArg === undefined ? undefined : parseRef(refArg);
+    if (ref === undefined) throw new UsageError(`${command} needs the ticket's ref (e.g. 84 or #84), then ${what}${refArg === undefined ? '' : `, got "${refArg}"`}`);
+    text = words.join(' ').trim();
+    if (text === '') throw new UsageError(`${command} needs ${what} after the ref`);
+  }
+  let notifyKind: NotifyKind | undefined;
+  if (command === 'notify') {
+    const kind = extra.shift();
+    if (!NOTIFY_KINDS.includes(kind as NotifyKind)) throw new UsageError(`notify needs one of: ${NOTIFY_KINDS.join(', ')}`);
+    notifyKind = kind as NotifyKind;
+  }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
     if (!PROJECTLESS.includes(command as Command)) throw new UsageError('--project <slug> is required');
@@ -164,6 +197,9 @@ function parseOptions(argv: string[]): Options | 'help' {
     from: values.from,
     to: values.to,
     skillsAction,
+    ref,
+    text,
+    notifyKind,
     application: values.application,
     json: values.json,
     yes: values.yes,
@@ -466,6 +502,45 @@ async function runTickets(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `status`: move one of the user's tickets to a status, at once (the request is the confirmation). */
+async function runStatus(run: Run): Promise<number> {
+  const { options } = run;
+  const change = await setTicketStatus(await connectTaiga(run), options.project!, options.ref!, options.text!);
+  const { ticket } = change;
+  const named = `#${ticket.ref} ${ticket.subject} (${ticket.project.slug})`;
+  emit(run, change, () => (change.changed ? `${named}: ${change.from} → ${change.to}\n` : `${named} is already ${change.to}: nothing changed\n`));
+  return ExitCode.Ok;
+}
+
+/** `comment`: add a comment to one of the user's tickets, at once. */
+async function runComment(run: Run): Promise<number> {
+  const { options } = run;
+  const added = await commentTicket(await connectTaiga(run), options.project!, options.ref!, options.text!);
+  emit(run, added, () => `Commented on #${added.ticket.ref} ${added.ticket.subject} (${added.ticket.project.slug})\n`);
+  return ExitCode.Ok;
+}
+
+/** `notify`: build the week/day/eod message from the user's tickets and send it to their Telegram chat. */
+async function runNotify(run: Run): Promise<number> {
+  const { options } = run;
+  const kind = options.notifyKind!;
+  // Before Taiga, so a missing Telegram setup fails fast; the token joins the secrets no output may show.
+  const target = options.dryRun ? undefined : resolveTelegram(run.env);
+  run.secrets.add(target?.token);
+  const client = await connectTaiga(run);
+  const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
+  const range = notifyRange(kind, new Date());
+  const report = await readTickets(client, dayRange(range.from, range.to), project);
+  const text = notifyMessage(kind, report);
+  if (target && text !== null) await sendTelegram(target, text);
+  const sent = target !== undefined && text !== null;
+  emit(run, { kind, range, text, sent, chatId: target?.chatId ?? null }, () => {
+    if (text === null) return `Nothing to send: no open ticket is due by ${report.today}\n`;
+    return sent ? `Sent the ${kind} message to Telegram chat ${target!.chatId}\n` : `${text}\n`;
+  });
+  return ExitCode.Ok;
+}
+
 /** The URL typed at `taigent login`: http(s), no credentials; a bare host gets Taiga's `/api/v1`. */
 function loginApiUrl(raw: string): string {
   if (!URL.canParse(raw)) throw new UsageError(`"${raw}" is not a URL (e.g. https://taiga.example.com/api/v1)`);
@@ -574,6 +649,12 @@ function dispatch(run: Run): Promise<number> {
       return runSkills(run);
     case 'tickets':
       return runTickets(run);
+    case 'status':
+      return runStatus(run);
+    case 'comment':
+      return runComment(run);
+    case 'notify':
+      return runNotify(run);
     case 'plan':
     case 'apply':
       return runPlan(run);
@@ -627,6 +708,8 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     }
     if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
+    if (error instanceof TicketError || error instanceof NotifyConfigError) return fail(secrets, ExitCode.Usage, 'usage', error, json);
+    if (error instanceof TelegramError) return fail(secrets, ExitCode.Taiga, 'telegram', error, json);
     if (error instanceof TaigaAuthError) {
       const hint = { token: 'check TAIGA_TOKEN', password: 'check TAIGA_USERNAME and TAIGA_PASSWORD', login: LOGIN_HINT }[error.credential];
       const hinted = new TaigaAuthError(error.credential, `${error.message} (${hint})`, error.status);
