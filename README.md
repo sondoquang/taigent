@@ -6,53 +6,58 @@ the Taiga MCP server for reading.
 
 ## Use it in your project
 
-Needs Node.js 24+. Run everything from your project's root.
+Five steps, a few minutes. You need **Node.js 24 or later** (`node --version`) and a Taiga account. Run every command
+from your project's root folder.
 
 ### 1. Install
 
 ```sh
-npx skills add sondoquang/taigent          # the Taigent skills, into .agents/skills/ and .claude/skills/
-npm install -D github:sondoquang/taigent   # the taigent CLI (append #<tag> to pin a release)
+npx skills add sondoquang/taigent
+npm install -D github:sondoquang/taigent
 ```
 
-`npm install` puts everything in your project's `node_modules`, nothing system-wide:
+The first command adds the eight Taigent skills to `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code);
+pick your agents when it asks. The second installs the `taigent` CLI and the Taiga MCP server into `node_modules`
+(nothing system-wide) and creates `package.json` if the project has none.
 
-| Package | Why |
-|---|---|
-| `taigent` (built from source on install) | the CLI and the docs the skills read |
-| `taiga-mcp-server` (exact version pinned by taigent) and its dependencies | the Taiga MCP server that `taigent mcp` runs |
-| `@napi-rs/keyring` (+ a small native binary for your OS) | keeps your login in the OS credential store |
-| `yaml` | reads the manifests |
+### 2. Log in to Taiga
 
-### 2. Log in once
-
-In **your own terminal** (not through an agent, not with Claude Code's `!`):
+Open **your own terminal**: not inside Claude Code or Codex, and not with Claude Code's `!`. Then run:
 
 ```sh
-npx taigent login      # Taiga URL (e.g. https://taiga.example.com), username or email, password (not shown)
-npx taigent whoami     # check: prints your Taiga user and where the login is stored
+npx taigent login
 ```
 
-Your password is used once and **never stored**. taigent keeps a token in the OS credential store (Windows Credential
-Manager, macOS Keychain, Linux Secret Service) and a non-secret `login.json` (URL, username) in your config directory.
-The token renews itself while you use taigent; after 8 days unused (Taiga's default), run `npx taigent login` again.
-If your Taiga admin created an Application for taigent, `npx taigent login --application <id>` stores a token that
-never expires instead. `npx taigent logout` removes the login.
+| It asks for | Type |
+|---|---|
+| Taiga API URL | your Taiga address, e.g. `https://taiga.example.com` (`/api/v1` is added for you) |
+| Username or email | your Taiga username or email |
+| Password | your Taiga password (hidden while you type) |
 
-No credential store (CI, headless Linux)? Set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` (or `TAIGA_TOKEN`)
-in the environment or a git-ignored `.env` (see `.env.example`); they take precedence over the stored login.
+Check it worked:
 
-### 3. Connect the Taiga MCP server
+```sh
+npx taigent whoami
+```
 
-No secrets in these files, so they can be committed. Claude Code: `.mcp.json`
+```text
+Taiga: https://taiga.example.com/api/v1
+User: jane (id 42)
+Credentials: stored login (refresh-token, in Windows Credential Manager)
+```
+
+### 3. Connect your agent to Taiga
+
+**Claude Code.** Create `.mcp.json` in the project root (or add the `taiga` entry to the one you have):
 
 ```json
 { "mcpServers": { "taiga": { "command": "node", "args": ["node_modules/taigent/bin/taigent.js", "mcp"] } } }
 ```
 
-Then start `claude` in the project, accept the `taiga` server when asked, and check `/mcp` shows it connected.
+Start `claude` in the project and answer **yes** when it asks to use the `taiga` server. `/mcp` then shows `taiga`
+as connected.
 
-Codex: `.codex/config.toml` (read once the project is trusted)
+**Codex.** Create `.codex/config.toml` in the project root; Codex reads it once you trust the project:
 
 ```toml
 [mcp_servers.taiga]
@@ -62,16 +67,45 @@ env_vars = ["TAIGA_API_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD", "TAIGA_TOKEN", 
 required = true
 ```
 
-`taigent mcp` runs the MCP server with your stored login; the server itself never sees your password or token.
+Neither file holds a password, so commit them: teammates then skip this step.
 
-### 4. Check it all
+### 4. Check everything
 
-Run the `taiga-setup` skill (`/taiga-setup` in Claude Code, `$taiga-setup` in Codex): it checks the CLI, the login and
-the MCP server, and names the fix for anything missing. Not sure which skill or step fits next? Ask `ask-taigent`
-(`/ask-taigent`, `$ask-taigent`).
+In your agent, run `/taiga-setup` (Claude Code) or `$taiga-setup` (Codex). It checks the CLI, your login and the MCP
+server: three `ok` means you are done. Anything else comes with the fix.
 
-Details: [docs/cli.md](docs/cli.md) (commands, credentials and environment, manifest layout, JSON output, exit codes),
-[§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).
+### 5. Try it
+
+Ask for your tickets with `/taiga-my-tickets` (e.g. `/taiga-my-tickets October`). Not sure which skill fits? Ask
+`/ask-taigent` (`$ask-taigent` in Codex).
+
+### If something goes wrong
+
+| You see | Do this |
+|---|---|
+| `node` missing, or a version below 24 | Install Node.js 24 or later, then redo step 1 |
+| `not logged in to Taiga` | Step 2, in your own terminal |
+| `taigent login reads your password from a terminal` | You ran it through an agent or a pipe: run it in your own terminal |
+| `the stored login … has expired or was revoked` | Unused for 8 days: run `npx taigent login` again |
+| `TAIGA_API_URL is …, but the stored login is for …` | Remove that `TAIGA_API_URL` (often in `.env`), or log in to that Taiga |
+| `/mcp` has no `taiga`, or shows it pending | Check `.mcp.json` is in the project root, restart `claude` there and accept `taiga` |
+| You declined `taiga` earlier | `claude mcp reset-project-choices`, then restart `claude` and accept it |
+| `taiga` failed to connect | Run `npx taigent mcp` in a terminal: its error names the problem (Ctrl+C to stop) |
+
+### Good to know
+
+- Your password is used once and **never stored**. taigent keeps a token in your OS credential store (Windows
+  Credential Manager, macOS Keychain, Linux Secret Service); it renews itself while you use taigent.
+  `npx taigent logout` removes it.
+- Your Taiga admin can create an Application for taigent: `npx taigent login --application <id>` then stores a token
+  that never expires.
+- No credential store (CI, headless Linux)? Set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` (or
+  `TAIGA_TOKEN`) in the environment or a git-ignored `.env` (see `.env.example`). They take precedence over the stored
+  login.
+- Update later with `npx skills update` and `npm install -D github:sondoquang/taigent` (append `#<tag>` to pin a
+  release).
+- Details: [docs/cli.md](docs/cli.md) (commands, credentials, manifests, exit codes) and
+  [§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).
 
 ## Develop taigent
 
