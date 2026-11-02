@@ -177,7 +177,12 @@ function onExit(api: TerminalApi, id: number, exit: TerminalExit): void {
   tab.exit = exit;
   tab.header.classList.add('exited');
   tab.header.dataset.exitCode = String(exit.exitCode);
-  const reason = exit.cancelled ? 'Đã dừng' : `Đã kết thúc, mã thoát ${exit.exitCode}`;
+  tab.header.dataset.cancelled = String(exit.cancelled);
+  const reason = exit.cancelled
+    ? tab.info.kind === 'skill'
+      ? 'Đã huỷ lần chạy (đã kill cả cây process)'
+      : 'Đã dừng'
+    : `Đã kết thúc, mã thoát ${exit.exitCode}`;
   tab.term.write(`\r\n\x1b[2m[${reason}. Đóng tab bằng ×.]\x1b[0m\r\n`);
   renderHeader(api, tab);
 }

@@ -3,6 +3,8 @@
 #
 #   tools/taiga/run-skill.ps1 [--dry-run] [--output-format json|text] <claude|codex> <skill> [skill arguments...]
 #
+# The repository is the current directory, wherever this script lives (this repository, node_modules/taigent, or the
+# copy bundled in Taigent Desktop): its .agents/skills and the allowlist `taigent init` installed there.
 # No param() block on purpose: GNU-style options parse identically to the sh version.
 
 $ErrorActionPreference = 'Stop'
@@ -14,7 +16,7 @@ function Stop-Run([string]$Message, [switch]$ShowUsage) {
   exit 2
 }
 
-$Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
+$Root = (Get-Location).ProviderPath
 $DryRun = $false
 $Format = 'json'
 $Rest = [System.Collections.Generic.List[string]]::new()
@@ -44,9 +46,13 @@ if ($Skill -cnotmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { Stop-Run "unknown skill '$Sk
 if (-not (Test-Path -LiteralPath (Join-Path $Root ".agents/skills/$Skill/SKILL.md") -PathType Leaf)) {
   Stop-Run "unknown skill '$Skill': no .agents/skills/$Skill/SKILL.md"
 }
+$Allowlist = Join-Path $Root 'tools/taiga/allowlist.txt'
+if (-not (Test-Path -LiteralPath $Allowlist -PathType Leaf)) {
+  Stop-Run "no tools/taiga/allowlist.txt in $Root`: run run-skill from the repository root (npx taigent init installs the allowlist)"
+}
 
 $Rules = @(
-  Get-Content -LiteralPath (Join-Path $Root 'tools/taiga/allowlist.txt') -Encoding UTF8 |
+  Get-Content -LiteralPath $Allowlist -Encoding UTF8 |
     ForEach-Object { $_.Trim() } |
     Where-Object { $_ -and -not $_.StartsWith('#') }
 )

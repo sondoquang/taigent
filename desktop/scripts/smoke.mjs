@@ -5,7 +5,8 @@
 // stubbed to "Huỷ", "Xem thay đổi trên Taiga", bootstrap --dry-run, the Báo cáo report and Ticket của tôi (read-only)
 // use the login only when the app reports one, and "Đẩy wiki lên Taiga" and Ticket của tôi's writes (status, comment)
 // run against an in-process fake Taiga (test/support/fake-taiga.ts; smoke-tickets.mjs for the tickets).
-// Terminal steps: scripts/smoke-terminal.mjs; Git: scripts/smoke-git.mjs; setup wizard (last): scripts/smoke-wizard.mjs.
+// Terminal steps: scripts/smoke-terminal.mjs; Git: scripts/smoke-git.mjs; headless skill buttons (run-skill --dry-run,
+// Huỷ): scripts/smoke-headless.mjs; setup wizard (last): scripts/smoke-wizard.mjs.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -21,6 +22,7 @@ import { parse } from 'yaml';
 import { agentPath, descendants, smokeTerminal, waitGone } from './smoke-terminal.mjs';
 import { smokeGit } from './smoke-git.mjs';
 import { smokeWizard } from './smoke-wizard.mjs';
+import { headlessPath, smokeHeadless } from './smoke-headless.mjs';
 import { smokeTickets } from './smoke-tickets.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,7 +49,7 @@ const executablePath = values.exe ? resolve(values.exe) : createRequire(import.m
 const app = await electron.launch({
   executablePath,
   args: [...(values.exe ? [] : [desktop]), `--user-data-dir=${join(work, 'user-data')}`],
-  env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests, PATH: await agentPath(work) },
+  env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests, TAIGENT_RUN_SKILL_DRY_RUN: '1', PATH: await headlessPath(work, await agentPath(work)) },
   cwd: repo,
 });
 const log = (...parts) => console.log('[smoke]', ...parts);
@@ -125,11 +127,9 @@ try {
   check(blocked?.includes('Chưa thể đẩy lên Taiga') && blocked.includes(story), 'push blocked by the open comment');
   await page.screenshot({ path: join(shots, '4-push-blocked.png') });
 
-  // Switching sections keeps the open project and the selected item; sections without content yet have no controls.
+  // Switching sections keeps the open project and the selected item.
   for (const section of ['settings']) {
     await goTo(page, section);
-    const controls = await page.locator(`#screen-${section} :is(button, input, select, textarea, a)`).count();
-    check(controls === 0, `section ${section} shows an empty state without controls`);
     await page.keyboard.press('j');
     await page.screenshot({ path: join(shots, `nav-${section}.png`) });
   }
@@ -189,6 +189,7 @@ try {
   }
 
   await smokeTerminal(page, { repo, shots, log, check });
+  await smokeHeadless(page, { app, repo, project, work, shots, log, check, goTo });
 
   await page.waitForFunction(() => document.querySelector('#statusbar')?.textContent?.includes('Taiga'), null, { timeout: 30_000 }).catch(() => undefined);
   const login = await page.evaluate(() => window.taigent.whoami());

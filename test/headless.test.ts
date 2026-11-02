@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { initRepository } from '../src/init.ts';
 
 // Headless wrapper: tools/taiga/run-skill.ps1 and run-skill.sh build one `claude -p` / `codex exec` command from
 // the shared allowlist (tools/taiga/allowlist.txt). Tests only use `--dry-run`, which prints the command (a JSON
@@ -35,11 +37,15 @@ const MCP_WRITE_TOOLS = [
 
 const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'preview', 'projects', 'report'];
 
-async function readAllowlist(): Promise<string[]> {
-  return (await readFile(ALLOWLIST, 'utf8'))
+function parseAllowlist(text: string): string[] {
+  return text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== '' && !line.startsWith('#'));
+}
+
+async function readAllowlist(): Promise<string[]> {
+  return parseAllowlist(await readFile(ALLOWLIST, 'utf8'));
 }
 
 /** Tool names in the first column of the banned-tools table, section 10 of docs/taiga/conventions.md. */
@@ -157,8 +163,8 @@ interface ScriptResult {
   stderr: string;
 }
 
-async function runScript(shell: Shell, args: string[]): Promise<ScriptResult> {
-  const child = spawn(shell.command, [...shell.args, ...args], { cwd: REPO_ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+async function runScript(shell: Shell, args: string[], cwd = REPO_ROOT): Promise<ScriptResult> {
+  const child = spawn(shell.command, [...shell.args, ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
@@ -241,6 +247,46 @@ for (const shell of SHELLS) {
       assert.equal(result.code, 2, `${args.join(' ')}: ${result.stdout}${result.stderr}`);
       assert.match(result.stderr, /usage: run-skill/);
     }
+  });
+
+  // Taigent Desktop runs its bundled copy of the wrapper in the opened repository, and another repository runs the one
+  // in node_modules/taigent: the repository is the current directory, not the folder the script sits in.
+  test(`${shell.name}: a copy of the wrapper run in a repository set up by taigent init uses that repository's skills and allowlist`, { skip }, async (t) => {
+    const work = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
+    t.after(() => rm(work, { recursive: true, force: true }));
+    const repo = join(work, 'repo');
+    await mkdir(repo);
+    await initRepository(repo, { dryRun: false });
+    // The repository's own allowlist, distinguishable from taigent's: one rule fewer.
+    const repoAllowlist = join(repo, 'tools/taiga/allowlist.txt');
+    const rules = parseAllowlist(await readFile(repoAllowlist, 'utf8')).slice(0, -1);
+    await writeFile(repoAllowlist, `${rules.join('\n')}\n`);
+    // The bundle holds the scripts only, so a skill or rule read from beside them would fail the run.
+    const script = shell.args.at(-1)!;
+    const copy = join(work, 'bundle', 'tools', 'taiga', script.replace(/^.*[\\/]/, ''));
+    await mkdir(dirname(copy), { recursive: true });
+    await cp(script, copy);
+    const copied: Shell = { ...shell, args: [...shell.args.slice(0, -1), copy] };
+
+    const result = await runScript(copied, ['--dry-run', 'claude', 'taiga-plan-backlog', 'docs/spec.md'], repo);
+
+    assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
+    assert.deepEqual(JSON.parse(result.stdout), [
+      'claude', '-p', '/taiga-plan-backlog docs/spec.md', '--output-format', 'json', '--permission-mode', 'acceptEdits', '--allowedTools', ...rules,
+    ]);
+  });
+
+  test(`${shell.name}: a repository without the allowlist is a usage error (exit 2) naming taigent init`, { skip }, async (t) => {
+    const repo = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
+    t.after(() => rm(repo, { recursive: true, force: true }));
+    await mkdir(join(repo, '.agents/skills/taiga-plan-backlog'), { recursive: true });
+    await writeFile(join(repo, '.agents/skills/taiga-plan-backlog/SKILL.md'), '---\nname: taiga-plan-backlog\n---\n');
+
+    const result = await runScript(shell, ['--dry-run', 'claude', 'taiga-plan-backlog'], repo);
+
+    assert.equal(result.code, 2, `${result.stdout}${result.stderr}`);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /allowlist\.txt.*taigent init/);
   });
 }
 

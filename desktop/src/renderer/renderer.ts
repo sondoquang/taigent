@@ -28,6 +28,7 @@ import { gitRepoChanged, wireGit } from './git.ts';
 import { mountMyTickets } from './my-tickets.ts';
 import { wireTerminal } from './terminal.ts';
 import { mountSetup, setupLoginChanged, setupRepoChanged } from './setup.ts';
+import { mountHeadless, renderHeadless } from './headless.ts';
 import { mountWiki, refreshWiki } from './wiki.ts';
 
 declare global {
@@ -460,6 +461,7 @@ function render(): void {
   renderDetail();
   renderChanges();
   renderButtons();
+  renderHeadless();
   refreshWiki();
 }
 
@@ -817,6 +819,21 @@ function wire(): void {
     login: () => void onLoginButton(),
     refreshLogin,
     loginStatus: () => state.login,
+  });
+  mountHeadless({
+    api,
+    repo: () => state.repo,
+    view: () => state.view,
+    toast,
+    async refresh() {
+      // The watcher already showed the agent's edits; a project the run created joins the picker here.
+      const repo = await api.refreshRepo();
+      if (repo.ok) state.repo = repo.value;
+      const only = state.repo?.projects.length === 1 ? state.repo.projects[0] : undefined;
+      if (state.view) applyView(await api.openProject(state.view.slug));
+      else if (only) await openProject(only.slug);
+      else render();
+    },
   });
   mountMyTickets({ api, loginKey: () => `${state.login?.loggedIn}:${state.login?.apiUrl}:${state.login?.username}`, toast, failureBlock });
   mountWiki({ api, view: () => state.view, toast, failureBlock });

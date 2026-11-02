@@ -160,6 +160,36 @@ export interface TerminalApi {
   onExit(listener: (id: number, exit: TerminalExit) => void): () => void;
 }
 
+/** The agents a headless skill run can use (Settings); `omp` only runs in the terminal. */
+export const HEADLESS_AGENTS = ['claude', 'codex'] as const;
+export type HeadlessAgent = (typeof HEADLESS_AGENTS)[number];
+
+/**
+ * The headless buttons, each a `run-skill` of one skill: plan the backlog from a spec file (`taiga-plan-backlog`),
+ * answer the open review comments (`taiga-plan-backlog`), write one user story (`taiga-create-user-story`). None
+ * applies, uploads or bootstraps.
+ */
+export type SkillRunRequest =
+  | { action: 'plan-spec'; slug?: string }
+  | { action: 'review'; slug: string }
+  | { action: 'story'; slug: string; description: string };
+export type SkillRunAction = SkillRunRequest['action'];
+
+/** A started run: the `skill` tab it runs in. */
+export interface SkillRun {
+  action: SkillRunAction;
+  agent: HeadlessAgent;
+  skill: string;
+  tabId: number;
+}
+
+/** How a run ended; `lastErrorLine` is the last line of output that reads as an error, else its last line. */
+export interface SkillRunEnd extends SkillRun {
+  exitCode: number;
+  cancelled: boolean;
+  lastErrorLine?: string;
+}
+
 /** A changed file in the Git section's scope, repo-relative with `/`. */
 export interface GitChange {
   path: string;
@@ -411,6 +441,16 @@ export interface TaigentApi {
   checkTools(): Promise<ToolCheck[]>;
   /** Opens a terminal tab running `tool`'s install command (`ToolCheck.install`). */
   installTool(tool: SetupTool): Promise<Result<TerminalTab>>;
+  /** The agent of the headless buttons, from the app settings (default claude). */
+  headlessAgent(): Promise<HeadlessAgent>;
+  setHeadlessAgent(agent: HeadlessAgent): Promise<Result<HeadlessAgent>>;
+  /**
+   * Opens a `skill` tab running the bundled `run-skill` in the opened repository; `plan-spec` first asks for the spec
+   * file (undefined when that dialog is cancelled). One run at a time.
+   */
+  runSkill(request: SkillRunRequest): Promise<Result<SkillRun> | undefined>;
+  /** A run ended: by itself, failed, or cancelled with Huỷ. */
+  onSkillRunEnded(listener: (end: SkillRunEnd) => void): () => void;
   /** Taiga > Ticket của tôi: the Period's tickets from `from` to `to` (YYYY-MM-DD, both included). */
   readMyTickets(from: string, to: string): Promise<Result<MyTickets>>;
   /** A native confirmation, then `status --project <slug> --json <ref> -- <to>`. */
@@ -464,6 +504,10 @@ export const CHANNELS = {
   runNpmInstall: 'taigent:run-npm-install',
   checkTools: 'taigent:check-tools',
   installTool: 'taigent:install-tool',
+  headlessAgent: 'taigent:headless-agent',
+  setHeadlessAgent: 'taigent:set-headless-agent',
+  runSkill: 'taigent:run-skill',
+  skillRunEnded: 'taigent:skill-run-ended',
   readMyTickets: 'taigent:read-my-tickets',
   setTicketStatus: 'taigent:set-ticket-status',
   commentTicket: 'taigent:comment-ticket',

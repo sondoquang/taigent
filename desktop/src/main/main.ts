@@ -27,7 +27,7 @@ import {
   type VerdictChoice,
 } from '../shared/api.ts';
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
-import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
+import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, setHeadlessAgent } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
@@ -35,6 +35,7 @@ import { readTaigaReport } from './taiga-report.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
 import { cloneRepo, createRepo, openInstall, openNpmInstall, runInit, setupStatus } from './setup.ts';
 import { checkTools } from './tools.ts';
+import { runSkill } from './headless.ts';
 import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
 import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
 
@@ -326,6 +327,13 @@ function registerIpc(): void {
   handle(CHANNELS.runNpmInstall, async () => ({ ok: true, value: openNpmInstall(requireRepo()) }));
   handle(CHANNELS.checkTools, checkTools);
   handle(CHANNELS.installTool, async (tool: unknown) => openInstall(tool, repoRoot));
+  handle(CHANNELS.headlessAgent, headlessAgent);
+  handle(CHANNELS.setHeadlessAgent, async (agent: unknown) => ({ ok: true, value: await setHeadlessAgent(agent) }));
+  handle(CHANNELS.runSkill, async (request: unknown) =>
+    runSkill(requireRepo(), request, window!, (end) => {
+      if (window && !window.isDestroyed()) window.webContents.send(CHANNELS.skillRunEnded, end);
+    }),
+  );
   // Tickets need no repository; with one open, its .env (TAIGA_*) applies, as for whoami.
   handle(CHANNELS.readMyTickets, async (from: string, to: string) => readMyTickets(repoRoot ?? app.getPath('home'), String(from), String(to)));
   handle(CHANNELS.setTicketStatus, async (request: TicketStatusRequest) => setTicketStatus(repoRoot ?? app.getPath('home'), request, window!));

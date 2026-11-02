@@ -1,7 +1,7 @@
 // Sandboxed preload: exposes the typed `window.taigent` API and nothing else of Electron or Node.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import { CHANNELS, type ProjectView, type Result, type TaigentApi, type TerminalExit, type TerminalTab } from '../shared/api.ts';
+import { CHANNELS, type ProjectView, type Result, type SkillRunEnd, type TaigentApi, type TerminalExit, type TerminalTab } from '../shared/api.ts';
 
 /** Subscribes `listener` to a main → renderer event; returns the unsubscribe function. */
 function subscribe<A extends unknown[]>(channel: string, listener: (...args: A) => void): () => void {
@@ -51,6 +51,10 @@ const api: TaigentApi = {
   runNpmInstall: () => ipcRenderer.invoke(CHANNELS.runNpmInstall),
   checkTools: () => ipcRenderer.invoke(CHANNELS.checkTools),
   installTool: (tool) => ipcRenderer.invoke(CHANNELS.installTool, tool),
+  headlessAgent: () => ipcRenderer.invoke(CHANNELS.headlessAgent),
+  setHeadlessAgent: (agent) => ipcRenderer.invoke(CHANNELS.setHeadlessAgent, agent),
+  runSkill: (request) => ipcRenderer.invoke(CHANNELS.runSkill, request),
+  onSkillRunEnded: (listener) => subscribe<[SkillRunEnd]>(CHANNELS.skillRunEnded, listener),
   readMyTickets: (from, to) => ipcRenderer.invoke(CHANNELS.readMyTickets, from, to),
   setTicketStatus: (request) => ipcRenderer.invoke(CHANNELS.setTicketStatus, request),
   commentTicket: (request) => ipcRenderer.invoke(CHANNELS.commentTicket, request),

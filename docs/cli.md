@@ -866,6 +866,9 @@ the project root; the project commits the files `init` wrote and each user appro
 `taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets` and `taiga-update-ticket` need only the CLI
 (`taigent tickets`, `status`, `comment`). For chats from Telegram, also add the six `tickets|status|comment` rules of
 the README's step 6e to the project's `.claude/settings.json`.
+To run a skill without interaction, run `node_modules/taigent/tools/taiga/run-skill.ps1` (or `run-skill.sh`) from the
+project root: it uses the project's skills and the allowlist `init` installed ([docs/headless.md](headless.md)); Taigent
+Desktop's headless buttons run the same script.
 `npx skills add sondoquang/taigent` still installs the skills alone (no MCP entries, kit or pin). The `taiga-setup`
 skill checks all of it and names each fix.
 

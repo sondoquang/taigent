@@ -43,6 +43,14 @@
       </nav>
 
       <section class="screen screen-backlog" id="screen-backlog" aria-label="Backlog">
+        <!-- Headless skill runs (src/renderer/headless.ts): each opens a tab of the terminal panel. -->
+        <div class="agent-bar" id="agent-bar" role="toolbar" aria-label="Nhờ agent">
+          <span class="agent-bar-label">Nhờ agent <b id="agent-name">claude</b></span>
+          <button id="agent-plan-spec" class="btn small" type="button" disabled title="Chọn file spec, agent viết hoặc cập nhật backlog.yaml (taiga-plan-backlog)">Plan backlog từ spec…</button>
+          <button id="agent-review" class="btn small" type="button" disabled title="Agent sửa manifest theo các góp ý còn mở và trả lời từng góp ý (taiga-plan-backlog)">Nhờ agent xử lý góp ý</button>
+          <button id="agent-story" class="btn small" type="button" disabled title="Tả nhu cầu trong một câu, agent soạn story vào backlog.yaml (taiga-create-user-story)">Tạo user story…</button>
+          <span id="agent-status" class="agent-status" aria-live="polite"></span>
+        </div>
         <section class="summary" id="summary" aria-label="Tổng quan"></section>
 
         <main class="layout">
@@ -234,10 +242,16 @@
       <section class="screen" id="screen-settings" aria-label="Settings" hidden>
         <div class="screen-body">
           <h1>Settings</h1>
-          <div class="empty-state">
-            <p><strong>Chưa có thiết lập nào.</strong></p>
-            <p class="muted">Đăng nhập hoặc đăng xuất Taiga bằng nút ở góc trên bên phải.</p>
+          <h3>Agent cho nút chạy skill</h3>
+          <p class="muted">
+            Agent mà các nút <b>Plan backlog từ spec</b>, <b>Nhờ agent xử lý góp ý</b> và <b>Tạo user story</b> dùng
+            (<code>run-skill</code> headless). Ứng dụng không cài hay đăng nhập agent giúp bạn.
+          </p>
+          <div class="settings-agent" id="settings-agent" role="radiogroup" aria-label="Agent cho nút chạy skill">
+            <label><input type="radio" name="headless-agent" value="claude" checked /> claude (Claude Code)</label>
+            <label><input type="radio" name="headless-agent" value="codex" /> codex (Codex CLI)</label>
           </div>
+          <p class="muted">Đăng nhập hoặc đăng xuất Taiga bằng nút ở góc trên bên phải.</p>
           <h3>Phiên bản</h3>
           <table class="attributes" id="settings-versions"></table>
         </div>
@@ -287,6 +301,22 @@
       <div class="modal-actions">
         <button type="button" class="btn" id="result-close">Đóng</button>
       </div>
+    </dialog>
+
+    <dialog id="story-dialog" class="modal">
+      <form id="story-dialog-form" method="dialog">
+        <h2>Tạo user story</h2>
+        <p class="muted">
+          Tả nhu cầu trong một câu. Agent soạn story theo user story format vào <code>backlog.yaml</code> rồi dừng ở bước
+          hỏi xác nhận: story ở lại trong manifest để bạn review rồi đẩy lên Taiga trong ứng dụng.
+        </p>
+        <label>Nhu cầu <input id="story-description" type="text" required maxlength="1000" placeholder="Ví dụ: người duyệt muốn lọc các mục đã đổi sau khi duyệt" /></label>
+        <p class="error" id="story-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" id="story-cancel">Huỷ</button>
+          <button type="submit" class="btn primary" id="story-submit">Chạy</button>
+        </div>
+      </form>
     </dialog>
 
     <div id="toast" class="toast" role="status" hidden></div>

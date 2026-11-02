@@ -25,7 +25,9 @@
   `status`/`comment --project <slug> --json <ref> -- <…>`) bằng chính file thực thi của ứng dụng ở chế độ Node
   (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là repo đang mở, không qua shell;
 - **form `project.yaml`**: `readProjectSettings` / `saveProjectSettings` trong `dist/project-settings.js`. Form chỉ ghi
-  file trong repo, không ghi lên Taiga.
+  file trong repo, không ghi lên Taiga;
+- **nút chạy skill headless**: `tools/taiga/run-skill` của taigent kèm trong ứng dụng, chạy trong một tab terminal ở
+  repo đang mở (xem [Nút chạy skill headless](#nút-chạy-skill-headless)). Agent chỉ sửa file trong repo;
 - **setup repo**: `init --dry-run --json` (repo đã có Taigent chưa, có cũ hơn ứng dụng không) và `init --json` của
   chính taigent kèm ứng dụng, chạy như các lệnh CLI ở trên, thư mục làm việc là repo vừa tạo, clone hoặc mở (xem
   [Setup repo](#setup-repo-wizard)).
@@ -123,7 +125,8 @@ Bố cục gồm bốn phần, từ trên xuống:
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
   - **Setup repo**: tạo, clone hoặc mở repo, cài Taigent vào repo, `npm install` và checklist công cụ (xem
     [Setup repo](#setup-repo-wizard)).
-  - **Settings**: phiên bản của ứng dụng, taigent, Electron và Node. Chưa có thiết lập nào.
+  - **Settings**: agent cho các nút chạy skill headless (`claude` hoặc `codex`, lưu trong thiết lập của ứng dụng) và
+    phiên bản của ứng dụng, taigent, Electron và Node.
 
   Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở.
 - **Panel dưới đáy**: terminal (xem [Terminal](#terminal)), ẩn mặc định.
@@ -131,6 +134,8 @@ Bố cục gồm bốn phần, từ trên xuống:
 
 Mục **Backlog** gồm:
 
+- **Thanh Nhờ agent**: ba nút chạy skill headless và kết quả của lần chạy gần nhất (xem
+  [Nút chạy skill headless](#nút-chạy-skill-headless)).
 - **Thanh tổng quan**: số epic/story/task/issue; *Mới* (chưa có trên Taiga) và *Đã đẩy*; *Đạt*, *Cần sửa*, *Chưa duyệt*,
   *Đã đổi sau khi duyệt*; số góp ý chưa xử lý; kết quả `taigent validate` (bấm *Manifest lỗi* để xem từng lỗi).
 - **Cây bên trái**: epic → story → task, rồi nhóm **Issues** (các issue của `backlog.yaml`, không thuộc epic nào).
@@ -147,8 +152,9 @@ Mục **Backlog** gồm:
 1. Đọc từng mục. Ổn thì bấm **Đạt**. Cần sửa thì viết góp ý rồi bấm **Gửi góp ý** và **Cần sửa**. **Bỏ đánh giá**
    xoá verdict. Tên người duyệt là username của lần đăng nhập Taiga đã lưu, nếu chưa đăng nhập thì là tên tài khoản
    hệ điều hành.
-2. Nhờ agent xử lý góp ý (skill `taiga-plan-backlog`). Agent sửa manifest, rồi đánh dấu góp ý *Đã xử lý* và trả lời
-   ngắn. Câu trả lời hiện dưới góp ý (*Agent trả lời*). Agent không đổi verdict của bạn.
+2. Bấm **Nhờ agent xử lý góp ý** (skill `taiga-plan-backlog`, xem [Nút chạy skill headless](#nút-chạy-skill-headless)),
+   hoặc gọi skill đó trong agent của bạn. Agent sửa manifest, rồi đánh dấu góp ý *Đã xử lý* và trả lời ngắn. Câu trả
+   lời hiện dưới góp ý (*Agent trả lời*). Agent không đổi verdict của bạn.
 3. Mục đã **Đạt** mà agent sửa sau đó (nội dung ghi lên Taiga khác lúc bạn duyệt) sẽ chuyển sang
    **Đã đổi sau khi duyệt** và không còn tính là *Đạt*. Hãy xem lại rồi bấm **Đạt** lần nữa.
 4. Commit `taiga/<slug>/review.yaml` cùng manifest (mục **Git**, xem [Git](#git)) để cả team thấy kết quả review.
@@ -425,7 +431,7 @@ tự đổi số cột và số dòng theo panel và báo cho process.
 - **Đóng tab (×) thì kill cả cây process** của tab: shell, agent và mọi process con của chúng (`taskkill /T /F` trên
   Windows, cả process group trên macOS). **Thoát ứng dụng thì kill mọi cây process** của mọi tab trước khi thoát.
 - Tab **skill** do ứng dụng mở (chạy một lệnh cho trước, ví dụ một lần chạy skill headless) có thêm nút **Huỷ**: kill
-  cả cây process nhưng giữ tab để bạn đọc output.
+  cả cây process nhưng giữ tab để bạn đọc output; tab ghi *Đã huỷ lần chạy*.
 
 Đăng nhập Taiga trong ứng dụng bằng hộp thoại **Đăng nhập**, không gõ mật khẩu vào tab terminal. Lần đăng nhập đó
 dùng chung với `npx taigent` và agent chạy trong terminal.
@@ -436,6 +442,36 @@ cwd, title, command: { file, args, env? } }` chạy thẳng lệnh đó trong pt
 `cancel()` (kill cả cây process), `exited` (Promise `{ exitCode, signal?, cancelled }`) và `onData(listener)`.
 Renderer tự hiện panel và chọn tab mới. Lệnh cần shell (ví dụ `irm … | iex` khi cài công cụ) dùng
 `command: shellRun('<lệnh>')`: shell của tab chạy lệnh đó rồi vẫn mở để bạn gõ tiếp.
+
+## Nút chạy skill headless
+
+Thanh **Nhờ agent** ở đầu mục Backlog có ba nút. Mỗi nút chạy một skill Taigent không tương tác, bằng agent chọn trong
+**Settings** (`claude` hoặc `codex`, mặc định `claude`; `omp` chỉ dùng được trong terminal):
+
+| Nút | Skill | Agent làm gì |
+|---|---|---|
+| **Plan backlog từ spec…** | `taiga-plan-backlog` | Bạn chọn file spec (thường trong repo); agent viết hoặc cập nhật `backlog.yaml` của dự án đang mở (chưa mở dự án thì skill tự chọn hoặc tạo) |
+| **Nhờ agent xử lý góp ý** | `taiga-plan-backlog` | Sửa manifest theo các góp ý còn mở trong `review.yaml` và trả lời từng góp ý |
+| **Tạo user story…** | `taiga-create-user-story` | Bạn tả nhu cầu trong một câu; agent soạn một story theo user story format dưới epic hợp nhất, ghi vào `backlog.yaml` rồi dừng ở bước hỏi xác nhận: story ở lại trong manifest |
+
+- Mỗi lần chạy mở một tab **skill** trong [panel terminal](#terminal), chạy `run-skill` của taigent kèm trong ứng dụng
+  (cùng version với ứng dụng) với thư mục làm việc là repo đang mở. `run-skill` dùng `.agents/skills/` và allowlist
+  `tools/taiga/allowlist.txt` của chính repo đó (do `taigent init` cài), nên lần chạy chỉ được dùng đúng các lệnh trong
+  allowlist, như khi chạy `run-skill` ngoài ứng dụng ([docs/headless.md](headless.md#taigent-desktop-buttons)).
+  Repo chưa có allowlist thì `run-skill` dừng với mã thoát 2 và nhắc chạy `npx taigent init`.
+- **Huỷ** trên tab kill cả cây process (agent và mọi process con); tab ghi *Đã huỷ lần chạy*.
+- Chạy xong, thanh Nhờ agent báo **xong** (mã thoát 0), **lỗi** kèm mã thoát và dòng lỗi cuối của output, hoặc **đã
+  huỷ**. Cây, form đang mở và màn hình review tự cập nhật theo file agent sửa (ứng dụng theo dõi `taiga/<slug>/`);
+  dự án agent vừa tạo hiện trong danh sách **Dự án**.
+- Mỗi lúc chỉ có một lần chạy: các nút tắt cho tới khi lần chạy đang có kết thúc.
+- **Không nút nào apply, upload hay bootstrap.** Yêu cầu gửi agent luôn ghi rõ không chạy các lệnh đó, và một lần
+  chạy headless không có cách nào nhận lời đồng ý mà `--yes` cần. Muốn lên Taiga, review rồi bấm **Đẩy lên Taiga** như
+  mọi thay đổi khác.
+- Đường dẫn spec và câu mô tả story đi vào yêu cầu gửi agent: không được chứa dấu ngoặc kép (`"`) hay xuống dòng.
+- Ứng dụng không cài, không đăng nhập agent. Agent chưa cài thì tab báo `run-skill: <agent> is not installed` (mã thoát
+  2). Agent cần lần đăng nhập Taiga (`npx taigent login` hoặc hộp thoại **Đăng nhập**) và MCP server `taiga` đã duyệt.
+- Kiểm tra mà không chạy agent: mở ứng dụng với biến môi trường `TAIGENT_RUN_SKILL_DRY_RUN=1`. Khi đó các nút chạy
+  `run-skill --dry-run`, tab chỉ in lệnh sẽ chạy (mảng JSON). Smoke dùng cách này.
 
 ## Đóng gói
 
@@ -501,7 +537,7 @@ Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng 
 không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng, ứng dụng mở vào mục Backlog và gợi ý *Chưa mở
 repo* trên thanh trên cùng, mở repo, chụp
 cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
-đẩy bị chặn, đi qua Settings (chỉ có trạng thái trống, không có nút; phím `j` không đổi
+đẩy bị chặn, đi qua Settings (phím `j` không đổi
 mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
 đổi sau khi duyệt*, thử phím `j`/`k`, rồi (chỉ với fixture) mở issue trong nhóm *Issues* của cây, kiểm tra phân loại
 và nhãn *Mới*, đặt *Đạt* và kiểm tra `review.yaml`. Sau đó là phần form: tạo epic (key gợi ý, custom attribute) và task bằng form,
@@ -557,9 +593,20 @@ kiểm tra shell thấy đúng số cột và dòng mới; chạy một process 
 Phần này để lại một shell chạy `ping`. Sau phần setup repo, script thoát ứng dụng và kiểm tra mọi process con của ứng
 dụng đã dừng.
 
-Phần setup repo (`scripts/smoke-wizard.mjs`) chạy cuối, trên một thư mục tạm. Nó đặt vào thư mục đầu tiên của `PATH`
-của ứng dụng: một `codex` giả dạng file `.cmd` mà `npm install -g` viết (in `codex-cli 9.9.9-smoke`), một `claude` giả
-không bao giờ trả lời `--version`, và một `npm` giả (in tham số và thư mục làm việc); `omp` vẫn không có trên `PATH`.
+Phần nút chạy skill headless (`scripts/smoke-headless.mjs`) chạy ngay sau phần terminal. Ứng dụng được mở với
+`TAIGENT_RUN_SKILL_DRY_RUN=1` và một `codex` giả đứng đầu `PATH`. Script kiểm tra Settings mặc định là `claude`, bấm
+**Plan backlog từ spec…** (hộp thoại chọn file trả về `docs/headless.md`) và **Nhờ agent xử lý góp ý** với `claude`,
+chọn `codex` trong Settings (kiểm tra `settings.json` lưu `headlessAgent` mà vẫn giữ `lastRepo`) rồi bấm **Tạo user
+story…** với một câu mô tả. Mỗi lần, tab skill phải in đúng lệnh mà `run-skill --dry-run` của repo in ra cho cùng
+agent, skill và yêu cầu (gồm cả allowlist), yêu cầu phải có spec/dự án/mô tả và câu cấm apply/upload/bootstrap, và
+thanh Nhờ agent báo xong. Sau đó script bỏ `--dry-run`: `codex` giả chạy và chờ, các nút tắt trong lúc chạy, bấm
+**Huỷ** thì tab ghi *Đã huỷ lần chạy* và cả cây process đã dừng; rồi cho `codex` giả lỗi (mã thoát 3) và kiểm tra thanh
+Nhờ agent báo mã thoát và dòng lỗi cuối.
+
+Phần setup repo (`scripts/smoke-wizard.mjs`) chạy cuối, sau mục Git, trên một thư mục tạm. Nó đặt vào thư mục đầu tiên
+của `PATH` của ứng dụng (thay `codex` giả của phần headless): một `codex` giả dạng file `.cmd` mà `npm install -g`
+viết (in `codex-cli 9.9.9-smoke`), một `claude` giả không bao giờ trả lời `--version`, và một `npm` giả (in tham số và
+thư mục làm việc); `omp` vẫn không có trên `PATH`.
 Script tạo repo mới bằng wizard và kiểm tra: có `.git` và `taiga/`, repo mới là repo đang mở, `taigent init` đã cài đủ
 (chạy `init --dry-run` của taigent trong repo này không còn gì để làm, có `.mcp.json` với server `taiga`), danh sách
 file của wizard đúng bằng các file đó và đều *Tạo mới*, không có gợi ý setup. Rồi: **npm install** mở một tab terminal
@@ -588,7 +635,8 @@ mở lại repo đã setup và kiểm tra ứng dụng không yêu cầu setup l
 - Renderer chỉ mở được tab **shell** hoặc **agent** (`claude`, `codex`, `omp`), luôn ở thư mục repo đang mở. Nó không
   chọn được lệnh, tham số, thư mục hay biến môi trường. Tab chạy lệnh cho trước (kind `skill`) chỉ main process mở.
   Main process chỉ nhận các kênh terminal từ chính trang của ứng dụng (`app://taigent`), và kiểm tra kiểu từng tham
-  số.
+  số. Nút chạy skill headless chỉ chọn được một trong ba hành động; main process dựng lệnh `run-skill`, kiểm tra dự án
+  có trong repo và từ chối `"`, xuống dòng trong văn bản đưa vào yêu cầu.
 - Nội dung do agent viết (Markdown, output trong terminal) không điều khiển được shell: Markdown đã được làm sạch và
   không có script; output của terminal chỉ được xterm.js vẽ ra, không bao giờ được chạy hay chèn vào DOM dạng HTML.
 - Môi trường của tab kế thừa từ ứng dụng, không thêm token hay mật khẩu. Mật khẩu Taiga chỉ nhập trong hộp thoại

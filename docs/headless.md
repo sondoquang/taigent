@@ -27,9 +27,13 @@ tools/taiga/run-skill.sh --output-format text codex taiga-plan-backlog docs/spec
 | `--output-format text` | Plain text: Claude `--output-format text`; Codex without `--json` |
 | `--dry-run` | Print the command as a JSON array of arguments instead of running it (no agent starts) |
 
-Options go before the agent. The agent starts in the repository root (where `.mcp.json`, `.codex/config.toml`
-and the skills live) and the wrapper exits with the agent's exit code. Wrapper errors (unknown option, output
-format, agent or skill; missing arguments; agent not on `PATH`) print `run-skill: <reason>` to stderr and exit 2.
+Options go before the agent. The **repository is the current directory**: run the wrapper from the repository root,
+wherever the script itself lives (`tools/taiga/` of this repository, `node_modules/taigent/tools/taiga/` in a repository
+set up by `taigent init`, or the copy bundled in Taigent Desktop). It reads that repository's `.agents/skills/` and
+`tools/taiga/allowlist.txt` (the one `init` installed), the agent starts there (where `.mcp.json`,
+`.codex/config.toml` and the skills live), and the wrapper exits with the agent's exit code. Wrapper errors (unknown
+option, output format, agent or skill; missing arguments; no `tools/taiga/allowlist.txt` in the current directory,
+whose message names `npx taigent init`; agent not on `PATH`) print `run-skill: <reason>` to stderr and exit 2.
 Log in first with `npx taigent login` in your own terminal, on the machine that runs the wrapper (or, on a machine
 without an OS credential store, set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD`); the `taiga-setup` skill
 checks it. Both agents start the Taiga MCP server through `taigent mcp`, and `taigent` itself, with that login.
@@ -95,6 +99,28 @@ files (`test/headless.test.ts` fails when the two lists differ).
 Taigent skills and the MCP entries (`docs/cli.md` §Using the skills in another project); re-running it after a
 taigent upgrade brings them up to date.
 
+## Taigent Desktop buttons
+
+The Backlog section of Taigent Desktop has three buttons that run this wrapper (the copy bundled with the app, so its
+version matches the app) in the opened repository, with the agent chosen in **Settings** (`claude` or `codex`) and
+`--output-format text`. Each run opens a `skill` tab of the app's terminal; **Huỷ** kills its process tree
+([docs/desktop.md § Nút chạy skill headless](desktop.md#nút-chạy-skill-headless)).
+
+| Button | Skill | Skill arguments (one line) |
+|---|---|---|
+| Plan backlog từ spec… | `taiga-plan-backlog` | `Spec: <picked file, repo-relative>. Project: <open project>.` |
+| Nhờ agent xử lý góp ý | `taiga-plan-backlog` | `Xử lý các góp ý còn mở trong review.yaml của project <slug>.` |
+| Tạo user story… | `taiga-create-user-story` | `<one-line need> Project: <slug>. Tự chọn persona và epic phù hợp nhất, ghi story vào backlog.yaml rồi dừng ở bước hỏi xác nhận.` |
+
+Every request ends with `Chạy headless từ Taigent Desktop: không chờ ai trả lời, chỉ sửa file trong repo, không chạy
+apply, upload hay bootstrap.` No button runs `taiga-apply-backlog`, `taiga-upload-docs` or `taiga-bootstrap-project`,
+and a single `-p`/`exec` turn cannot carry the user's confirmation that `apply`/`upload`/`bootstrap --yes` need, so
+`taiga-create-user-story` stops at its confirmation question and the story stays in the manifest. The run gets the same
+allowlist as the wrapper outside the app: nothing is added. The app refuses `"` and line breaks in the texts it puts in
+the request (Windows PowerShell 5.1, below). On Windows the app runs the script with
+`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command`, switching the console output to UTF-8
+first; elsewhere with `/bin/sh`.
+
 ## Platform notes
 
 - **Git Bash/MSYS** would rewrite the prompt `/taiga-…` into a Windows path (`C:/Program Files/Git/taiga-…`)
@@ -103,6 +129,9 @@ taigent upgrade brings them up to date.
 - **Windows PowerShell 5.1** mangles double quotes inside arguments passed to native programs; keep `"` out of
   skill arguments there (PowerShell 7.3+ passes them correctly). The wrapper's own arguments contain none (the
   Codex overrides use TOML single-quoted strings).
+- **Windows PowerShell** writes the `--dry-run` command in the console's code page when its output is piped, so
+  non-ASCII skill arguments (Vietnamese) come out mangled in it (observed with Windows PowerShell 5.1). Set
+  `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)` first to read them, as Taigent Desktop does.
 
 ## `codex exec` and MCP approvals when unattended
 
