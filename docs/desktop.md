@@ -12,9 +12,12 @@
   ([docs/cli.md § Review](cli.md#review));
 - **đăng nhập / đăng xuất**: `storeLogin` / `removeLogin` (`dist/login.js`), dùng chung kho thông tin đăng nhập với
   `taigent login`;
-- **trạng thái đăng nhập, xem thay đổi, đẩy lên Taiga**: chạy CLI `bin/taigent.js` (`whoami --json`,
-  `plan --project <slug> --json`, `apply --project <slug> --yes --json`) bằng chính file thực thi của ứng dụng ở chế độ
-  Node (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là repo đang mở, không qua shell.
+- **trạng thái đăng nhập, xem thay đổi, đẩy lên Taiga, project trên Taiga**: chạy CLI `bin/taigent.js` (`whoami --json`,
+  `plan --project <slug> --json`, `apply --project <slug> --yes --json`, `projects --json`,
+  `bootstrap --project <slug> --dry-run --json` rồi `--yes --json`) bằng chính file thực thi của ứng dụng ở chế độ
+  Node (`ELECTRON_RUN_AS_NODE=1`), thư mục làm việc là repo đang mở, không qua shell;
+- **form `project.yaml`**: `readProjectSettings` / `saveProjectSettings` trong `dist/project-settings.js`. Form chỉ ghi
+  file trong repo, không ghi lên Taiga.
 
 ## Cài đặt
 
@@ -54,8 +57,10 @@ Bố cục gồm bốn phần, từ trên xuống:
   mục.
 - **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
   - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
-  - **Wiki**, **Taiga** (Project, Ticket của tôi, Báo cáo), **Git**: chưa có nội dung. Mỗi mục chỉ hiện một trạng thái
-    trống ghi rõ là chưa có và cách làm việc đó bằng CLI trong lúc chờ. Không có nút nào.
+  - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)). Ticket của tôi và Báo cáo chưa có:
+    màn hình ghi cách làm việc đó bằng CLI trong lúc chờ.
+  - **Wiki**, **Git**: chưa có nội dung. Mỗi mục chỉ hiện một trạng thái trống ghi rõ là chưa có và cách làm việc đó
+    bằng CLI trong lúc chờ. Không có nút nào.
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
   - **Settings**: phiên bản của ứng dụng, taigent, Electron và Node. Chưa có thiết lập nào.
 
@@ -120,6 +125,38 @@ khác.
 
 Verdict *Đạt* không thay cho bước đồng ý này: `plan`/`apply` không đọc `review.yaml`.
 
+## Project trên Taiga
+
+Mục **Taiga** › **Project** liệt kê:
+
+- các project trên Taiga mà bạn là thành viên (`taigent projects --json`, cần đăng nhập), kèm id, quyền của bạn (admin
+  hay thành viên) và trạng thái trong repo: *Có backlog.yaml*, *Có project.yaml*, *Có thư mục* hoặc *Chưa có manifest*;
+- các thư mục `taiga/<slug>/` của repo chưa có trên Taiga (*Chưa có trên Taiga*), ví dụ project vừa viết
+  `project.yaml` mà chưa bootstrap.
+
+Chưa đăng nhập hoặc Taiga lỗi thì danh sách chỉ có các thư mục của repo, kèm lý do. Bấm **Làm mới** để đọc lại.
+
+Bấm **Mở** (hoặc **Tạo project.yaml** với project chưa có manifest) để mở chi tiết project:
+
+- **trên Taiga**: id, quyền của bạn, và tên các issue type, severity, priority của project theo thứ tự trên Taiga
+  (`taigent projects --project <slug> --json`), tức các giá trị mà một issue trong `backlog.yaml` được dùng;
+- **Mở backlog**: khi thư mục có `backlog.yaml`, mở dự án đó ở mục Backlog;
+- **form `project.yaml`**: tên (`<Khách hàng/Mảng> - <Sản phẩm>`), mô tả, template, riêng tư, các module bật. Slug là
+  tên thư mục, và phải đúng slug Taiga suy ra từ tên. Lưu sẽ ghi đè đúng các trường này trong file, giữ nguyên comment,
+  thứ tự và các phần khác (tag, custom attribute, member, `wiki_home`), nên các phần đó vẫn do bạn hoặc agent
+  (skill `taiga-bootstrap-project`) viết. Trước khi ghi, ứng dụng chạy đúng luật của `taigent validate`. Lỗi ở các
+  trường của form thì không ghi và hiện từng lỗi. Lỗi ở chỗ khác chỉ được báo, không chặn việc lưu. Nếu `project.yaml`
+  đã đổi từ lúc mở form (ví dụ agent vừa sửa) thì ứng dụng từ chối lưu và cho chọn: tải lại file, hoặc ghi phần của
+  bạn lên bản mới.
+
+**Tạo project mới…** mở form trống. Lưu sẽ tạo `taiga/<slug>/project.yaml`, với slug suy ra từ tên.
+
+**Bootstrap lên Taiga…** (chỉ bật khi `project.yaml` đã lưu) chạy `taigent bootstrap --project <slug> --dry-run --json`.
+Không có gì để làm thì dừng ở đó. Có thay đổi thì ứng dụng mở hộp thoại xác nhận liệt kê từng thao tác (tạo project,
+bật module, tạo tag, custom attribute, mời member, tạo wiki home). **Bấm "Bootstrap" trong hộp thoại này chính là đồng
+ý bootstrap** (conventions §1). Chỉ sau đó ứng dụng mới chạy `taigent bootstrap --project <slug> --yes --json`.
+Bootstrap không bao giờ tắt, đổi tên hay xoá gì trên Taiga, và cần quyền admin với project đã có.
+
 ## Đóng gói
 
 ```sh
@@ -166,17 +203,19 @@ node scripts/smoke.mjs --exe "release/win-unpacked/Taigent Desktop.exe"   # bả
 
 Cả hai cách dùng cùng fixture có trong repo: `desktop/scripts/fixture/smoke-taigent-desktop/` (project
 `Smoke - Taigent Desktop`: 3 epic, 5 story theo user story format, 1 story legacy đã có trên Taiga theo `state.json`,
-5 task). Đây không phải project thật trên Taiga, nên không bootstrap hay apply nó. Muốn smoke trên manifest của mình
+5 task). Đây không phải project thật trên Taiga, nên không bootstrap (ngoài `--dry-run`) hay apply nó. Muốn smoke trên manifest của mình
 thì truyền `--project <slug> --story <key>` (chép `taiga/<slug>`).
 
 Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
 không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng và ứng dụng mở vào mục Backlog, mở repo, chụp
 cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
-đẩy bị chặn, đi qua Wiki, Taiga, Git, Settings (mỗi mục chỉ có trạng thái trống, không có nút; phím `j` không đổi
+đẩy bị chặn, đi qua Wiki, Git, Settings (mỗi mục chỉ có trạng thái trống, không có nút; phím `j` không đổi
 mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
 đổi sau khi duyệt*, thử phím `j`/`k`. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục Thay đổi
-(chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Hộp thoại xác nhận đẩy luôn được trả lời
-*Huỷ*. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
+(chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`). Sau đó script mở Taiga › Project, kiểm
+tra fixture có trong danh sách, mở form `project.yaml`, sửa mô tả, lưu và kiểm tra file giữ comment và tag. Nếu đã
+đăng nhập, script bấm *Bootstrap lên Taiga…*: `bootstrap --dry-run` chạy rồi hộp thoại xác nhận hiện ra. Mọi hộp
+thoại xác nhận (đẩy, bootstrap) luôn được trả lời *Huỷ*. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
 
 ## Bảo mật
 

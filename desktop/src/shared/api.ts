@@ -1,9 +1,12 @@
 // The contract between the main process and the renderer: what `window.taigent` (preload) exposes. Review
 // shapes come from taigent's core (`src/review.ts`, compiled to `dist/review.js`), as types only.
 
+import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
+import type { ProjectDetailReport } from '../../../src/projects.ts';
 import type { Preview, PreviewEpic, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
 
 export type { Preview, PreviewEpic, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict };
+export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
 export interface Failure {
@@ -106,6 +109,53 @@ export type ApplyOutcome =
 
 export type VerdictChoice = Verdict | 'clear';
 
+/** One row of Taiga > Project: a Taiga project the user is a member of, or a manifest directory not on Taiga yet. */
+export interface TaigaProjectRow {
+  slug: string;
+  /** Taiga's name, else project.yaml's. */
+  name?: string;
+  /** Set for a project on Taiga (`taigent projects --json`). */
+  taiga?: { id: number; admin: boolean };
+  /** `<manifests>/<slug>/` exists. */
+  manifest: boolean;
+  hasProjectYaml: boolean;
+  hasBacklog: boolean;
+}
+
+export interface TaigaProjectsOverview {
+  rows: TaigaProjectRow[];
+  /** Why the Taiga projects are missing from `rows` (not logged in, Taiga unreachable…); unset when they are listed. */
+  taigaMessage?: string;
+}
+
+/** One project opened in Taiga > Project: its project.yaml for the form and, when on Taiga, its issue values. */
+export interface TaigaProjectDetail {
+  slug: string;
+  file: ProjectSettingsFile;
+  hasBacklog: boolean;
+  /** `taigent projects --project <slug> --json`; unset when the project is not on Taiga or Taiga could not be read. */
+  taiga?: ProjectDetailReport;
+  taigaMessage?: string;
+}
+
+/** A project.yaml save from the form: `slug` unset for a new project (derived from the name). */
+export interface ProjectSettingsInput {
+  slug?: string;
+  settings: ProjectSettings;
+  baseDigest: string | null;
+}
+
+export interface BootstrapReport {
+  project: { id: number; slug: string };
+  operations: { action: string; type: string; result: string }[];
+  summary: { created: number; updated: number; unchanged: number };
+}
+
+export type BootstrapOutcome =
+  | { status: 'no-changes' }
+  | { status: 'cancelled' }
+  | { status: 'bootstrapped'; report: BootstrapReport };
+
 export interface TaigentApi {
   getState(): Promise<AppState>;
   /** Shows the folder dialog; undefined when cancelled. */
@@ -123,6 +173,13 @@ export interface TaigentApi {
   openExternal(url: string): Promise<void>;
   /** Subscribes to live refreshes of the open project; returns the unsubscribe function. */
   onProjectChanged(listener: (view: Result<ProjectView>) => void): () => void;
+  /** Taiga > Project: the user's Taiga projects (`taigent projects --json`) and the repository's manifest directories. */
+  listTaigaProjects(): Promise<Result<TaigaProjectsOverview>>;
+  readTaigaProject(slug: string): Promise<Result<TaigaProjectDetail>>;
+  /** Writes the form into project.yaml; refused (`conflict`) when the file is no longer the one `baseDigest` names. */
+  saveProjectSettings(input: ProjectSettingsInput): Promise<Result<SaveProjectSettingsResult>>;
+  /** `bootstrap --dry-run --json`, a native confirmation listing the operations, then `bootstrap --yes --json`. */
+  bootstrapProject(slug: string): Promise<Result<BootstrapOutcome>>;
 }
 
 export const CHANNELS = {
@@ -139,4 +196,8 @@ export const CHANNELS = {
   apply: 'taigent:apply',
   openExternal: 'taigent:open-external',
   projectChanged: 'taigent:project-changed',
+  listTaigaProjects: 'taigent:list-taiga-projects',
+  readTaigaProject: 'taigent:read-taiga-project',
+  saveProjectSettings: 'taigent:save-project-settings',
+  bootstrapProject: 'taigent:bootstrap-project',
 } as const;

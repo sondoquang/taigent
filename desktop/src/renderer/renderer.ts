@@ -18,7 +18,8 @@ import type {
   VerdictChoice,
 } from '../shared/api.ts';
 import { renderMarkdown } from './markdown.ts';
-import { currentSection, onSectionChange, wireNavigation } from './navigation.ts';
+import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
+import { mountTaigaProjects } from './taiga-projects.ts';
 
 declare global {
   interface Window {
@@ -774,6 +775,19 @@ function wire(): void {
   api.onProjectChanged((result) => {
     if (result.ok && result.value.slug !== state.view?.slug) return;
     applyView(result);
+  });
+  mountTaigaProjects({
+    api,
+    repoRoot: () => state.repo?.root,
+    async openBacklog(slug) {
+      // A project.yaml or backlog.yaml written since the repository was read: list it in the picker first.
+      const repo = await api.refreshRepo();
+      if (repo.ok) state.repo = repo.value;
+      await openProject(slug);
+      showSection('backlog');
+    },
+    toast,
+    failureBlock,
   });
 }
 
