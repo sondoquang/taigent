@@ -19,6 +19,7 @@ import {
   type RepoInfo,
   type Result,
   type SaveItemRequest,
+  type SaveWikiPageRequest,
   type VerdictChoice,
 } from '../shared/api.ts';
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
@@ -28,6 +29,7 @@ import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
 import { readTaigaReport } from './taiga-report.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
+import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -285,6 +287,9 @@ function registerIpc(): void {
   handle(CHANNELS.readBacklog, async (slug: string, item?: ItemRef) => readBacklog(requireRepo(), slug, item));
   handle(CHANNELS.saveItem, async (slug: string, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
   handle(CHANNELS.removeItem, async (slug: string, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
+  handle(CHANNELS.readWiki, async (slug: string) => readWiki(requireRepo(), slug));
+  handle(CHANNELS.saveWikiPage, async (slug: string, request: SaveWikiPageRequest) => saveWikiPage(requireRepo(), slug, request));
+  handle(CHANNELS.uploadWiki, async (slug: string) => uploadWiki(requireRepo(), slug, window!));
   handle(CHANNELS.listTaigaProjects, async () => listTaigaProjects(requireRepo()));
   handle(CHANNELS.readTaigaProject, async (slug: string) => readTaigaProject(requireRepo(), slug));
   handle(CHANNELS.saveProjectSettings, async (input: ProjectSettingsInput) => saveProjectFile(requireRepo(), input));

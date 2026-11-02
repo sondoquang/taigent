@@ -95,6 +95,12 @@ export interface CliError {
   kind?: string;
   message: string;
   issues?: { file: string; path: string; rule: string; message: string }[];
+  /** HTTP status of a `taiga` or `conflict` error. */
+  status?: number | null;
+  /** What a `conflict` stopped on, e.g. `wiki:<slug>`. */
+  key?: string | null;
+  /** The file Taiga refused as too large (`upload`). */
+  file?: string;
 }
 
 /** The `--json` body of a run, or its `{ error }` (stdout), falling back to the `taigent: <message>` stderr lines. */
