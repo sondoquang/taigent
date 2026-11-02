@@ -22,12 +22,19 @@ export interface ProjectsReport {
   projects: ProjectEntry[];
 }
 
-/** `projects --project <slug>`: the project and the names of its issue values, in Taiga's order. */
+/** A user story status of a project: what `taigent status` accepts, and whether moving a ticket to it closes the ticket. */
+export interface StoryStatusEntry {
+  name: string;
+  isClosed: boolean;
+}
+
+/** `projects --project <slug>`: the project, the names of its issue values and its user story statuses, in Taiga's order. */
 export interface ProjectDetailReport {
   project: ProjectEntry;
   issueTypes: string[];
   severities: string[];
   priorities: string[];
+  storyStatuses: StoryStatusEntry[];
 }
 
 async function isDirectory(path: string): Promise<boolean> {
@@ -50,17 +57,23 @@ export async function readProjects(client: TaigaClient, manifestsRoot: string): 
   };
 }
 
-/** One visible project with its issue types, severities and priorities; exit 5 (TaigaError) when it is not visible. */
+/** One visible project with its issue values and user story statuses; exit 5 (TaigaError) when it is not visible. */
 export async function readProjectDetail(client: TaigaClient, slug: string, manifestsRoot: string): Promise<ProjectDetailReport> {
   const project = await client.findProjectBySlug(slug);
   if (!project) throw new TaigaError(`project "${slug}" not found on ${client.apiUrl} (or not visible to this user)`, 404);
   const names = (field: IssueValueField) => client.listIssueValues(field, project.id).then((values) => values.map((value) => value.name));
-  const [issueTypes, severities, priorities] = await Promise.all([names('type'), names('severity'), names('priority')]);
+  const [issueTypes, severities, priorities, statuses] = await Promise.all([
+    names('type'),
+    names('severity'),
+    names('priority'),
+    client.listStoryStatuses(project.id),
+  ]);
   return {
     project: { id: project.id, slug: project.slug, name: project.name, admin: project.iAmAdmin, manifest: await isDirectory(join(manifestsRoot, project.slug)) },
     issueTypes,
     severities,
     priorities,
+    storyStatuses: statuses.map(({ name, isClosed }) => ({ name, isClosed })),
   };
 }
 
@@ -83,6 +96,7 @@ export function formatProjectDetailText(report: ProjectDetailReport, manifestsRo
     `Issue types: ${list(report.issueTypes)}`,
     `Severities: ${list(report.severities)}`,
     `Priorities: ${list(report.priorities)}`,
+    `User story statuses: ${list(report.storyStatuses.map((status) => (status.isClosed ? `${status.name} (closed)` : status.name)))}`,
     '',
   ].join('\n');
 }

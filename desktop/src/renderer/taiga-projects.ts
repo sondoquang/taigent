@@ -46,6 +46,7 @@ let loadedFor: string | undefined;
 let detail: TaigaProjectDetail | undefined;
 let form: FormState | undefined;
 let busy = false;
+const listedListeners: ((overview: TaigaProjectsOverview) => void)[] = [];
 
 function setBusy(on: boolean): void {
   busy = on;
@@ -363,6 +364,12 @@ async function loadList(): Promise<void> {
   }
   overview = result.value;
   renderList();
+  for (const listener of listedListeners) listener(overview);
+}
+
+/** Runs `listener` each time the list is read, e.g. for Taiga > Báo cáo's project choice. */
+export function onTaigaProjectsListed(listener: (overview: TaigaProjectsOverview) => void): void {
+  listedListeners.push(listener);
 }
 
 /** Wires Taiga > Project; the list loads when the section shows for a repository it has not listed yet. */

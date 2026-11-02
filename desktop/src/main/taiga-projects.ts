@@ -23,7 +23,7 @@ import { manifestsDir } from './repo.ts';
 import { parseCliJson, runCli, taigentRoot } from './taigent.ts';
 
 /** A project slug as the CLI accepts it (`--project`); anything else never reaches a path or a command. */
-const SLUG = /^[a-z0-9][a-z0-9_-]*$/;
+export const SLUG = /^[a-z0-9][a-z0-9_-]*$/;
 
 let settingsModule: Promise<typeof ProjectSettingsModule> | undefined;
 

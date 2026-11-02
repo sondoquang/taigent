@@ -1,0 +1,7 @@
+# Wiki of the desktop smoke fixture. The smoke adds a page with the Wiki form, then runs "Đẩy wiki lên Taiga" against
+# an in-process fake Taiga (test/support/fake-taiga.ts), never a real one.
+wiki:
+  - slug: huong-dan-review # same content on the fake Taiga: skipped
+    file: pages/huong-dan-review.md
+  - slug: quy-uoc-smoke # older content on the fake Taiga: updated
+    file: pages/quy-uoc-smoke.md

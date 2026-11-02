@@ -1148,6 +1148,46 @@ textarea:focus {
   color: var(--muted);
 }
 
+/* Wiki section (wiki.ts) */
+.wiki-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.wiki-page {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.wiki-page-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.wiki-editor {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.wiki-editor textarea {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.wiki-preview {
+  max-height: 52vh;
+  overflow: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
 /* Taiga > Project (taiga-projects.ts). */
 .taiga-project-head {
   display: flex;
@@ -1205,6 +1245,18 @@ textarea:focus {
 .taiga-project-card h3 {
   margin: 16px 0 6px;
   font-size: 15px;
+}
+
+/* Taiga > Báo cáo (taiga-report.ts). */
+.taiga-report {
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.taiga-report-blocked {
+  margin: 0;
+  padding-left: 16px;
 }
 
 .project-form label {
@@ -1274,6 +1326,67 @@ textarea:focus {
 .git-commit input {
   flex: 1;
   max-width: 520px;
+}
+
+/* Taiga > Ticket của tôi (my-tickets.ts). */
+.taiga-tickets {
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.taiga-tickets .taiga-project-head {
+  flex-wrap: wrap;
+}
+
+.taiga-tickets label.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.tickets-table tr.closed td {
+  color: var(--muted);
+}
+
+.tickets-table .small {
+  font-size: 12px;
+}
+
+.ticket-status-cell {
+  white-space: nowrap;
+}
+
+.ticket-status-cell select {
+  margin-right: 6px;
+}
+
+.ticket-comment-row textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+
+.badge.due-on-time,
+.badge.due-on-track {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.badge.due-late,
+.badge.due-overdue {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.badge.due-no-due-date,
+.badge.due-unknown {
+  background: var(--gray-soft);
+  color: #4b5563;
+}
+
+#tickets-result p.ok {
+  color: var(--green);
 }
 
 /* ---- story form (src/renderer/story-form.ts) ---- */

@@ -78,14 +78,17 @@
       <section class="screen" id="screen-wiki" aria-label="Wiki" hidden>
         <div class="screen-body">
           <h1>Wiki</h1>
-          <div class="empty-state">
-            <p><strong>Chưa có màn hình Wiki.</strong></p>
-            <p class="muted">
-              Trang wiki vẫn nằm trong <code>taiga/&lt;slug&gt;/docs.yaml</code> và các file mà nó tham chiếu. Trong
-              terminal, <code>npx taigent upload --project &lt;slug&gt; --dry-run</code> cho xem trước, rồi
-              <code>--yes</code> để đẩy lên Taiga.
-            </p>
+          <p class="muted">
+            Các trang wiki khai báo trong <code>taiga/&lt;slug&gt;/docs.yaml</code>; trang mới được lưu ở
+            <code>taiga/&lt;slug&gt;/pages/&lt;slug trang&gt;.md</code>. Wiki không qua review: "Đẩy wiki lên Taiga" cho
+            xem trước những gì sẽ tạo, cập nhật và bỏ qua, rồi chỉ ghi khi bạn xác nhận.
+          </p>
+          <div class="changes-actions">
+            <button id="wiki-add" class="btn" type="button" disabled>+ Trang wiki</button>
+            <button id="wiki-upload" class="btn primary" type="button" disabled>Đẩy wiki lên Taiga</button>
           </div>
+          <div id="wiki-pages" class="wiki-pages"></div>
+          <div id="wiki-result" class="changes-result" aria-live="polite"></div>
         </div>
       </section>
 
@@ -103,11 +106,31 @@
             <div id="taiga-projects-list"></div>
             <div id="taiga-project-detail"></div>
           </div>
-          <p class="muted">
-            Ticket của tôi và Báo cáo chưa có trong ứng dụng. Trong terminal:
-            <code>npx taigent tickets --from &lt;ngày&gt; --to &lt;ngày&gt;</code> liệt kê ticket của bạn,
-            <code>npx taigent status</code> và <code>npx taigent comment</code> đổi status và comment.
-          </p>
+          <div class="taiga-tickets" id="taiga-tickets">
+            <div class="taiga-project-head">
+              <h2>Ticket của tôi</h2>
+              <div class="spacer"></div>
+              <button id="tickets-prev" class="btn ghost" type="button">‹ Tuần trước</button>
+              <button id="tickets-this-week" class="btn ghost" type="button">Tuần này</button>
+              <button id="tickets-next" class="btn ghost" type="button">Tuần sau ›</button>
+              <label class="inline">Từ <input id="tickets-from" type="date" /></label>
+              <label class="inline">đến <input id="tickets-to" type="date" /></label>
+              <button id="tickets-refresh" class="btn ghost" type="button">Làm mới</button>
+            </div>
+            <p class="muted" id="tickets-status"></p>
+            <div id="tickets-result" aria-live="polite"></div>
+            <div id="tickets-list"></div>
+          </div>
+          <div class="taiga-report" id="taiga-report">
+            <div class="taiga-project-head">
+              <h2>Báo cáo</h2>
+              <div class="spacer"></div>
+              <select id="taiga-report-project" aria-label="Project của báo cáo"></select>
+              <button id="taiga-report-run" class="btn" type="button" disabled>Xem báo cáo</button>
+            </div>
+            <p class="muted" id="taiga-report-status">Chọn project khi mục Project ở trên đã đọc xong danh sách.</p>
+            <div id="taiga-report-body"></div>
+          </div>
         </div>
       </section>
 
