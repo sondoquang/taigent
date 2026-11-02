@@ -18,7 +18,7 @@ The route most work travels. Every write to Taiga goes **plan → review → app
 
 1. **`taiga-setup`** once per machine and per project: the `taigent` CLI, the user's Taiga login (`npx taigent login`, typed by the user in their own terminal), the Taiga MCP server. Every other skill sends you back here when one of them is missing.
 2. **`taiga-bootstrap-project`** when the Taiga project does not exist yet, or lacks modules, tags, members or custom attributes: `taiga/<slug>/project.yaml` → dry run → confirm → bootstrap. Re-running only fills gaps.
-3. **`taiga-plan-backlog`** turns a spec, a PRD or a one-line request into `taiga/<slug>/backlog.yaml` (epics, stories, tasks). Files only: it reads Taiga to avoid duplicating hand-made work, and patches the existing manifest in place so every key survives. It also answers the review comments in `taiga/<slug>/review.yaml`.
+3. **`taiga-plan-backlog`** turns a spec, a PRD, a one-line request or a bug report into `taiga/<slug>/backlog.yaml` (epics, stories, tasks, and issues: bugs, questions, enhancements outside the epic tree). Files only: it reads Taiga to avoid duplicating hand-made work, and patches the existing manifest in place so every key survives. It also answers the review comments in `taiga/<slug>/review.yaml`.
 4. **Review**: the Business Analyst / Product Owner reviews the backlog in Taigent Desktop (`docs/desktop.md`) or with `taigent preview` (offline, one Markdown page of what apply would write), approving items or requesting changes with comments in `taiga/<slug>/review.yaml`; `taiga-plan-backlog` answers the comments by editing the manifest. The human also reads `git diff taiga/<slug>/` like a code diff. An approved item is not consent to apply.
 5. **`taiga-apply-backlog`**: `taigent plan` → shows it → confirm → `taigent apply --yes`. Commit `taiga/<slug>/state.json` with the manifest.
 
@@ -40,13 +40,14 @@ Starting situations, and where each merges onto the flow.
 - **Add one user story under an existing epic** → `taiga-create-user-story`.
 - **The BA/PO left review comments (Taigent Desktop or `review.yaml`)** → `taiga-plan-backlog`: it edits the manifest per comment and marks each resolved with a reply; it never changes verdicts.
 - **New or changed requirement** → `taiga-plan-backlog` with the request as the spec, then review and `taiga-apply-backlog`.
+- **A bug, a question or a small enhancement to file on Taiga** → `taiga-plan-backlog`: it writes an issue in the `issues` list of `backlog.yaml`, with the project's own type, severity and priority names (conventions §6.4), then review and `taiga-apply-backlog`. Never MCP `createIssue`, nor the banned `batchCreateIssues`.
 - **"How far along are we?" or "how many …?"** → `taiga-status-report`.
 - **"What are my tickets this week?" or "what did I close last week?"** → `taiga-my-tickets`.
 - **"Close #84", "move the login ticket to Ready for test", "comment on #84"** → `taiga-update-ticket`.
 - **Daily ticket messages and chat on Telegram** → README §6 (Bun, bot, plugin, pairing, permissions, schedule), set up once per user and machine; how it works in `docs/cli.md` §Telegram.
 - **Remove, rename or move items on Taiga** → the CLI never deletes. An item dropped from the manifest becomes an **orphan** that `plan` reports; a moved story keeps its old epic link, reported as `staleLinks`. A human cleans both up on Taiga. Keys never change after apply: a new key is a new item.
-- **Status of your own tickets** → `taiga-update-ticket`. Assignee, sprint, points, and the status of other people's items: people set these on Taiga; manifests carry none of them.
-- **A command fails** → branch on its exit code (`docs/cli.md` §Exit codes). Exit 4: the manifest breaks a convention; `taigent validate` lists each problem with its rule. Exit 2 saying `not logged in`, or exit 5 naming a refused login, `TAIGA_*` variable or expired stored login: `taiga-setup`. Never ask for a password: the user runs `npx taigent login` themselves.
+- **Status of your own tickets** → `taiga-update-ticket`. Assignee, sprint, points, and the status of other people's items and of issues: people set these on Taiga; manifests carry none of them.
+- **A command fails** → branch on its exit code (`docs/cli.md` §Exit codes). Exit 4: the manifest breaks a convention; `taigent validate` lists each problem with its rule (`plan`/`apply` add `story-format` for a new legacy story and `issue-value` for an issue type, severity or priority the project does not define). Exit 2 saying `not logged in`, or exit 5 naming a refused login, `TAIGA_*` variable or expired stored login: `taiga-setup`. Never ask for a password: the user runs `npx taigent login` themselves.
 
 ## How we work
 
@@ -54,7 +55,7 @@ The rules every skill above follows; `docs/taiga/conventions.md` holds them in f
 
 - **Writes go only through the `taigent` CLI.** Taiga MCP is for reading, reports and comments (§1). Some MCP tools are broken and **banned**; the others that write skip the `src:<key>` tag that prevents duplicates (§10).
 - **`--yes` only after an explicit confirmation** of the exact plan or dry run shown, re-planned just before applying. The writing skills (`taiga-apply-backlog`, `taiga-create-user-story`, `taiga-bootstrap-project`, `taiga-upload-docs`) run only when you invoke them. `taigent status`/`comment` take no `--yes`: they edit one of your own tickets that the request names.
-- **Manifests follow the conventions**: project name and slug (§2), template and modules (§3), prefixed tags (§4), item keys (§5), story and task templates (§6), wiki slugs (§8), attachment names (§9). `taigent validate` checks §2–§5 and §8–§9 offline; §6 is on the author. Reports use the exact status names of §7.
+- **Manifests follow the conventions**: project name and slug (§2), template and modules (§3), prefixed tags (§4), item keys (§5), story, task and issue templates (§6), wiki slugs (§8), attachment names (§9). `taigent validate` checks §2–§5 and §8–§9 offline; §6 is on the author, except that `plan`/`apply` check a new story's format and an issue's type, severity and priority names against Taiga. Reports use the exact status names of §7.
 - **Run `npx taigent` from the project root** whose `package.json` is taigent's own or lists `taigent` as a dependency; elsewhere npx would fetch an unrelated package.
 
 ## CLI map
