@@ -10,9 +10,10 @@
 - **xem trước, duyệt, góp ý**: `buildPreview`, `setVerdict`, `addComment`, `saveReview` trong `dist/review.js`.
   Không cần mạng, không cần đăng nhập. Kết quả ghi vào `taiga/<slug>/review.yaml`
   ([docs/cli.md § Review](cli.md#review));
-- **thêm, sửa, xoá epic và task bằng form**: `readManifestFile`, `saveItem`, `removeItem` trong `dist/edit.js`
-  (API sửa manifest, [docs/cli.md § Code map](cli.md#code-map)). Chỉ sửa `backlog.yaml` trong repo, không cần mạng;
-  muốn lên Taiga vẫn phải review rồi đẩy như mọi thay đổi khác;
+- **thêm, sửa, xoá epic, story và task bằng form**: `readManifestFile`, `readItem`, `saveItem`, `removeItem` trong
+  `dist/edit.js` (API sửa manifest, [docs/cli.md § Code map](cli.md#code-map)). Chỉ sửa `backlog.yaml` trong repo, không
+  cần mạng; muốn lên Taiga vẫn phải review rồi đẩy như mọi thay đổi khác. Bản xem trước của form story dùng mẫu story
+  của lõi (`src/story-template.ts`, cùng hàm với `apply` và `taigent preview`);
 - **tạo và sửa trang wiki**: `readWikiPages`, `saveWikiPage` trong `dist/edit.js`. Chỉ sửa `docs.yaml` và file Markdown
   của trang trong repo, không cần mạng. Wiki không qua review;
 - **đăng nhập / đăng xuất**: `storeLogin` / `removeLogin` (`dist/login.js`), dùng chung kho thông tin đăng nhập với
@@ -98,19 +99,20 @@ Mục **Backlog** gồm:
    **Đã đổi sau khi duyệt** và không còn tính là *Đạt*. Hãy xem lại rồi bấm **Đạt** lần nữa.
 4. Commit `taiga/<slug>/review.yaml` cùng manifest (mục **Git**, xem [Git](#git)) để cả team thấy kết quả review.
 
-## Thêm, sửa, xoá epic và task
+## Thêm, sửa, xoá epic, story và task
 
 Form chỉ sửa `taiga/<slug>/backlog.yaml` trong repo. Không có gì được ghi lên Taiga cho tới khi bạn review rồi bấm
 **Đẩy lên Taiga**.
 
 - **+ Epic** (trên cây bên trái) mở form epic: tiêu đề, key, mô tả (Markdown), tag (cách nhau bằng dấu phẩy) và các
   custom attribute mà `project.yaml` khai báo cho epic (`custom_attributes.epic`), nhập theo đúng tên đó.
+- Ở một epic, **+ Story** mở form story (xem [Form story](#form-story)).
 - Ở một story, **+ Task** mở form task: story cha, tiêu đề, key, định nghĩa done, tag. Đổi story cha trong form là
   chuyển task sang story đó.
-- Ở một epic hoặc task, **Sửa** mở lại form với nội dung hiện có. Form story thuộc ticket khác.
-- **Key** được gợi ý theo quy ước khi bạn gõ tiêu đề: epic là vài chữ đầu của tiêu đề (`SOAN-BACKLOG`), task là
-  `<STORY>-<bước>`. Bạn sửa được key; trùng key có sẵn thì form báo ngay. Item đã có trên Taiga (`state.json`) bị khoá
-  key, vì đổi key là tạo item mới và biến item cũ thành mồ côi.
+- Ở một epic, story hoặc task, **Sửa** mở lại form với nội dung hiện có.
+- **Key** được gợi ý theo quy ước khi bạn gõ tiêu đề: epic là vài chữ đầu của tiêu đề (`SOAN-BACKLOG`), story là
+  `<EPIC>-<việc>`, task là `<STORY>-<bước>`. Bạn sửa được key; trùng key có sẵn thì form báo ngay. Item đã có trên
+  Taiga (`state.json`) bị khoá key, vì đổi key là tạo item mới và biến item cũ thành mồ côi.
 - **Lưu** chạy cùng luật với `taigent validate`. Lỗi của chính item hiện ngay dưới ô sai (kèm rule, ví dụ
   `tag-prefix`); lỗi có sẵn ở item khác không chặn lưu. File được sửa tại chỗ: comment, thứ tự, cách viết của phần
   không đụng tới (dấu ngoặc kép, `[a, b]`, xuống dòng CRLF) giữ nguyên.
@@ -122,6 +124,33 @@ Form chỉ sửa `taiga/<slug>/backlog.yaml` trong repo. Không có gì được
 - **Xoá** một item hỏi xác nhận và liệt kê các mục con bị xoá theo (xoá story thì xoá cả task của nó). Nếu có mục đã
   có trên Taiga, hộp thoại cảnh báo chúng sẽ thành **mồ côi**: xoá khỏi manifest không xoá trên Taiga, và *Xem thay đổi
   trên Taiga* sẽ báo chúng là mồ côi để người quyết định.
+
+### Form story
+
+Form story có hai cột: bên trái là các ô, bên phải là **Xem trước**.
+
+- **Thuộc epic**: đổi epic là chuyển story (kèm task) sang epic đó. Tiêu đề, key (gợi ý `<EPIC>-<việc>`).
+- **User story**: ba ô *As a*, *I want to*, *so that*, đều bắt buộc.
+- **Tiêu chí chấp nhận**: các scenario Gherkin. Mỗi scenario có tên, một hoặc nhiều *Given* (**+ Given**, nút `×`
+  xoá một Given), đúng một *When* và một *Then*. **+ Scenario** thêm scenario; `↑`/`↓` đổi thứ tự (thứ tự trên Taiga
+  là thứ tự này); **Xoá scenario** bỏ một scenario. Story luôn còn ít nhất một scenario và mỗi scenario ít nhất một
+  Given; Given để trống không được lưu.
+- **Mô tả thêm** (Markdown, tuỳ chọn), **Spec** (đường dẫn hoặc link, tuỳ chọn), tag và custom attribute mà
+  `project.yaml` khai báo cho story (`custom_attributes.story`).
+- **Xem trước** cập nhật theo từng phím gõ. Nội dung là đúng mô tả mà `apply` sẽ ghi lên Taiga, cũng là mô tả mà
+  `taigent preview` in ra cho story đó: form chạy cùng mẫu story của lõi trên chính các giá trị sẽ lưu, rồi hiển thị
+  bằng cùng renderer và cùng bộ làm sạch DOMPurify như màn hình review. Mở **Markdown** để xem chuỗi gốc.
+- **Lưu** báo lỗi ngay tại ô hỏng, theo luật của `taigent validate`: ví dụ When để trống hiện `[required]` ngay dưới ô
+  When của đúng scenario đó, thiếu *As a* hiện dưới ô *As a*.
+
+Story mới luôn theo user story format (`use_case` + `scenarios`), vì `plan`/`apply` từ chối tạo story legacy.
+
+**Story legacy** (`description` + `acceptance_criteria`, chỉ còn cho story đã có trên Taiga) mở ở chế độ legacy: ô mô
+tả và danh sách tiêu chí chấp nhận (thêm, sửa, xoá). Lưu ở chế độ này không đổi format, nên diff chỉ chứa đúng thay
+đổi của bạn. Muốn chuẩn hoá thì bấm **Chuyển sang user story format**: form chuyển sang chế độ user story, mỗi tiêu
+chí cũ thành tên của một scenario để bạn điền Given/When/Then, rồi điền *As a / I want to / so that*. Chỉ khi bấm
+**Lưu**, `acceptance_criteria` mới được thay bằng `use_case` + `scenarios`; *Xem thay đổi trên Taiga* (`plan`) khi đó
+báo story được cập nhật `description`. Huỷ form thì story giữ nguyên legacy.
 
 ## Wiki
 
@@ -351,7 +380,13 @@ và nhãn *Mới*, đặt *Đạt* và kiểm tra `review.yaml`. Sau đó là ph
 kiểm tra `backlog.yaml` (giữ comment, task nằm dưới đúng story) và trạng thái *Chưa duyệt*; kiểm tra key của epic đã
 có trên Taiga bị khoá; mở form sửa task, giả lập agent sửa `backlog.yaml`, kiểm tra form báo file đổi, lưu bị từ chối
 (file vẫn là bản của agent), hộp thoại conflict hiện thay đổi, rồi *Áp lại*; kiểm tra cảnh báo mồ côi khi xoá story
-đã có trên Taiga (bấm *Huỷ*) và xoá task mới. Rồi tới phần wiki: mục Wiki liệt kê 2 trang, form từ chối slug sai
+đã có trên Taiga (bấm *Huỷ*) và xoá task mới. Tiếp theo là form story: tạo story dưới epic `PUSH` có hai scenario (một
+scenario có hai Given), thử thêm, chuyển lên và xoá một scenario, lưu khi một When còn trống để thấy lỗi `[required]`
+ngay dưới ô đó (file không đổi), rồi lưu thật; kiểm tra `backlog.yaml` đúng schema (`use_case`, `scenarios`), chạy
+`taigent validate` (exit 0), so bản xem trước của form với mô tả của story trong `taigent preview --json` (phải bằng
+nhau) và với phần mô tả ở màn hình review (cùng HTML). Sau đó sửa story legacy `REVIEW-MARKDOWN` (vẫn là
+`acceptance_criteria`), rồi bấm *Chuyển sang user story format*, điền Given/When/Then, lưu và kiểm tra lại `validate`
+và `preview`. Rồi tới phần wiki: mục Wiki liệt kê 2 trang, form từ chối slug sai
 (rule `wiki-slug`), tạo trang `trang-smoke` (kiểm tra `pages/trang-smoke.md` và entry cuối `docs.yaml`, comment giữ
 nguyên), sửa trang đó (slug bị khoá, chỉ file trang đổi). *Đẩy wiki lên Taiga* chạy với một Taiga giả
 (`test/support/fake-taiga.ts`, trong tiến trình của script; ứng dụng nhận `TAIGA_API_URL`/`TAIGA_USERNAME`/
