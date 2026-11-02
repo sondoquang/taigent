@@ -19,8 +19,12 @@ The earlier shape of a user story, free text with a list of acceptance criteria,
 _Avoid_: Old format
 
 **Backlog item**:
-An epic, story or task planned in a project's backlog manifest, whether or not it is on Taiga yet.
+An epic, story, task or issue planned in a project's backlog manifest, whether or not it is on Taiga yet.
 _Avoid_: Ticket (reserved for a user story assigned to you), card
+
+**Issue**:
+A bug or other problem planned as a backlog item and filed in Taiga's issues module; it stands apart from the epic → story → task tree.
+_Avoid_: Ticket, bug (when the issue's type is not Bug)
 
 **Review**:
 The Business Analyst's or Product Owner's check of the planned backlog items before they are applied to Taiga, kept in the project's `review.yaml` as verdicts and comments per item.
