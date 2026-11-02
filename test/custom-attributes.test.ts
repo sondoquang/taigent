@@ -13,6 +13,8 @@ const TREE = `epics:
     stories:
       - key: AUTH-LOGIN
         subject: User can log in
+        use_case: { as_a: user, i_want_to: log in, so_that: I see my projects }
+        scenarios: [{ scenario: Wrong password, given: [I am on the sign-in page], when: I submit a wrong password, then: I see an error }]
         custom_attributes:
           Due note: before launch
           Billable: true
@@ -137,6 +139,8 @@ test('an attribute name the project does not define fails before any write, nami
     stories:
       - key: AUTH-LOGIN
         subject: User can log in
+        use_case: { as_a: user, i_want_to: log in, so_that: I see my projects }
+        scenarios: [{ scenario: Wrong password, given: [I am on the sign-in page], when: I submit a wrong password, then: I see an error }]
         custom_attributes:
           Estimate (h): 3
 `,
