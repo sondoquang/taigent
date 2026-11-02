@@ -53,6 +53,8 @@ export interface EpicSpec extends ItemSpec {
 }
 
 export interface Backlog {
+  /** Path of the backlog.yaml it was read from, for issues found after the manifest was loaded. */
+  file: string;
   epics: EpicSpec[];
 }
 
@@ -230,5 +232,5 @@ export async function loadBacklog(path: string): Promise<Backlog> {
   });
 
   if (issues.length > 0) throw new ManifestError(issues);
-  return { epics };
+  return { file: path, epics };
 }

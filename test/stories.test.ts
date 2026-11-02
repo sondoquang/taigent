@@ -13,10 +13,20 @@ const TREE = `epics:
     stories:
       - key: AUTH-LOGIN
         subject: User can log in
-        description: As a user I want to log in so that I see my projects.
-        acceptance_criteria:
-          - Wrong password shows an error
-          - Session survives a reload
+        use_case:
+          as_a: user
+          i_want_to: log in
+          so_that: I see my projects
+        description: Single sign-on comes later.
+        scenarios:
+          - scenario: Wrong password
+            given: [I am on the sign-in page]
+            when: I submit a wrong password
+            then: I see an error
+          - scenario: Session survives a reload
+            given: [I am signed in]
+            when: I reload the page
+            then: I am still signed in
         spec: docs/specs/auth.md
         tags: [type:feature]
         tasks:
@@ -27,6 +37,9 @@ const TREE = `epics:
             subject: Login form
       - key: AUTH-LOGOUT
         subject: User can log out
+        use_case: { as_a: user, i_want_to: log out, so_that: nobody else uses my session }
+        scenarios:
+          - { scenario: Sign out, given: [I am signed in], when: I click Sign out, then: I see the sign-in page }
 `;
 
 test('apply creates stories with the description template and tags, and tasks under their parent story', async (t) => {
@@ -45,18 +58,44 @@ test('apply creates stories with the description template and tags, and tasks un
         project: project.id,
         subject: 'User can log in',
         description: [
-          'As a user I want to log in so that I see my projects.',
+          '- **As a** user',
+          '- **I want to** log in',
+          '- **so that** I see my projects',
+          '',
+          'Single sign-on comes later.',
           '',
           '## Acceptance criteria',
           '',
-          '- [ ] Wrong password shows an error',
-          '- [ ] Session survives a reload',
+          '- [ ] **Scenario:** Wrong password',
+          '  - **Given:** I am on the sign-in page',
+          '  - **When:** I submit a wrong password',
+          '  - **Then:** I see an error',
+          '- [ ] **Scenario:** Session survives a reload',
+          '  - **Given:** I am signed in',
+          '  - **When:** I reload the page',
+          '  - **Then:** I am still signed in',
           '',
           'Spec: docs/specs/auth.md',
         ].join('\n'),
         tags: ['type:feature', 'src:auth-login'],
       },
-      { project: project.id, subject: 'User can log out', description: '', tags: ['src:auth-logout'] },
+      {
+        project: project.id,
+        subject: 'User can log out',
+        description: [
+          '- **As a** user',
+          '- **I want to** log out',
+          '- **so that** nobody else uses my session',
+          '',
+          '## Acceptance criteria',
+          '',
+          '- [ ] **Scenario:** Sign out',
+          '  - **Given:** I am signed in',
+          '  - **When:** I click Sign out',
+          '  - **Then:** I see the sign-in page',
+        ].join('\n'),
+        tags: ['src:auth-logout'],
+      },
     ],
   );
   const [login] = stories;
@@ -144,7 +183,7 @@ test('changed subject, description and tags are updated with the current version
   const task = h.fake.state.tasks.find((x) => x.subject === 'Login endpoint')!;
 
   const changed = TREE.replace('subject: User can log in', 'subject: User can sign in')
-    .replace('- Session survives a reload', '- Session survives a browser restart')
+    .replace('Session survives a reload', 'Session survives a browser restart')
     .replace('tags: [type:feature]', 'tags: [type:feature, area:auth]')
     .replace('description: POST /login returns a session.', 'description: POST /sessions returns a session.');
   await h.writeManifest('demo', 'backlog.yaml', changed);
@@ -166,7 +205,7 @@ test('changed subject, description and tags are updated with the current version
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(login.subject, 'User can sign in');
-  assert.match(login.description, /- \[ \] Session survives a browser restart/);
+  assert.match(login.description, /- \[ \] \*\*Scenario:\*\* Session survives a browser restart/);
   assert.deepEqual(login.tags, ['type:feature', 'src:auth-login', 'needs-design', 'area:auth']);
   assert.equal(task.description, 'POST /sessions returns a session.');
   const patch = h.fake.requests.find((r) => r.method === 'PATCH' && r.path === `/userstories/${login.id}`);
@@ -227,7 +266,7 @@ test('items tagged src: on Taiga but gone from the manifest are reported as orph
   await applyTree(h);
   h.fake.addEpic({ project: project.id, subject: 'Legacy', tags: ['src:legacy'] });
   h.fake.addUserStory({ project: project.id, subject: 'Hand-made story', tags: ['needs-design'] });
-  const withoutLogoutAndUi = TREE.replace(/ {6}- key: AUTH-LOGOUT\n.*\n/, '').replace(/ {10}- key: AUTH-LOGIN-UI\n.*\n/, '');
+  const withoutLogoutAndUi = TREE.replace(/ {6}- key: AUTH-LOGOUT\n[\s\S]*$/, '').replace(/ {10}- key: AUTH-LOGIN-UI\n.*\n/, '');
   await h.writeManifest('demo', 'backlog.yaml', withoutLogoutAndUi);
 
   const json = await h.taigent(['plan', '--project', 'demo', '--json']);
@@ -347,12 +386,13 @@ test('a task moved to another story in the manifest is re-parented: plan shows a
 test('a story moved to another epic is linked to it; the old link is reported as stale, never removed', async (t) => {
   const h = await startHarness(t);
   h.fake.addProject({ slug: 'demo' });
-  const before = 'epics:\n  - key: AUTH\n    subject: Authentication\n    stories:\n      - { key: AUTH-LOGIN, subject: User can log in }\n  - key: ACCOUNT\n    subject: Account\n';
+  const storyYaml = '{ key: AUTH-LOGIN, subject: User can log in, use_case: { as_a: user, i_want_to: log in, so_that: I see my projects }, scenarios: [{ scenario: S, given: [g], when: w, then: t }] }';
+  const before = `epics:\n  - key: AUTH\n    subject: Authentication\n    stories:\n      - ${storyYaml}\n  - key: ACCOUNT\n    subject: Account\n`;
   await h.writeManifest('demo', 'backlog.yaml', before);
   assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
   const [auth, account] = h.fake.state.epics;
   const story = h.fake.state.userStories[0]!;
-  const after = 'epics:\n  - key: AUTH\n    subject: Authentication\n  - key: ACCOUNT\n    subject: Account\n    stories:\n      - { key: AUTH-LOGIN, subject: User can log in }\n';
+  const after = `epics:\n  - key: AUTH\n    subject: Authentication\n  - key: ACCOUNT\n    subject: Account\n    stories:\n      - ${storyYaml}\n`;
   await h.writeManifest('demo', 'backlog.yaml', after);
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
