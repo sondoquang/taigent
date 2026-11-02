@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { type BacklogItem, type EditResult, readItem, readManifestFile, readWikiPages, removeItem, saveItem, saveWikiPage } from '../src/edit.ts';
-import { suggestKey } from '../src/manifest/conventions.ts';
+import { issueKeyPrefix, suggestKey } from '../src/manifest/conventions.ts';
+import type { Plan } from '../src/planner.ts';
 import { buildPreview, REVIEW_FILE, saveReview, setVerdict } from '../src/review.ts';
+import { OFFLINE, startHarness } from './support/harness.ts';
+import { LEGACY, seedLegacy } from './support/legacy-story.ts';
 
 const BACKLOG = `# Backlog of the demo project.
 epics:
@@ -233,6 +236,29 @@ test('removeItem deletes a story with its tasks and names the removed keys alrea
   assert.ok(!(await backlogText(dir)).includes('stories:'), 'an emptied stories list is removed');
 });
 
+test('removeItem deletes an epic with its stories and tasks; those already on Taiga are orphaned', async (t) => {
+  const dir = await project(t);
+  const epic = saved(await removeItem(dir, { baseDigest: await digest(dir), type: 'epic', key: 'AUTH' }));
+  assert.deepEqual(epic.removed, ['AUTH', 'AUTH-LOGIN', 'AUTH-LOGIN-API', 'AUTH-LOGIN-UI']);
+  assert.deepEqual(epic.orphaned, ['AUTH', 'AUTH-LOGIN', 'AUTH-LOGIN-API']);
+  assert.equal(await backlogText(dir), `# Backlog of the demo project.\nepics:\n${BACKLOG.slice(BACKLOG.indexOf('  - key: BILLING'))}`);
+  assert.equal(await readFile(join(dir, 'state.json'), 'utf8'), STATE, 'state.json is left to apply');
+  assert.equal(epic.digest, await digest(dir));
+});
+
+test('removeItem deletes a task alone; removing the last task removes the tasks list', async (t) => {
+  const dir = await project(t);
+  const form = saved(await removeItem(dir, { baseDigest: await digest(dir), type: 'task', key: 'AUTH-LOGIN-UI' }));
+  assert.deepEqual([form.removed, form.orphaned], [['AUTH-LOGIN-UI'], []]);
+  assert.equal(await backlogText(dir), BACKLOG.replace('          - key: AUTH-LOGIN-UI # form only\n            subject: Login form\n', ''));
+
+  const api = saved(await removeItem(dir, { baseDigest: form.digest, type: 'task', key: 'AUTH-LOGIN-API' }));
+  assert.deepEqual([api.removed, api.orphaned], [['AUTH-LOGIN-API'], ['AUTH-LOGIN-API']]);
+  const text = await backlogText(dir);
+  assert.ok(!text.includes('tasks:'), 'an emptied tasks list is removed');
+  assert.equal(text, BACKLOG.slice(0, BACKLOG.indexOf('        tasks:')) + BACKLOG.slice(BACKLOG.indexOf('  - key: BILLING')));
+});
+
 test('a write on a stale baseDigest is a conflict: nothing is written, the current file comes back, re-applying works', async (t) => {
   const dir = await project(t);
   const base = await digest(dir);
@@ -445,11 +471,59 @@ test('saveItem adds a user story format story with its scenarios; a broken use c
   );
 });
 
+test('editing a legacy story through the story form keeps its format; converting it updates the description', async (t) => {
+  const h = await startHarness(t);
+  seedLegacy(h);
+  await h.writeManifest('demo', 'backlog.yaml', LEGACY);
+  const dir = join(h.manifestsDir, 'demo');
+  const updates = async () => {
+    const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+    assert.equal(plan.code, 3, plan.stderr);
+    return plan.json<Plan>().operations.flatMap((op) => (op.action === 'update' ? [[op.key, Object.keys(op.changes)]] : []));
+  };
+
+  const file = await readManifestFile(dir, 'backlog');
+  const story = readItem(file.text, 'story', 'AUTH-LOGIN');
+  assert.ok(story?.type === 'story');
+  const edited = saved(await saveItem(dir, { baseDigest: file.digest, original: 'AUTH-LOGIN', item: { ...story, fields: { ...story.fields, subject: 'User can sign in' } } }));
+  assert.equal(await backlogText(dir), LEGACY.replace('subject: User can log in', 'subject: User can sign in'));
+  assert.deepEqual(await updates(), [['AUTH-LOGIN', ['subject']]]);
+
+  // "Chuyển sang user story format": the form sends a use case and scenarios instead of acceptance_criteria.
+  const { acceptanceCriteria: _criteria, ...rest } = story.fields;
+  saved(
+    await saveItem(dir, {
+      baseDigest: edited.digest,
+      original: 'AUTH-LOGIN',
+      item: {
+        ...story,
+        fields: {
+          ...rest,
+          useCase: { asA: 'user', iWantTo: 'log in', soThat: 'I see my projects' },
+          scenarios: [{ scenario: 'Wrong password', given: ['I am on the sign-in page'], when: 'I submit a wrong password', then: 'I see an error' }],
+        },
+      },
+    }),
+  );
+  assert.doesNotMatch(await backlogText(dir), /acceptance_criteria/);
+  assert.deepEqual(await updates(), [['AUTH-LOGIN', ['description']]]);
+  assert.equal((await h.taigent(['validate', '--project', 'demo'], { env: OFFLINE })).code, 0);
+});
+
 test('suggestKey follows the naming advice and skips taken keys', () => {
   assert.equal(suggestKey('Search', undefined, new Set()), 'SEARCH');
   assert.equal(suggestKey('Đăng nhập bằng Google', 'AUTH', new Set(['AUTH-DANG-NHAP'])), 'AUTH-DANG-NHAP-2');
   assert.equal(suggestKey('Login API', 'AUTH-LOGIN', new Set()), 'AUTH-LOGIN-LOGIN-API');
   assert.equal(suggestKey('!!!', undefined, new Set()), '');
+});
+
+test('an issue key starts with the prefix of its type (conventions §5): BUG-, ASK- or ENH-', () => {
+  assert.equal(suggestKey('Login fails with a long password', issueKeyPrefix('Bug'), new Set()), 'BUG-LOGIN-FAILS');
+  assert.equal(suggestKey('How do I reset it?', issueKeyPrefix('Question'), new Set()), 'ASK-HOW-DO');
+  assert.equal(suggestKey('Dark mode', issueKeyPrefix('Enhancement'), new Set(['ENH-DARK-MODE'])), 'ENH-DARK-MODE-2');
+  assert.equal(issueKeyPrefix('question'), 'ASK');
+  assert.equal(issueKeyPrefix('Support request'), 'BUG', 'a type the defaults do not name is a bug');
+  assert.equal(issueKeyPrefix(''), 'BUG');
 });
 
 // ---- wiki pages (docs.yaml + pages/) ------------------------------------------------------------------------------
@@ -499,11 +573,14 @@ test('saveWikiPage adds a page under pages/ with its docs.yaml entry, keeping th
 });
 
 test('saveWikiPage edits the file an entry names, wherever it is, keeping CRLF; docs.yaml stays as it is', async (t) => {
-  const docs = DOCS.replace('attachments:', '  - slug: spec-billing\n    file: ../shared/billing.md\nattachments:');
-  const dir = await docsProject(t, docs);
-  await mkdir(join(dir, '..', 'shared'), { recursive: true });
-  const billing = join(dir, '..', 'shared', 'billing.md');
-  t.after(() => rm(join(dir, '..', 'shared'), { recursive: true, force: true }));
+  // A folder next to the project's, unique to this run: two test runs at once must not share the file.
+  const dir = await docsProject(t);
+  const shared = `${basename(dir)}-shared`;
+  const docs = DOCS.replace('attachments:', `  - slug: spec-billing\n    file: ../${shared}/billing.md\nattachments:`);
+  await writeFile(join(dir, 'docs.yaml'), docs);
+  await mkdir(join(dir, '..', shared), { recursive: true });
+  const billing = join(dir, '..', shared, 'billing.md');
+  t.after(() => rm(join(dir, '..', shared), { recursive: true, force: true }));
   await writeFile(billing, '# Billing\r\n\r\nOld.\r\n');
   const wiki = await readWikiPages(dir);
   const opened = wiki.pages.find((page) => page.slug === 'spec-billing')!;
@@ -538,6 +615,24 @@ test('a wiki save on a stale docs.yaml or page digest is a conflict and writes n
   assert.equal(docsConflict.status === 'conflict' && docsConflict.current.text, byAgent);
   assert.equal(await docsText(dir), byAgent);
   await assert.rejects(readFile(join(dir, 'pages', 'faq.md')), { code: 'ENOENT' });
+});
+
+test('two wiki adds from the same docs.yaml: one is saved, the other is a conflict and leaves no page behind', async (t) => {
+  const dir = await docsProject(t);
+  const base = await readManifestFile(dir, 'docs');
+  const results = await Promise.all(
+    ['faq', 'glossary'].map((slug) => saveWikiPage(dir, { baseDigest: base.digest, page: { slug, content: `# ${slug}\n` } })),
+  );
+  assert.deepEqual(results.map((result) => result.status).sort(), ['conflict', 'saved']);
+  const listed = (await readWikiPages(dir)).pages.map((page) => page.file).sort();
+  const files = (await readdir(join(dir, 'pages'))).map((name) => `pages/${name}`).sort();
+  assert.deepEqual(files, listed, 'every file under pages/ is in docs.yaml');
+
+  // The conflicting add goes through on the current docs.yaml.
+  const conflict = results.find((result) => result.status === 'conflict')!;
+  const slug = results[0]!.status === 'conflict' ? 'faq' : 'glossary';
+  saved(await saveWikiPage(dir, { baseDigest: conflict.status === 'conflict' ? conflict.current.digest : '', page: { slug, content: `# ${slug}\n` } }));
+  assert.equal((await readWikiPages(dir)).pages.length, 3);
 });
 
 test('wiki slugs follow the loader rules; issues elsewhere in docs.yaml do not block a save', async (t) => {

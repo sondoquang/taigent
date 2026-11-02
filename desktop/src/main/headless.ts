@@ -1,15 +1,18 @@
 // The headless buttons (Plan backlog từ spec, Nhờ agent xử lý góp ý, Tạo user story): each opens a `skill` tab of the
 // terminal running taigent's own `tools/taiga/run-skill` (bundled with the app) in the opened repository, so the run
 // uses that repository's skills and the allowlist `taigent init` installed there, exactly like run-skill outside the
-// app. The buttons only run `taiga-plan-backlog` and `taiga-create-user-story`, never apply, upload or bootstrap. The
-// views refresh through the project watcher as the agent edits taiga/<slug>/; the end of a run (exit code, cancelled,
-// last error line) goes to the renderer. TAIGENT_RUN_SKILL_DRY_RUN=1 passes `--dry-run`: the tab prints the command.
+// app. The buttons only run `taiga-plan-backlog` and `taiga-create-user-story`, never apply, upload or bootstrap, and
+// the run gets TAIGENT_READ_ONLY=1, which the agent's shell and every `taigent` it starts inherit: the CLI then refuses
+// every command that writes to Taiga (exit 2), so the run's writes wait for the app's own buttons. The views refresh
+// through the project watcher as the agent edits taiga/<slug>/; the end of a run (exit code, cancelled, last error
+// line) goes to the renderer. TAIGENT_RUN_SKILL_DRY_RUN=1 passes `--dry-run`: the tab prints the command.
 
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { type BrowserWindow, dialog } from 'electron';
 import type { Failure, Result, SkillRun, SkillRunAction, SkillRunEnd, SkillRunRequest } from '../shared/api.ts';
 import { failure } from './project.ts';
+import { slugFailure } from './ipc.ts';
 import { headlessAgent, projectDir } from './repo.ts';
 import { taigentRoot } from './taigent.ts';
 import { type TerminalCommand, terminals } from './terminal.ts';
@@ -61,7 +64,7 @@ function promptText(raw: unknown, what: string): string {
 /** A project of the opened repository, named by the renderer: `taiga/<slug>/` must exist. */
 async function projectSlug(root: string, raw: unknown): Promise<string> {
   const slug = typeof raw === 'string' ? raw : '';
-  const exists = /^[a-z0-9][a-z0-9-]*$/.test(slug) && (await stat(projectDir(root, slug)).then((info) => info.isDirectory(), () => false));
+  const exists = slugFailure(slug) === undefined && (await stat(projectDir(root, slug)).then((info) => info.isDirectory(), () => false));
   if (!exists) throw new Error(`Không có dự án ${slug || '(trống)'} trong repo.`);
   return slug;
 }
@@ -160,7 +163,7 @@ export async function runSkill(root: string, request: unknown, window: BrowserWi
     kind: 'skill',
     cwd: root,
     title: `${TITLES[request.action]} · ${agent}`,
-    command: runSkillCommand([...dryRun, '--output-format', 'text', agent, skill, prompt]),
+    command: { ...runSkillCommand([...dryRun, '--output-format', 'text', agent, skill, prompt]), env: { TAIGENT_READ_ONLY: '1' } },
   });
   const run: SkillRun = { action: request.action, agent, skill, tabId: handle.tab.id };
   running = run;

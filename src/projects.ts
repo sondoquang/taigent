@@ -5,7 +5,7 @@ import { stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { isFileNotFound } from './guards.ts';
 import type { IssueValueField } from './items.ts';
-import { type TaigaClient, TaigaError } from './taiga/client.ts';
+import type { TaigaClient } from './taiga/client.ts';
 
 /** One Taiga project as `projects` reports it. */
 export interface ProjectEntry {
@@ -59,8 +59,7 @@ export async function readProjects(client: TaigaClient, manifestsRoot: string): 
 
 /** One visible project with its issue values and user story statuses; exit 5 (TaigaError) when it is not visible. */
 export async function readProjectDetail(client: TaigaClient, slug: string, manifestsRoot: string): Promise<ProjectDetailReport> {
-  const project = await client.findProjectBySlug(slug);
-  if (!project) throw new TaigaError(`project "${slug}" not found on ${client.apiUrl} (or not visible to this user)`, 404);
+  const project = await client.getProjectBySlug(slug);
   const names = (field: IssueValueField) => client.listIssueValues(field, project.id).then((values) => values.map((value) => value.name));
   const [issueTypes, severities, priorities, statuses] = await Promise.all([
     names('type'),

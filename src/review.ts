@@ -3,10 +3,10 @@
 // write it, with that review. Offline: no Taiga access. The file is committed with the manifests; Taigent Desktop and
 // people write verdicts and comments, the agent answers comments (`resolved` + `reply`) by editing the manifests.
 
-import { createHash } from 'node:crypto';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { stringify } from 'yaml';
+import { sha256, writeAtomic } from './files.ts';
 import { isRecord } from './guards.ts';
 import type { IssueValueField, ItemType } from './items.ts';
 import { type AttributeValue, type Backlog, backlogKeys, type StorySpec } from './manifest/backlog.ts';
@@ -188,9 +188,7 @@ export async function saveReview(path: string, review: Review): Promise<void> {
     };
   }
   await mkdir(dirname(path), { recursive: true });
-  const temp = `${path}.tmp`;
-  await writeFile(temp, stringify({ items }, { lineWidth: 0 }));
-  await rename(temp, path);
+  await writeAtomic(path, stringify({ items }, { lineWidth: 0 }));
 }
 
 /** Sets (or, with `verdict` undefined, clears) the verdict of item `key`, recording the digest it was given on. Pure. */
@@ -208,6 +206,35 @@ export function addComment(review: Review, key: string, text: string, by: string
   while (used.has(`c${n}`)) n++;
   const comment: ReviewComment = { id: `c${n}`, by, at, text, resolved: false };
   return { items: { ...review.items, [key]: { ...current, comments: [...current.comments, comment] } } };
+}
+
+/**
+ * Follows re-keyed (`from` → `to`) and removed (`from` → undefined) items: review.yaml may only name keys of the
+ * backlog (rule `key-reference`). A re-keyed item keeps its comments but loses its verdict, so it is reviewed again
+ * (its digest leaves the key out); a removed item's review goes. Returns `review` itself when no key it names
+ * changed. Pure.
+ */
+export function rekeyReview(review: Review, keys: Record<string, string | undefined>): Review {
+  const items = { ...review.items };
+  let changed = false;
+  for (const [from, to] of Object.entries(keys)) {
+    const entry = items[from];
+    if (!entry || from === to) continue;
+    delete items[from];
+    if (to !== undefined && entry.comments.length > 0) items[to] = { comments: entry.comments };
+    changed = true;
+  }
+  return changed ? { items } : review;
+}
+
+/** `rekeyReview` on review.yaml of the project directory `dir`, saved only when it changed. Returns whether it did. */
+export async function rekeyReviewFile(dir: string, keys: Record<string, string | undefined>): Promise<boolean> {
+  const path = join(dir, REVIEW_FILE);
+  const current = await loadReview(path);
+  const next = rekeyReview(current, keys);
+  if (next === current) return false;
+  await saveReview(path, next);
+  return true;
 }
 
 // ---- Preview ------------------------------------------------------------------------------------
@@ -304,7 +331,7 @@ export function itemDigest(item: DigestFields): string {
     // Only issues carry values, so the digests of epics, stories and tasks (and their verdicts) stay as they were.
     ...(item.values && { values: { type: item.values.type, severity: item.values.severity, priority: item.values.priority } }),
   });
-  return createHash('sha256').update(canonical).digest('hex');
+  return sha256(canonical);
 }
 
 /**

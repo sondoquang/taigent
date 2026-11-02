@@ -7,6 +7,7 @@ import type { InitFile, InitReport } from '../../../src/init.ts';
 import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
+import type { StaleLink } from '../../../src/planner.ts';
 import type { ProjectDetailReport, StoryStatusEntry } from '../../../src/projects.ts';
 import type { ProjectReport } from '../../../src/report.ts';
 import type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
@@ -106,7 +107,7 @@ export interface Plan {
   summary: { create: number; update: number; link: number; skip: number };
   operations: PlanOperation[];
   orphans: { type: string; key: string; id: number; ref: number; subject: string }[];
-  staleLinks: { key: string; ref: number; epic: string }[];
+  staleLinks: StaleLink[];
 }
 
 export interface ApplyReport {

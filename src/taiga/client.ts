@@ -89,14 +89,6 @@ export interface TaigaConnectOptions {
   secrets?: Secrets;
 }
 
-export interface TaigaProject {
-  id: number;
-  slug: string;
-  name: string;
-  /** Custom attributes defined on the project, per item type. */
-  customAttributes: Record<ItemType, TaigaCustomAttribute[]>;
-}
-
 /** One project of a list (`GET /projects`): its identity and whether the caller is its admin. */
 export interface TaigaProjectSummary {
   id: number;
@@ -677,23 +669,11 @@ export class TaigaClient {
     return true;
   }
 
-  async getProjectBySlug(slug: string): Promise<TaigaProject> {
-    let raw: unknown;
-    try {
-      raw = await this.#request('GET', '/projects/by_slug', { query: { slug } });
-    } catch (error) {
-      if (error instanceof TaigaError && error.status === 404) {
-        throw new TaigaError(`project "${slug}" not found on ${this.apiUrl} (or not visible to this user)`, 404);
-      }
-      throw error;
-    }
-    if (!isRecord(raw)) throw new TaigaError('unexpected Taiga response: project is not an object');
-    return {
-      id: field(raw, 'id', 'number', 'project'),
-      slug: field(raw, 'slug', 'string', 'project'),
-      name: field(raw, 'name', 'string', 'project'),
-      customAttributes: parseCustomAttributes(raw),
-    };
+  /** Project detail by slug; TaigaError 404 when no project with that slug is visible to the user. */
+  async getProjectBySlug(slug: string): Promise<TaigaProjectDetail> {
+    const project = await this.findProjectBySlug(slug);
+    if (!project) throw new TaigaError(`project "${slug}" not found on ${this.apiUrl} (or not visible to this user)`, 404);
+    return project;
   }
 
   /** The projects `userId` is a member of (`GET /projects?member=`), in Taiga's order, with the caller's admin right. */

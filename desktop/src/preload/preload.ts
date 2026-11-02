@@ -23,11 +23,7 @@ const api: TaigentApi = {
   plan: (slug) => ipcRenderer.invoke(CHANNELS.plan, slug),
   apply: (slug) => ipcRenderer.invoke(CHANNELS.apply, slug),
   openExternal: (url) => ipcRenderer.invoke(CHANNELS.openExternal, url),
-  onProjectChanged(listener) {
-    const handler = (_event: IpcRendererEvent, view: Result<ProjectView>) => listener(view);
-    ipcRenderer.on(CHANNELS.projectChanged, handler);
-    return () => ipcRenderer.off(CHANNELS.projectChanged, handler);
-  },
+  onProjectChanged: (listener) => subscribe<[Result<ProjectView>]>(CHANNELS.projectChanged, listener),
   readBacklog: (slug, item) => ipcRenderer.invoke(CHANNELS.readBacklog, slug, item),
   saveItem: (slug, request) => ipcRenderer.invoke(CHANNELS.saveItem, slug, request),
   removeItem: (slug, request) => ipcRenderer.invoke(CHANNELS.removeItem, slug, request),

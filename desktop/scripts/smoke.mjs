@@ -140,7 +140,8 @@ try {
 
   // Approve, then change the story's description as an agent would: the approval turns stale.
   await page.click('.verdict-bar [data-verdict="approved"]');
-  await page.waitForSelector('.verdict-bar .verdict.approve.on');
+  await page.waitForSelector('.verdict-bar .verdict.approve.on, #toast.error');
+  check(await page.isVisible('.verdict-bar .verdict.approve.on'), `the story is marked Đạt${(await page.isVisible('#toast.error')) ? ` (error: ${await page.textContent('#toast')})` : ''}`);
   check((await readFile(reviewFile, 'utf8')).includes('verdict: approved'), 'review.yaml has verdict approved');
   const backlog = await readFile(backlogFile, 'utf8');
   // A Windows checkout (core.autocrlf) has CRLF line endings.
@@ -186,6 +187,7 @@ try {
     await storyFormScenario(page);
     await issueFormScenario(page);
     await wikiScenario(page);
+    await staleLinkScenario(page);
   }
 
   await smokeTerminal(page, { repo, shots, log, check });
@@ -205,6 +207,18 @@ try {
   } else {
     log('skipped plan: not logged in');
   }
+
+  // A project slug is checked where IPC enters the main process: a path never reaches a folder or a command.
+  const refusals = await page.evaluate(() =>
+    Promise.all([
+      window.taigent.readWiki('../outside'),
+      window.taigent.openProject('..'),
+      window.taigent.readBacklog('taiga\\..\\..'),
+      window.taigent.readTaigaReport('Upper'),
+      window.taigent.saveProjectSettings({ slug: '../x', settings: {}, baseDigest: null }),
+    ]),
+  );
+  check(refusals.every((result) => !result.ok && /không phải slug project/.test(result.message)), `bad slugs are refused at the IPC boundary (${refusals.map((result) => result.message).join(' | ')})`);
 
   // Taiga > Project: the fixture's manifest directory is listed (with the user's Taiga projects when logged in), its
   // project.yaml opens in the form and saves in place; bootstrap (logged in only) stops at the confirmation, "Huỷ".
@@ -273,8 +287,18 @@ try {
   throw error;
 }
 
-// Quitting kills every process the app started: terminal shells, their children, the pseudo consoles.
-const appTree = descendants(app.process().pid);
+// Quitting kills every process the app started: terminal shells, their children, the pseudo consoles, and the
+// children outside the terminal. One of those is kept running at quit: the checklist's `claude --version`, which the
+// wizard step's fake `claude` never answers (node on Windows, sleep elsewhere; the app's own timeout is 10 s).
+const appPage = await app.firstWindow();
+void appPage.evaluate(() => window.taigent.checkTools()).catch(() => undefined);
+const hanging = (tree) => [...tree.values()].some((name) => /^(node(\.exe)?|sleep)$/i.test(name));
+let appTree = descendants(app.process().pid);
+for (let tries = 0; !hanging(appTree) && tries < 25; tries++) {
+  await appPage.waitForTimeout(200);
+  appTree = descendants(app.process().pid);
+}
+check(hanging(appTree), `before quitting, the checklist's hanging \`claude --version\` runs (${[...appTree.values()].join(', ')})`);
 await app.close();
 const survivors = await waitGone(appTree.keys());
 check(survivors.length === 0, `after quitting, none of the app's ${appTree.size} child processes runs (left: ${survivors.map((pid) => `${pid} ${appTree.get(pid)}`).join(', ') || 'none'})`);
@@ -289,12 +313,14 @@ async function formScenario(page) {
   await page.fill('#form-subject', 'Soạn backlog bằng form');
   const epicKey = await page.inputValue('#form-key');
   check(epicKey === 'SOAN-BACKLOG', `epic key suggested from the subject (${epicKey})`);
-  await page.fill('#form-description', 'BA/PO thêm và sửa epic, story, task mà không phải sửa YAML.');
+  await page.fill('#form-description', 'BA/PO thêm và sửa epic, story, task mà **không** phải sửa YAML.');
+  check((await page.innerHTML('#form-preview-body')).includes('<strong>không</strong>'), 'the epic form previews its Markdown description');
   await page.fill('#form-tags', 'type:feature, area:review');
   await page.fill('#item-form [data-attribute="Mục tiêu quý"]', 'Q4');
   await page.screenshot({ path: join(shots, '6-epic-form.png') });
   await page.click('#form-save');
-  await page.waitForSelector(`#tree .node[data-key="${epicKey}"]`);
+  // Selected, not just listed: the watcher's refresh can list the item before the save's own answer selects it.
+  await page.waitForSelector(`#tree .node.selected[data-key="${epicKey}"]`);
   let text = await readFile(backlogFile, 'utf8');
   check(new RegExp(`- key: ${epicKey}\\r?\\n +subject: Soạn backlog bằng form`).test(text) && text.includes('Mục tiêu quý: Q4'), 'backlog.yaml has the new epic and its custom attribute');
   check(text.includes('# Legacy format: kept because the story is already on Taiga'), 'backlog.yaml keeps its comments');
@@ -306,9 +332,10 @@ async function formScenario(page) {
   await page.fill('#form-subject', 'Kiểm tra form task');
   const taskKey = await page.inputValue('#form-key');
   check(taskKey === 'REVIEW-APPROVE-KIEM-TRA', `task key suggested under its story (${taskKey})`);
-  await page.fill('#form-description', 'Done khi: task tạo bằng form nằm dưới story của nó trong backlog.yaml.');
+  await page.fill('#form-description', 'Done khi: task tạo bằng form nằm dưới story của nó trong `backlog.yaml`.');
+  check((await page.innerHTML('#form-preview-body')).includes('<code>backlog.yaml</code>'), 'the task form previews its Markdown description');
   await page.click('#form-save');
-  await page.waitForSelector(`#tree .node[data-key="${taskKey}"]`);
+  await page.waitForSelector(`#tree .node.selected[data-key="${taskKey}"]`);
   text = await readFile(backlogFile, 'utf8');
   const taskAt = text.indexOf(`- key: ${taskKey}`);
   check(text.indexOf('- key: REVIEW-APPROVE-STALE') < taskAt && taskAt < text.indexOf('- key: REVIEW-MARKDOWN'), 'backlog.yaml has the new task under REVIEW-APPROVE');
@@ -457,6 +484,40 @@ async function wikiScenario(page) {
   await goTo(page, 'backlog');
 }
 
+/**
+ * Thay đổi › "Xem thay đổi trên Taiga" against a fake Taiga where story REVIEW-MARKDOWN is still linked to an old
+ * taigent epic: the screen lists that stale link (and the old epic as an orphan) next to the changes.
+ */
+async function staleLinkScenario(page) {
+  const { startFakeTaiga } = await import(pathToFileURL(join(repo, 'test', 'support', 'fake-taiga.ts')).href);
+  const fake = await startFakeTaiga();
+  const before = await setMainEnv(app, { TAIGA_API_URL: fake.url, TAIGA_USERNAME: fake.user.username, TAIGA_PASSWORD: fake.user.password, TAIGA_TOKEN: null });
+  try {
+    const remote = fake.addProject({ slug: project });
+    // The epic form step filled this attribute of project.yaml: plan needs the project to define it.
+    fake.addCustomAttribute({ itemType: 'epic', project: remote.id, name: 'Mục tiêu quý' });
+    const old = fake.addEpic({ project: remote.id, subject: 'Epic cũ', tags: ['src:old-review'] });
+    const markdown = fake.addUserStory({ project: remote.id, subject: 'Mô tả hiển thị Markdown', tags: ['src:review-markdown'] });
+    fake.addEpicRelatedUserStory(old.id, markdown.id);
+    await goTo(page, 'changes');
+    await page.click('#plan-btn');
+    await page.waitForSelector('#changes-result h2', { timeout: 120_000 });
+    const result = await page.textContent('#changes-result');
+    const stale = await page.$('#plan-stale-links').then((node) => node?.textContent());
+    check(
+      stale?.includes(`Story #${markdown.ref} REVIEW-MARKDOWN → epic #${old.ref} OLD-REVIEW`) && stale.includes('không bao giờ gỡ'),
+      `Thay đổi lists the stale link of REVIEW-MARKDOWN to the old epic, which apply never removes${stale ? '' : ` (screen: ${result})`}`,
+    );
+    check(result?.includes('OLD-REVIEW – Epic cũ'), 'the old epic is listed as an orphan');
+    check(fake.requests.every((request) => request.method === 'GET' || request.path === '/auth'), 'plan writes nothing to Taiga');
+    await page.screenshot({ path: join(shots, '9b-plan-stale-link.png') });
+  } finally {
+    await setMainEnv(app, before);
+    await fake.close();
+  }
+  await goTo(page, 'backlog');
+}
+
 /** Runs the taigent CLI of this repository on the temporary manifests (offline commands only). */
 function taigent(...args) {
   return spawnSync(process.execPath, [join(repo, 'bin', 'taigent.js'), ...args], { cwd: work, env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests }, encoding: 'utf8' });
@@ -527,7 +588,7 @@ async function storyFormScenario(page) {
   check(source.includes('**and Given:** Epic cha đã có trong backlog') && html.includes('Story có nhiều Given'), 'the live preview shows the scenarios');
   await page.screenshot({ path: join(shots, '10-story-form.png') });
   await page.click('#form-save');
-  await page.waitForSelector(`#tree .node[data-key="${storyKey}"]`);
+  await page.waitForSelector(`#tree .node.selected[data-key="${storyKey}"]`);
   const created = await manifestStory(storyKey);
   check(
     Object.keys(created).join() === 'key,subject,use_case,scenarios,description,spec,tags' &&
@@ -539,7 +600,10 @@ async function storyFormScenario(page) {
   const validate = taigent('validate', '--project', project);
   check(validate.status === 0, `taigent validate exits 0 (${validate.status}) ${validate.stderr.trim()}`);
   check(previewDescription(storyKey) === source, 'the form preview is exactly the description taigent preview renders');
-  check((await page.innerHTML('#detail-content .markdown')) === html, 'the form preview renders like the review screen (same renderer and sanitizer)');
+  check(
+    (await page.innerHTML('#detail-content .markdown')) === html,
+    `the form preview renders like the review screen (same renderer and sanitizer; detail shows ${(await page.textContent('.breadcrumb'))?.trim()})`,
+  );
   check(await page.isVisible('.detail-head .badge.unreviewed'), 'the new story is "Chưa duyệt"');
 
   // A legacy story is edited in the legacy mode: its format stays.
@@ -607,7 +671,14 @@ async function issueFormScenario(page) {
   }
   await page.fill('#form-subject', 'Form issue mất mẫu mô tả khi lưu');
   const issueKey = await page.inputValue('#form-key');
-  check(issueKey !== '', `the issue key is suggested (${issueKey})`);
+  const { issueKeyPrefix } = await import(pathToFileURL(join(repo, 'src', 'manifest', 'conventions.ts')).href);
+  check(issueKey.startsWith(`${issueKeyPrefix(chosen.type)}-`), `the issue key is suggested with the prefix of its type ${chosen.type} (${issueKey})`);
+  if (!taiga) {
+    await page.fill('#form-type', 'Question');
+    check((await page.inputValue('#form-key')).startsWith('ASK-'), 'changing the issue type to Question suggests an ASK- key');
+    await page.fill('#form-type', chosen.type);
+    check((await page.inputValue('#form-key')) === issueKey, 'changing the type back suggests the first key again');
+  }
   const description = '## Steps to reproduce\n\n1. Mở form issue\n2. Lưu\n\n## Expected\n\nMô tả giữ nguyên.\n\n## Actual\n\nMô tả bị mất.';
   await page.fill('#form-description', description);
   await page.fill('#form-tags', 'area:review');

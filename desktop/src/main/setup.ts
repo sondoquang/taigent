@@ -1,7 +1,8 @@
 // The setup wizard's main side (spec #35, ticket #40): a new repository (folder, `git init`, `taiga/`), a clone of a
 // URL, the opened repository's Taigent state and `taigent init` run by the app's own taigent (not the repository's),
 // and the terminal tabs the wizard opens (npm install, a tool's install command). git runs through execFile, never a
-// shell, never prompts in a terminal, and under a timeout. A failed creation or clone removes the folder it made.
+// shell, never prompts in a terminal, and under a timeout. A failed creation or clone removes the folder it made. A
+// clone URL may carry credentials (`https://user:token@host/…`): no message the app shows contains them.
 
 import { execFile } from 'node:child_process';
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises';
@@ -11,7 +12,8 @@ import type { CloneRepoInput, InitReport, NewRepoInput, Result, SetupStatus, Set
 import { SETUP_TOOLS } from '../shared/api.ts';
 import { failure } from './project.ts';
 import { parseCliJson, runCli, taigentVersion } from './taigent.ts';
-import { killTree, shellRun, terminals } from './terminal.ts';
+import { killTree, OWN_GROUP, track } from './processes.ts';
+import { shellRun, terminals } from './terminal.ts';
 import { hasGit, INSTALL_COMMANDS } from './tools.ts';
 
 const GIT_INIT_TIMEOUT_MS = 30_000;
@@ -28,14 +30,16 @@ interface GitRun {
 function runGit(cwd: string, args: string[], timeoutMs: number): Promise<GitRun> {
   const { promise, resolve } = Promise.withResolvers<GitRun>();
   let timedOut = false;
-  const child = execFile(
-    'git',
-    args,
-    { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true },
-    (error, _stdout, stderr) => {
-      clearTimeout(timer);
-      resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stderr, timedOut });
-    },
+  const child = track(
+    execFile(
+      'git',
+      args,
+      { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, windowsHide: true, ...OWN_GROUP },
+      (error, _stdout, stderr) => {
+        clearTimeout(timer);
+        resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stderr, timedOut });
+      },
+    ),
   );
   const timer = setTimeout(() => {
     timedOut = true;
@@ -92,6 +96,14 @@ export async function createRepo(input: NewRepoInput): Promise<Result<string>> {
   return { ok: true, value: path };
 }
 
+/**
+ * `text` with the credentials of every URL in it hidden: the user info of `scheme://user:token@host` (up to the last
+ * `@` before the path, so a token holding `@` is hidden whole), and `user:token@host` without a scheme.
+ */
+export function redactUrl(text: string): string {
+  return text.replace(/\/\/[^/\r\n]*@/g, '//***@').replace(/(^|[\s'"])[^\s'"/@:]+:[^\s'"/@]*@/g, '$1***@');
+}
+
 /** The URL as git takes it: http(s), ssh, git, file URL, `user@host:path` or a local absolute path; never an option. */
 function cloneUrl(raw: unknown): Result<string> {
   const url = typeof raw === 'string' ? raw.trim() : '';
@@ -101,7 +113,7 @@ function cloneUrl(raw: unknown): Result<string> {
     !url.startsWith('-') &&
     (/^(https?|ssh|git|file):\/\//i.test(url) || /^[\w.-]+@[\w.-]+:/.test(url) || isAbsolute(url));
   if (!valid) {
-    return failure(`"${url}" không phải URL của repo git (ví dụ https://github.com/<tổ chức>/<repo>.git hoặc git@github.com:<tổ chức>/<repo>.git).`);
+    return failure(`"${redactUrl(url)}" không phải URL của repo git (ví dụ https://github.com/<tổ chức>/<repo>.git hoặc git@github.com:<tổ chức>/<repo>.git).`);
   }
   return { ok: true, value: url };
 }
@@ -133,8 +145,8 @@ export async function cloneRepo(input: CloneRepoInput): Promise<Result<string>> 
   const run = await runGit(input.parent, ['clone', '--', url.value, path], CLONE_TIMEOUT_MS);
   if (run.code === 0 && !run.timedOut) return { ok: true, value: path };
   const removed = await removeFolder(path);
-  // A URL may carry credentials (https://user:token@host/...): git echoes the URL, the app never shows them.
-  const detail = run.stderr.replace(/\/\/[^/@\s]+@/g, '//***@').trim() || undefined;
+  // git echoes the URL, which may carry credentials.
+  const detail = redactUrl(run.stderr).trim() || undefined;
   const leftover = removed ? '' : ` Không xoá được thư mục dở ${path}: hãy xoá nó bằng tay.`;
   return failure(cloneFailure(run) + leftover, { detail });
 }

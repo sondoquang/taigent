@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { test } from 'node:test';
-import { readItem, readManifestFile, saveItem } from '../src/edit.ts';
 import type { ManifestIssue } from '../src/manifest/errors.ts';
 import type { Plan } from '../src/planner.ts';
-import { OFFLINE, startHarness, writes, type Harness } from './support/harness.ts';
-import type { FakeUserStory } from './support/fake-taiga.ts';
+import { OFFLINE, startHarness, writes } from './support/harness.ts';
+import { LEGACY, LEGACY_DESCRIPTION, seedLegacy } from './support/legacy-story.ts';
 
 interface ErrorOutput {
   error: { kind: string; issues?: ManifestIssue[] };
@@ -253,41 +250,6 @@ test('a complete use case + scenarios story validates offline', async (t) => {
   assert.equal(result.code, 0, result.stderr);
 });
 
-/** A legacy story (description + acceptance_criteria + spec) under epic AUTH. */
-const LEGACY = `epics:
-  - key: AUTH
-    subject: Authentication
-    stories:
-      - key: AUTH-LOGIN
-        subject: User can log in
-        description: As a user I want to log in so that I see my projects.
-        acceptance_criteria:
-          - Wrong password shows an error
-          - Session survives a reload
-        spec: docs/specs/auth.md
-`;
-
-/** The legacy template of LEGACY's story, byte for byte as taigent rendered it on Taiga. */
-const LEGACY_DESCRIPTION = [
-  'As a user I want to log in so that I see my projects.',
-  '',
-  '## Acceptance criteria',
-  '',
-  '- [ ] Wrong password shows an error',
-  '- [ ] Session survives a reload',
-  '',
-  'Spec: docs/specs/auth.md',
-].join('\n');
-
-/** Seeds LEGACY on the fake as taigent created it: epic and story tagged `src:<key>`, linked, legacy description. */
-function seedLegacy(h: Harness): FakeUserStory {
-  const project = h.fake.addProject({ slug: 'demo' });
-  const epic = h.fake.addEpic({ project: project.id, subject: 'Authentication', tags: ['src:auth'] });
-  const story = h.fake.addUserStory({ project: project.id, subject: 'User can log in', description: LEGACY_DESCRIPTION, tags: ['src:auth-login'] });
-  h.fake.addEpicRelatedUserStory(epic.id, story.id);
-  return story;
-}
-
 test('plan and apply refuse to create stories without use_case/scenarios: exit 4, every story-format issue, nothing written', async (t) => {
   const h = await startHarness(t);
   h.fake.addProject({ slug: 'demo' });
@@ -408,44 +370,4 @@ test('converting a legacy story on Taiga to use_case + scenarios updates its des
       '  - **Then:** I see an error',
     ].join('\n'),
   );
-});
-
-test('through the edit API (the story form), editing a legacy story keeps its format; converting it updates the description', async (t) => {
-  const h = await startHarness(t);
-  seedLegacy(h);
-  await h.writeManifest('demo', 'backlog.yaml', LEGACY);
-  const dir = join(h.manifestsDir, 'demo');
-  const updates = async () => {
-    const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
-    assert.equal(plan.code, 3, plan.stderr);
-    return plan.json<Plan>().operations.flatMap((op) => (op.action === 'update' ? [[op.key, Object.keys(op.changes)]] : []));
-  };
-
-  const file = await readManifestFile(dir, 'backlog');
-  const story = readItem(file.text, 'story', 'AUTH-LOGIN');
-  assert.ok(story?.type === 'story');
-  const edited = await saveItem(dir, { baseDigest: file.digest, original: 'AUTH-LOGIN', item: { ...story, fields: { ...story.fields, subject: 'User can sign in' } } });
-  assert.equal(edited.status, 'saved');
-  assert.equal(await readFile(join(dir, 'backlog.yaml'), 'utf8'), LEGACY.replace('subject: User can log in', 'subject: User can sign in'));
-  assert.deepEqual(await updates(), [['AUTH-LOGIN', ['subject']]]);
-
-  // "Chuyển sang user story format": the form sends a use case and scenarios instead of acceptance_criteria.
-  const { acceptanceCriteria: _criteria, ...rest } = story.fields;
-  const converted = await saveItem(dir, {
-    baseDigest: edited.digest,
-    original: 'AUTH-LOGIN',
-    item: {
-      ...story,
-      fields: {
-        ...rest,
-        useCase: { asA: 'user', iWantTo: 'log in', soThat: 'I see my projects' },
-        scenarios: [{ scenario: 'Wrong password', given: ['I am on the sign-in page'], when: 'I submit a wrong password', then: 'I see an error' }],
-      },
-    },
-  });
-  assert.equal(converted.status, 'saved');
-  const text = await readFile(join(dir, 'backlog.yaml'), 'utf8');
-  assert.doesNotMatch(text, /acceptance_criteria/);
-  assert.deepEqual(await updates(), [['AUTH-LOGIN', ['description']]]);
-  assert.equal((await h.taigent(['validate', '--project', 'demo'], { env: OFFLINE })).code, 0);
 });

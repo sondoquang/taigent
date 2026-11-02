@@ -9,6 +9,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type * as YamlModule from '../../../src/manifest/yaml.ts';
 import type { GitChange, GitOutcome, GitStatus, GitStop, Result } from '../shared/api.ts';
+import { OWN_GROUP, track } from './processes.ts';
 import { manifestsDir } from './repo.ts';
 import { taigentRoot } from './taigent.ts';
 import { terminals } from './terminal.ts';
@@ -24,14 +25,13 @@ class GitMissing extends Error {}
 /** Runs `git <args>` in `cwd` without a shell; `input` goes to stdin. Never prompts for credentials. */
 function git(cwd: string, args: string[], input?: string): Promise<GitRun> {
   const { promise, resolve: done, reject } = Promise.withResolvers<GitRun>();
-  const child = execFile(
-    'git',
-    args,
-    { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 5 * 60_000, windowsHide: true },
-    (error, stdout, stderr) => {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  const options = { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 5 * 60_000, windowsHide: true, ...OWN_GROUP } as const;
+  const child = track(
+    execFile('git', args, options, (error, stdout, stderr) => {
       if (error?.code === 'ENOENT') return reject(new GitMissing('git not found'));
       done({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout, stderr });
-    },
+    }),
   );
   child.stdin?.end(input);
   return promise;

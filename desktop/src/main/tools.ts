@@ -1,14 +1,15 @@
 // The setup checklist's tool detection: each tool is looked up on PATH and its `--version` runs through execFile,
-// never a shell, under a timeout the app enforces itself. On Windows a global npm package is a `.cmd` shim, which
-// only a shell can run: the shim npm writes (cmd-shim) names the script it hands to node, so that script runs with
-// node directly. Any other `.cmd` is reported as found without a version. The app never installs a tool: it only
-// shows each one's install command and runs it in a terminal tab when the user asks.
+// never a shell, under a timeout the app enforces itself (it kills the tool's process tree). On Windows a global npm
+// package is a `.cmd` shim, which only a shell can run: the shim npm writes (cmd-shim) names the script it hands to
+// node, so that script runs with node directly. Any other `.cmd` is reported as found without a version. The app never
+// installs a tool: it only shows each one's install command and runs it in a terminal tab when the user asks.
 
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { access, readFile, stat } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { SETUP_TOOLS, type SetupTool, type ToolCheck } from '../shared/api.ts';
+import { killTree, OWN_GROUP, track } from './processes.ts';
 
 /** How long a tool gets to answer `--version`. */
 const VERSION_TIMEOUT_MS = 10_000;
@@ -81,16 +82,20 @@ function runVersion(tool: SetupTool, path: string, file: string, args: string[])
     clearTimeout(timer);
     resolve(check);
   };
-  const child = execFile(file, [...args, '--version'], { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-    const firstLine = (text: string) => text.trim().split(/\r?\n/)[0]?.trim() ?? '';
-    if (error) {
-      settle({ ...base, state: 'error', message: firstLine(stderr) || firstLine(stdout) || error.message });
-      return;
-    }
-    const line = firstLine(stdout) || firstLine(stderr);
-    settle(line ? { ...base, state: 'ok', version: versionOf(line) } : { ...base, state: 'error', message: '`--version` không in gì.' });
-  });
+  const options = { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024, ...OWN_GROUP } as const;
+  const child = track(
+    execFile(file, [...args, '--version'], options, (error, stdout, stderr) => {
+      const firstLine = (text: string) => text.trim().split(/\r?\n/)[0]?.trim() ?? '';
+      if (error) {
+        settle({ ...base, state: 'error', message: firstLine(stderr) || firstLine(stdout) || error.message });
+        return;
+      }
+      const line = firstLine(stdout) || firstLine(stderr);
+      settle(line ? { ...base, state: 'ok', version: versionOf(line) } : { ...base, state: 'error', message: '`--version` không in gì.' });
+    }),
+  );
   const timer = setTimeout(() => {
+    if (child.pid !== undefined) void killTree(child.pid);
     child.kill('SIGKILL');
     settle({ ...base, state: 'timeout', message: `\`${tool} --version\` không trả lời sau ${VERSION_TIMEOUT_MS / 1000} giây.` });
   }, VERSION_TIMEOUT_MS);

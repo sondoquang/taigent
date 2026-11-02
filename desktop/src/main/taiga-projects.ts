@@ -6,6 +6,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type BrowserWindow, dialog } from 'electron';
+import { PROJECT_SLUG_PATTERN } from '../../../src/manifest/conventions.ts';
 import type * as ProjectSettingsModule from '../../../src/project-settings.ts';
 import type { ProjectDetailReport, ProjectsReport } from '../../../src/projects.ts';
 import type {
@@ -20,10 +21,8 @@ import type {
 } from '../shared/api.ts';
 import { failure, messageOf } from './project.ts';
 import { manifestsDir } from './repo.ts';
-import { parseCliJson, runCli, taigentRoot } from './taigent.ts';
-
-/** A project slug as the CLI accepts it (`--project`); anything else never reaches a path or a command. */
-export const SLUG = /^[a-z0-9][a-z0-9_-]*$/;
+import { networkFix, taigaFailure } from './taiga-errors.ts';
+import { type CliError, parseCliJson, runCli, taigentRoot } from './taigent.ts';
 
 let settingsModule: Promise<typeof ProjectSettingsModule> | undefined;
 
@@ -38,10 +37,14 @@ function projectSettings(): Promise<typeof ProjectSettingsModule> {
 
 const isFile = (path: string) => stat(path).then((s) => s.isFile(), () => false);
 
-/** The CLI's error as the screen says it: not logged in, or Taiga's own message. */
-function taigaMessage(kind: string | undefined, message: string | undefined): string {
-  if (kind === 'login') return 'Chưa đăng nhập Taiga: đăng nhập để thấy các project của bạn.';
-  return `Không đọc được Taiga: ${message ?? 'lỗi không rõ'}`;
+/**
+ * The CLI's error as the Project screen says it (one line, no Failure detail), in Vietnamese with how to fix it; an
+ * error other than the login ones ends with the CLI's own message.
+ */
+function taigaMessage(error: CliError | undefined): string {
+  const failed = `Không đọc được các project trên Taiga. ${networkFix()}`;
+  const { message, detail } = taigaFailure(error, { failed });
+  return message === failed && detail ? `${message} Chi tiết: ${detail}` : message;
 }
 
 export async function listTaigaProjects(root: string): Promise<Result<TaigaProjectsOverview>> {
@@ -52,7 +55,7 @@ export async function listTaigaProjects(root: string): Promise<Result<TaigaProje
     projectSettings(),
   ]);
   const local = new Map<string, TaigaProjectRow>();
-  for (const entry of entries.filter((e) => e.isDirectory() && SLUG.test(e.name)).sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of entries.filter((e) => e.isDirectory() && PROJECT_SLUG_PATTERN.test(e.name)).sort((a, b) => a.name.localeCompare(b.name))) {
     const slug = entry.name;
     const file = await settings.readProjectSettings(dir, slug);
     local.set(slug, {
@@ -64,7 +67,7 @@ export async function listTaigaProjects(root: string): Promise<Result<TaigaProje
     });
   }
   const { value, error } = parseCliJson<ProjectsReport>(run);
-  if (!value) return { ok: true, value: { rows: [...local.values()], taigaMessage: taigaMessage(error?.kind, error?.message) } };
+  if (!value) return { ok: true, value: { rows: [...local.values()], taigaMessage: taigaMessage(error) } };
   const rows: TaigaProjectRow[] = value.projects.map((project) => {
     const manifest = local.get(project.slug);
     local.delete(project.slug);
@@ -81,7 +84,6 @@ export async function listTaigaProjects(root: string): Promise<Result<TaigaProje
 }
 
 export async function readTaigaProject(root: string, slug: string): Promise<Result<TaigaProjectDetail>> {
-  if (!SLUG.test(slug)) return failure(`"${slug}" không phải slug project.`);
   const dir = manifestsDir(root);
   const [file, hasBacklog, run] = await Promise.all([
     projectSettings().then((settings) => settings.readProjectSettings(dir, slug)),
@@ -91,12 +93,11 @@ export async function readTaigaProject(root: string, slug: string): Promise<Resu
   const { value, error } = parseCliJson<ProjectDetailReport>(run);
   if (value) return { ok: true, value: { slug, file, hasBacklog, taiga: value } };
   const notOnTaiga = error?.kind === 'taiga' && /not found/.test(error.message);
-  const message = notOnTaiga ? 'Chưa có trên Taiga (hoặc bạn không xem được project này): bootstrap sẽ tạo project.' : taigaMessage(error?.kind, error?.message);
+  const message = notOnTaiga ? 'Chưa có trên Taiga (hoặc bạn không xem được project này): bootstrap sẽ tạo project.' : taigaMessage(error);
   return { ok: true, value: { slug, file, hasBacklog, taigaMessage: message } };
 }
 
 export async function saveProjectFile(root: string, input: ProjectSettingsInput): Promise<Result<SaveProjectSettingsResult>> {
-  if (input.slug !== undefined && !SLUG.test(input.slug)) return failure(`"${input.slug}" không phải slug project.`);
   const settings = await projectSettings();
   const options = input.slug === undefined ? { baseDigest: input.baseDigest } : { slug: input.slug, baseDigest: input.baseDigest };
   return { ok: true, value: await settings.saveProjectSettings(manifestsDir(root), input.settings, options) };
@@ -148,7 +149,6 @@ function describeOperation(op: BootstrapOperation): string {
  * lists them, and only its "Bootstrap" button runs `bootstrap --yes --json` (conventions §1: the explicit approval).
  */
 export async function bootstrapProject(root: string, slug: string, window: BrowserWindow): Promise<Result<BootstrapOutcome>> {
-  if (!SLUG.test(slug)) return failure(`"${slug}" không phải slug project.`);
   const dry = await runCli(['bootstrap', '--project', slug, '--dry-run', '--json'], root);
   const planned = parseCliJson<BootstrapPlan>(dry);
   if (!planned.value) return failure('Không chạy được bootstrap --dry-run.', { detail: planned.error?.message, issues: planned.error?.issues });

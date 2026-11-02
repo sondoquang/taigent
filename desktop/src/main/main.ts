@@ -1,10 +1,11 @@
 // Taigent Desktop main process: one locked-down window (context isolation, sandbox, strict CSP, no navigation),
-// served from the `app://` scheme, and the IPC handlers behind `window.taigent` (src/shared/api.ts).
+// served from the `app://` scheme, and the IPC handlers behind `window.taigent` (src/shared/api.ts), registered
+// through the sender-checked wrapper of ipc.ts.
 
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, protocol, session, shell } from 'electron';
 import {
   type ApplyOutcome,
   type ApplyReport,
@@ -27,6 +28,8 @@ import {
   type VerdictChoice,
 } from '../shared/api.ts';
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
+import { handle, handleProject, slugFailure, trustWindow } from './ipc.ts';
+import { killChildren } from './processes.ts';
 import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, setHeadlessAgent } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
@@ -244,17 +247,6 @@ async function apply(slug: string): Promise<Result<ApplyOutcome>> {
   });
 }
 
-/** Wraps a handler so an unexpected throw reaches the renderer as a Failure, not as a rejected invoke. */
-function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => Promise<R>): void {
-  ipcMain.handle(channel, async (_event, ...args) => {
-    try {
-      return await fn(...(args as A));
-    } catch (error) {
-      return toFailure(error, 'Lỗi');
-    }
-  });
-}
-
 function registerIpc(): void {
   handle(CHANNELS.getState, async (): Promise<AppState> => {
     const remembered = repoRoot ?? (await lastRepo());
@@ -271,38 +263,41 @@ function registerIpc(): void {
     return openRepoAt(picked.filePaths[0]);
   });
   handle(CHANNELS.refreshRepo, async () => openRepoAt(requireRepo()));
-  handle(CHANNELS.openProject, async (slug: string) => {
+  handleProject(CHANNELS.openProject, async (slug) => {
     const root = requireRepo();
     const view = await buildView(root, slug);
     watcher.watch(root, slug, (next) => window?.webContents.send(CHANNELS.projectChanged, next));
     return view;
   });
-  handle(CHANNELS.setVerdict, async (slug: string, key: string, verdict: VerdictChoice) =>
+  handleProject(CHANNELS.setVerdict, async (slug, key: string, verdict: VerdictChoice) =>
     changeReview(requireRepo(), slug, key, { kind: 'verdict', verdict }),
   );
-  handle(CHANNELS.addComment, async (slug: string, key: string, text: string) => {
+  handleProject(CHANNELS.addComment, async (slug, key: string, text: string) => {
     if (!text.trim()) return failure('Góp ý đang trống.');
     return changeReview(requireRepo(), slug, key, { kind: 'comment', text: text.trim() });
   });
   handle(CHANNELS.whoami, whoami);
   handle(CHANNELS.login, login);
   handle(CHANNELS.logout, logout);
-  handle(CHANNELS.plan, plan);
-  handle(CHANNELS.apply, apply);
+  handleProject(CHANNELS.plan, plan);
+  handleProject(CHANNELS.apply, apply);
   handle(CHANNELS.openExternal, async (url: string) => {
     if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) await shell.openExternal(url);
   });
-  handle(CHANNELS.readBacklog, async (slug: string, item?: ItemRef) => readBacklog(requireRepo(), slug, item));
-  handle(CHANNELS.saveItem, async (slug: string, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
-  handle(CHANNELS.removeItem, async (slug: string, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
-  handle(CHANNELS.readWiki, async (slug: string) => readWiki(requireRepo(), slug));
-  handle(CHANNELS.saveWikiPage, async (slug: string, request: SaveWikiPageRequest) => saveWikiPage(requireRepo(), slug, request));
-  handle(CHANNELS.uploadWiki, async (slug: string) => uploadWiki(requireRepo(), slug, window!));
+  handleProject(CHANNELS.readBacklog, async (slug, item?: ItemRef) => readBacklog(requireRepo(), slug, item));
+  handleProject(CHANNELS.saveItem, async (slug, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
+  handleProject(CHANNELS.removeItem, async (slug, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
+  handleProject(CHANNELS.readWiki, async (slug) => readWiki(requireRepo(), slug));
+  handleProject(CHANNELS.saveWikiPage, async (slug, request: SaveWikiPageRequest) => saveWikiPage(requireRepo(), slug, request));
+  handleProject(CHANNELS.uploadWiki, async (slug) => uploadWiki(requireRepo(), slug, window!));
   handle(CHANNELS.listTaigaProjects, async () => listTaigaProjects(requireRepo()));
-  handle(CHANNELS.readTaigaProject, async (slug: string) => readTaigaProject(requireRepo(), slug));
-  handle(CHANNELS.saveProjectSettings, async (input: ProjectSettingsInput) => saveProjectFile(requireRepo(), input));
-  handle(CHANNELS.bootstrapProject, async (slug: string) => bootstrapProject(requireRepo(), slug, window!));
-  handle(CHANNELS.readTaigaReport, async (slug: string) => readTaigaReport(requireRepo(), slug));
+  handleProject(CHANNELS.readTaigaProject, async (slug) => readTaigaProject(requireRepo(), slug));
+  // A new project has no slug yet: saveProjectSettings derives it from the name.
+  handle(CHANNELS.saveProjectSettings, async (input: ProjectSettingsInput) =>
+    (input.slug === undefined ? undefined : slugFailure(input.slug)) ?? saveProjectFile(requireRepo(), input),
+  );
+  handleProject(CHANNELS.bootstrapProject, async (slug) => bootstrapProject(requireRepo(), slug, window!));
+  handleProject(CHANNELS.readTaigaReport, async (slug) => readTaigaReport(requireRepo(), slug));
   handle(CHANNELS.gitStatus, async () => gitStatus(requireRepo()));
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
@@ -345,8 +340,9 @@ app.enableSandbox();
 void app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   protocol.handle('app', serveRenderer);
+  trustWindow(() => window);
   registerIpc();
-  registerTerminalIpc(() => window, requireRepo);
+  registerTerminalIpc(requireRepo);
   window = createWindow();
 });
 
@@ -355,8 +351,12 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-// Quitting kills every terminal tab's process tree, so no shell or agent outlives the app.
-app.on('will-quit', () => terminals.killAll());
+// Quitting kills every terminal tab's process tree and every other child still running (taigent, git, `--version`),
+// so no shell, agent or command outlives the app.
+app.on('will-quit', () => {
+  terminals.killAll();
+  killChildren();
+});
 
 app.on('web-contents-created', (_event, contents) => {
   contents.on('will-navigate', (event) => event.preventDefault());

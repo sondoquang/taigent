@@ -4,8 +4,8 @@
 // real state: git found with its version, `codex` an npm cmd-shim whose version is read without a shell, `claude` a
 // fake that never answers `--version` (the timeout), `omp` missing with its install command. Then: a repository whose
 // Taigent skills are older than the app gets the suggestion to re-run init; a failed clone explains in Vietnamese and
-// leaves no folder; a clone of a temporary bare remote opens and is offered the setup; a repository already set up
-// opens without asking for setup again.
+// leaves no folder; the credentials in a clone URL appear in no error; a clone of a temporary bare remote opens and is
+// offered the setup; a repository already set up opens without asking for setup again.
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -175,6 +175,18 @@ export async function smokeWizard({ app, page, repo, work, shots, check, goTo, l
   check(!existsSync(join(base, 'khong-co')), 'clone: no partial folder left behind');
   check((await page.textContent('#repo-path')) === created, 'clone: the opened repository did not change');
   await page.screenshot({ path: join(shots, 'wizard-4-clone-failed.png') });
+
+  // 5b. Credentials in a clone URL never show: neither when the URL is refused nor in git's own error.
+  for (const url of [
+    'ftp://smoke-user:smoke-token@example.invalid/team.git',
+    'smoke-user:smoke-token@example.invalid:team.git',
+    'https://smoke-user:smoke-token@127.0.0.1:9/team.git',
+  ]) {
+    const result = await page.evaluate((input) => window.taigent.cloneRepo(input), { url, parent: base, name: 'khong-lo-token' });
+    const shown = JSON.stringify(result);
+    check(!result.ok && !shown.includes('smoke-token') && !shown.includes('smoke-user:'), `clone: the credentials in ${url.split('@')[1]} stay hidden (${result.message})`);
+  }
+  check(!existsSync(join(base, 'khong-lo-token')), 'clone: no folder left by the refused URLs');
 
   // 6. A clone of a team repository without Taigent opens and is offered the setup.
   const remote = join(base, 'team.git');

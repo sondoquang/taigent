@@ -14,6 +14,7 @@ import type * as ProjectModule from '../../../src/manifest/project.ts';
 import type * as ReviewModule from '../../../src/review.ts';
 import type * as SecretsModule from '../../../src/secrets.ts';
 import type * as ClientModule from '../../../src/taiga/client.ts';
+import { OWN_GROUP, track } from './processes.ts';
 
 export function taigentRoot(): string {
   return app.isPackaged ? join(process.resourcesPath, 'taigent', 'node_modules', 'taigent') : resolve(app.getAppPath(), '..');
@@ -73,15 +74,18 @@ export interface CliRun {
   stderr: string;
 }
 
-/** Runs `taigent <args>` in `cwd` (the opened repository) with this executable as Node; no shell. */
+/** Runs `taigent <args>` in `cwd` (the opened repository) with this executable as Node; no shell. Tracked, so quitting kills it. */
 export function runCli(args: string[], cwd: string): Promise<CliRun> {
   const { promise, resolve: done, reject } = Promise.withResolvers<CliRun>();
-  const child = spawn(process.execPath, [join(taigentRoot(), 'bin', 'taigent.js'), ...args], {
-    cwd,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true,
-  });
+  const child = track(
+    spawn(process.execPath, [join(taigentRoot(), 'bin', 'taigent.js'), ...args], {
+      cwd,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+      ...OWN_GROUP,
+    }),
+  );
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
