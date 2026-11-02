@@ -656,6 +656,7 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-setup` | Model or user | Checks `npx --no -- taigent --help`, the login (`taigent whoami`; the fix is the user running `npx taigent login` in their own terminal), and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (the `taiga` entry for `.mcp.json`/`.codex/config.toml`, running `taigent mcp`, once the user agrees), and installs the skills into another project on request (`npx skills add`) |
 | `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent plan --json`, read-only on Taiga; MCP read tools for hand-made work) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys), ends with `taigent validate`. Writes files only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
+| `taiga-create-user-story` | User only (as above) | One user story in the conventions §6.1 format under an existing manifest epic: drafts it, checks for duplicates (manifest, `taigent plan --json`, MCP read tools), adds it to `backlog.yaml`, `taigent validate` → `taigent plan --json` → asks → `taigent apply --yes`; hands over to `taiga-plan-backlog` when no epic fits and to `taiga-apply-backlog` when the plan holds other changes. Creates no epic or task |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
 | `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml` (referencing documents where they already are, no copies), `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
 | `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools only (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); hands questions about your own tickets to `taiga-my-tickets` |
@@ -679,7 +680,7 @@ or lists `taigent` as a dependency: otherwise npx would fetch an unrelated `taig
 Another project needs two commands at its root:
 
 ```sh
-npx skills add sondoquang/taigent          # the nine Taigent skills, for the agents it detects
+npx skills add sondoquang/taigent          # the ten Taigent skills, for the agents it detects
 npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite (append #<tag> to pin)
 ```
 
