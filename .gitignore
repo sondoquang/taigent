@@ -16,6 +16,10 @@
 tmp/
 *.log
 
+# BA preview working copies (taiga-apply-backlog carries the edits into backlog.yaml)
+taiga/*/preview.md
+taiga/*/.preview/
+
 # Node
 node_modules/
 

@@ -27,6 +27,10 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
    - Agent đọc `review.yaml`, xử lý từng comment chưa resolved bằng cách sửa manifest, rồi đặt `resolved: true` và
      `reply` (trả lời ngắn bằng tiếng Việt) cho comment đó. Agent **không bao giờ** đổi verdict; verdict chỉ do người
      review đặt. Item sửa sau khi đã approved thì verdict thành **stale** (digest khác) và cần duyệt lại.
+   - BA cũng có thể sửa thẳng bản preview: `taigent preview --project <slug> --out taiga/<slug>/preview.md`, kèm một
+     bản giữ nguyên ở `taiga/<slug>/.preview/base.md` (ghi cùng lúc). Skill `taiga-apply-backlog` so hai bản bằng
+     `git diff --no-index`, ghi từng chỗ BA sửa vào `backlog.yaml` (manifest vẫn là nguồn sự thật), chạy `validate`
+     rồi mới `plan`. Không commit `preview.md` và `.preview/`: đó là bản làm việc.
    - Người dùng duyệt diff manifest trong git như duyệt code, rồi chạy (hoặc để agent chạy)
      `taigent plan --project <slug>` để xem chính xác những gì sẽ đổi trên Taiga (exit 3 = có thay đổi).
 3. **Apply (chỉ sau khi người dùng đồng ý tường minh).** `taigent apply --project <slug> --yes`, rồi commit

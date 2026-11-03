@@ -18,6 +18,7 @@
     "docs/taiga/",
     "docs/telegram-reply.md",
     ".agents/skills/ask-taigent/",
+    ".agents/skills/prd-to-taiga/",
     ".agents/skills/taiga-*/**",
     ".codex/hooks/taigent-shell-guard.mjs",
     ".codex/rules/taigent.rules",

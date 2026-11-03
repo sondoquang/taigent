@@ -1,0 +1,5 @@
+interface:
+  display_name: "PRD to Taiga"
+  short_description: "Turn a PRD into the Taiga backlog manifest, with a preview for the BA"
+policy:
+  allow_implicit_invocation: false

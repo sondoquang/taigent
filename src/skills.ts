@@ -1,7 +1,7 @@
-// Skills: the Taigent skills (every `taiga-*` skill plus `ask-taigent`) have one source, `.agents/skills/` (read by
-// Codex). `.claude/skills/` holds byte-identical copies for Claude Code; `taigent init` copies both from the running
-// package into another repository. Only Taigent skill directories are compared or written; other skills (e.g. the
-// vendored mattpocock ones) are never touched.
+// Skills: the Taigent skills (every `taiga-*` skill plus `ask-taigent` and `prd-to-taiga`) have one source,
+// `.agents/skills/` (read by Codex). `.claude/skills/` holds byte-identical copies for Claude Code; `taigent init`
+// copies both from the running package into another repository. Only Taigent skill directories are compared or
+// written; other skills (e.g. the vendored mattpocock ones) are never touched.
 
 import { cp, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -9,7 +9,7 @@ import { isFileNotFound } from './guards.ts';
 
 const SKILL_PREFIX = 'taiga-';
 /** Taigent skills whose names lack the `taiga-` prefix. */
-const UNPREFIXED_SKILLS: readonly string[] = ['ask-taigent'];
+const UNPREFIXED_SKILLS: readonly string[] = ['ask-taigent', 'prd-to-taiga'];
 
 /** Canonical skills directory, relative to the repository root. */
 export const SKILLS_SOURCE = '.agents/skills';

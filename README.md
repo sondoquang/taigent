@@ -18,7 +18,7 @@ npm install
 ```
 
 The first command installs the `taigent` CLI and the Taiga MCP server into `node_modules` (nothing system-wide) and
-creates `package.json` if the project has none. `taigent init` then adds the ten Taigent skills to `.agents/skills/`
+creates `package.json` if the project has none. `taigent init` then adds the eleven Taigent skills to `.agents/skills/`
 (Codex) and `.claude/skills/` (Claude Code), the `taiga` MCP server to `.mcp.json` and `.codex/config.toml`, the
 headless kit (`tools/taiga/allowlist.txt`, `.codex/hooks/`, `.codex/rules/`), and pins `taigent` in `package.json` to
 its release tag, which `npm install` installs. It keeps your other skills, servers and dependencies, and lists every

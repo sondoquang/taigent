@@ -161,7 +161,7 @@ test('skills commands outside a repository root are a usage error (exit 2)', asy
   assert.match(noAction.stderr, /skills needs one of: sync, check/);
 });
 
-const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 
 test('the repository holds exactly the Taigent skills, with Claude copies that match .agents/skills', async () => {
   const result = await skills(['check', '--json'], REPO_ROOT);
@@ -207,15 +207,17 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
 const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
+/** Pre-approvals beside taigent commands and MCP read tools: reading a GitHub issue, and using another Taigent skill. */
+const OTHER_READ_RULES = new Set(['Bash(gh issue view *)', 'PowerShell(gh issue view *)', ...TAIGENT_SKILLS.map((skill) => `Skill(${skill})`)]);
 
-test('Taigent skills follow Agent Skills and pre-approve only taigent commands and Taiga MCP read tools', async () => {
+test('Taigent skills follow Agent Skills and pre-approve only taigent commands, Taiga MCP read tools and other read-only rules', async () => {
   for (const name of TAIGENT_SKILLS) {
     const { frontmatter, allowedTools } = await readSkill(name);
     assert.equal(frontmatter.name, name);
     assert.match(frontmatter.name, /^[a-z0-9]+(-[a-z0-9]+)*$/);
     assert.ok(frontmatter.description.length > 0 && frontmatter.description.length <= 1024, `${name}: description length`);
     for (const tool of allowedTools) {
-      assert.ok(SHELL_RULE.test(tool) || MCP_READ_TOOLS.has(tool), `${name}: allowed-tools has ${tool}`);
+      assert.ok(SHELL_RULE.test(tool) || MCP_READ_TOOLS.has(tool) || OTHER_READ_RULES.has(tool), `${name}: allowed-tools has ${tool}`);
     }
   }
 });
@@ -236,10 +238,14 @@ test('Taigent skills that write to Taiga run only when invoked explicitly, on Cl
 /** Each skill's shell rules: the commands it pre-approves, as Bash and as PowerShell rules. */
 const shellRules = (...commands: string[]) => ['Bash', 'PowerShell'].flatMap((shell) => commands.map((command) => `${shell}(npx taigent ${command} *)`));
 
-test('each taiga-* skill pre-approves only the taigent commands of its step', async () => {
+test('each taiga-* skill and prd-to-taiga pre-approve only the commands of their step', async () => {
   const expected: Record<string, string[]> = {
+    'prd-to-taiga': [
+      'Skill(taiga-plan-backlog)',
+      ...['Bash', 'PowerShell'].flatMap((shell) => [`${shell}(gh issue view *)`, ...['validate', 'plan', 'preview'].map((command) => `${shell}(npx taigent ${command} *)`)]),
+    ],
     'taiga-plan-backlog': shellRules('validate', 'plan', 'preview'),
-    'taiga-apply-backlog': shellRules('validate', 'plan', 'apply'),
+    'taiga-apply-backlog': shellRules('validate', 'preview', 'plan', 'apply'),
     'taiga-create-user-story': shellRules('validate', 'plan', 'apply'),
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),

@@ -51,7 +51,7 @@ Commands:
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
             Telegram chat (--dry-run prints the message instead)
-  skills sync   Copy the Taigent skills (taiga-*, ask-taigent) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
+  skills sync   Copy the Taigent skills (taiga-*, ask-taigent, prd-to-taiga) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
   login     Log in once, in your own terminal: the password is exchanged for a token kept in the OS credential
             store (Windows Credential Manager, macOS Keychain, Linux Secret Service), never stored itself
