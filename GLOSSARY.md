@@ -26,6 +26,22 @@ _Avoid_: Ticket (reserved for a user story assigned to you), card
 A bug or other problem planned as a backlog item and filed in Taiga's issues module; it stands apart from the epic → story → task tree.
 _Avoid_: Ticket, bug (when the issue's type is not Bug)
 
+**Hand-made item**:
+An epic, story, task or issue on Taiga that no backlog item is bound to, because someone created it there rather than through Taigent.
+_Avoid_: Legacy item, untracked item
+
+**Adopt**:
+To bind a hand-made item to a new backlog item, so the work on Taiga stays and is managed from then on like the items Taigent created.
+_Avoid_: Import (nothing is copied or created again), claim (means taking a ticket for yourself), link (reserved for an epic's stories)
+
+**Snapshot**:
+A read-only copy of a project's epics and open stories, tasks and issues as they stood on Taiga at one moment, read for context while planning.
+_Avoid_: Mirror, cache, export
+
+**Remote edit**:
+A change made on Taiga to a backlog item since Taigent last wrote it; Taiga's version wins and the backlog item takes it before anything else is written.
+_Avoid_: Drift, conflict
+
 **Review**:
 The Business Analyst's or Product Owner's check of the planned backlog items before they are applied to Taiga, kept in the project's `review.yaml` as verdicts and comments per item.
 _Avoid_: Approval (a review is not consent to apply)
