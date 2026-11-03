@@ -22,6 +22,8 @@ export interface ProjectSettings {
   isPrivate: boolean;
   /** Modules to enable (PROJECT_MODULES). */
   modules: string[];
+  /** `existing: true`: the project already exists in Taiga (name taken from it), so name/slug rules do not apply. */
+  existing: boolean;
 }
 
 export interface ProjectSettingsFile {
@@ -42,7 +44,7 @@ export type SaveProjectSettingsResult =
   | { status: 'invalid'; issues: ManifestIssue[] };
 
 /** The fields the form owns, as project.yaml keys, in the order of a new file (`slug` is set from the directory). */
-const FORM_FIELDS = ['name', 'slug', 'description', 'template', 'is_private', 'modules'] as const;
+const FORM_FIELDS = ['name', 'slug', 'description', 'template', 'is_private', 'modules', 'existing'] as const;
 
 async function readText(path: string): Promise<string | null> {
   try {
@@ -73,6 +75,7 @@ function settingsOf(raw: unknown): ProjectSettings | null {
     template: text(raw.template),
     isPrivate: typeof raw.is_private === 'boolean' ? raw.is_private : true,
     modules: Array.isArray(raw.modules) ? raw.modules.filter((module): module is string => typeof module === 'string') : [],
+    existing: raw.existing === true,
   };
 }
 
@@ -136,8 +139,13 @@ export async function saveProjectSettings(
     template: settings.template,
     is_private: settings.isPrivate,
     modules: settings.modules,
+    existing: settings.existing,
   };
-  for (const field of FORM_FIELDS) setField(doc, field, values[field]);
+  for (const field of FORM_FIELDS) {
+    // `existing` is written only when set: a project taigent creates carries no flag.
+    if (field === 'existing' && !settings.existing) doc.delete(field);
+    else setField(doc, field, values[field]);
+  }
   const next = doc.toString({ flowCollectionPadding: false });
 
   const created = await mkdir(dir, { recursive: true });
