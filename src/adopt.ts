@@ -4,27 +4,37 @@
 // subject, description, the tags with a prefix the manifest allows, an issue's type, severity and priority names;
 // custom attributes are not copied.
 //
-// Epics and issues sit at the top of the backlog. A story needs a manifest epic as parent, a task a manifest story:
-// each type gets its own case in `backlogItem`.
+// Epics and issues sit at the top of the backlog. A story goes under the manifest epic the caller names (`--epic`)
+// and keeps its whole description in the legacy format, no acceptance criteria split out. A task goes under the
+// manifest story the caller names (`--story`), which must be the backlog item its story on Taiga is.
 
 import { mkdir } from 'node:fs/promises';
 import { parse } from 'yaml';
 import { readManifestFile, saveItem, type BacklogItem } from './edit.ts';
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
+import { keyOf } from './managed.ts';
 import { checkBacklog, type Backlog } from './manifest/backlog.ts';
 import { checkTag } from './manifest/conventions.ts';
 import { ManifestError } from './manifest/errors.ts';
 import type { PlanProject } from './planner.ts';
-import type { TaigaClient, TaigaIssue, TaigaItem } from './taiga/client.ts';
+import type { TaigaClient, TaigaIssue, TaigaItem, TaigaTask } from './taiga/client.ts';
 
-/** The item cannot be adopted (closed, already tagged, of a type adopt does not take, …). Nothing was written. */
+/** The item cannot be adopted (closed, already tagged, without the manifest parent it needs, …). Nothing was written. */
 export class AdoptError extends Error {}
+
+/** The manifest parent of the adopted item: an epic for a story (`--epic`), a story for a task (`--story`). */
+export interface AdoptParent {
+  type: 'epic' | 'story';
+  key: string;
+}
 
 export interface AdoptRequest {
   /** The Taiga ref of the hand-made item. */
   ref: number;
   /** The key of the new backlog item. */
   key: string;
+  /** Required for a story and a task, refused for an epic and an issue. */
+  parent?: AdoptParent;
 }
 
 /** What `taigent adopt --json` prints: the new backlog item and where it is in backlog.yaml. */
@@ -46,11 +56,23 @@ function usedKeysAndRefs(backlog: Backlog): { keys: Set<string>; refs: Map<numbe
   return { keys: new Set(items.map((item) => item.key)), refs: new Map(items.flatMap((item) => (item.ref === undefined ? [] : [[item.ref, item.key] as const]))) };
 }
 
-/** The backlog item adopting `item`, of `type`; refuses the types adopt does not take. */
-async function backlogItem(type: ItemType, item: TaigaItem, key: string, client: TaigaClient, projectId: number): Promise<BacklogItem> {
+/** What `backlogItem` reads besides the item: the backlog, the project's items on Taiga, by type, and the parent. */
+interface AdoptContext {
+  backlog: Backlog;
+  items: Record<ItemType, TaigaItem[]>;
+  parent: AdoptParent | undefined;
+  client: TaigaClient;
+  projectId: number;
+}
+
+/** The backlog item adopting `item`, of `type`, under its manifest parent; refuses a missing or wrong parent. */
+async function backlogItem(type: ItemType, item: TaigaItem, key: string, context: AdoptContext): Promise<BacklogItem> {
+  const { backlog, parent } = context;
+  const what = `${WHAT[type]} #${item.ref}`;
   // Only the tags a manifest may hold (`type:`/`area:` ones that follow the conventions); the others stay on Taiga.
   const tags = item.tags.filter((tag) => checkTag(tag, '', () => {}));
   const fields = { ref: item.ref, subject: item.subject, description: item.description, tags };
+  if ((type === 'epic' || type === 'issue') && parent) throw new AdoptError(`${what} sits at the top of backlog.yaml: drop --${parent.type}`);
   switch (type) {
     case 'epic':
       return { type, key, fields };
@@ -58,15 +80,32 @@ async function backlogItem(type: ItemType, item: TaigaItem, key: string, client:
       const values = {} as Record<IssueValueField, string>;
       for (const field of ISSUE_VALUE_FIELDS) {
         const id = (item as TaigaIssue)[field];
-        const name = (await client.listIssueValues(field, projectId)).find((value) => value.id === id)?.name;
+        const name = (await context.client.listIssueValues(field, context.projectId)).find((value) => value.id === id)?.name;
         if (name === undefined) throw new AdoptError(`issue #${item.ref} has no ${field} the project defines; set one on Taiga, then adopt it`);
         values[field] = name;
       }
       return { type, key, fields: { ...fields, ...values } };
     }
-    case 'story':
-    case 'task':
-      throw new AdoptError(`#${item.ref} is a ${WHAT[type]}; taigent adopt takes epics and issues`);
+    case 'story': {
+      if (parent?.type !== 'epic') throw new AdoptError(`${what} goes under an epic of backlog.yaml: add --epic <KEY>${parent ? `, not --${parent.type}` : ''}`);
+      if (!backlog.epics.some((epic) => epic.key === parent.key)) throw new AdoptError(`--epic ${parent.key} is not an epic of backlog.yaml`);
+      // Legacy format: the whole description as written on Taiga, which it renders back byte for byte.
+      return { type, key, parent: parent.key, fields };
+    }
+    case 'task': {
+      if (parent?.type !== 'story') throw new AdoptError(`${what} goes under a story of backlog.yaml: add --story <KEY>${parent ? `, not --${parent.type}` : ''}`);
+      const stories = backlog.epics.flatMap((epic) => epic.stories);
+      if (!stories.some((story) => story.key === parent.key)) throw new AdoptError(`--story ${parent.key} is not a story of backlog.yaml`);
+      const storyId = (item as TaigaTask).userStory;
+      if (storyId === null) throw new AdoptError(`${what} is in no user story; only a task in a backlog story is adopted`);
+      const story = context.items.story.find((candidate) => candidate.id === storyId);
+      const storyWhat = story ? `user story #${story.ref}` : `user story id ${storyId}`;
+      // The backlog item its story is: by `src:` tag, or the manifest story adopting it by `ref`.
+      const storyKey = story && (keyOf(story) ?? stories.find((candidate) => candidate.ref === story.ref)?.key);
+      if (storyKey === undefined) throw new AdoptError(`${what} is in ${storyWhat}, which is not a backlog item; adopt that story first`);
+      if (storyKey !== parent.key) throw new AdoptError(`${what} is in ${storyWhat}, which is backlog item ${storyKey}, not ${parent.key}`);
+      return { type, key, parent: parent.key, fields };
+    }
   }
 }
 
@@ -85,9 +124,11 @@ export async function adoptItem(dir: string, slug: string, client: TaigaClient, 
   if (adoptedBy !== undefined) throw new AdoptError(`#${ref} is already adopted by ${adoptedBy} in backlog.yaml`);
 
   const project = await client.getProjectBySlug(slug);
+  const items = {} as Record<ItemType, TaigaItem[]>;
   let found: { type: ItemType; item: TaigaItem } | undefined;
   for (const type of ITEM_TYPES) {
-    const item = (await client.listItems(type, project.id)).find((candidate) => candidate.ref === ref);
+    items[type] = await client.listItems(type, project.id);
+    const item = items[type].find((candidate) => candidate.ref === ref);
     if (item) found = { type, item };
   }
   if (!found) throw new AdoptError(`no epic, user story, task or issue #${ref} in project ${slug}`);
@@ -98,7 +139,7 @@ export async function adoptItem(dir: string, slug: string, client: TaigaClient, 
   }
   if (item.isClosed) throw new AdoptError(`${WHAT[type]} #${ref} is closed (${item.status ?? 'closed status'}); closed items are not adopted`);
 
-  const adopting = await backlogItem(type, item, key, client, project.id);
+  const adopting = await backlogItem(type, item, key, { backlog, items, parent: request.parent, client, projectId: project.id });
   await mkdir(dir, { recursive: true });
   const saved = await saveItem(dir, { baseDigest: manifest.digest, item: adopting });
   if (saved.status === 'invalid') throw new ManifestError(saved.issues);

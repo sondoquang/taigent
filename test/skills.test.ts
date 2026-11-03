@@ -204,7 +204,7 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
  * `taigent` commands a skill may pre-approve. The plan-gated writing ones make a skill explicit-only; `status` and
  * `comment` edit one of the user's own tickets, named in the request itself, so their skill may run implicitly.
  */
-const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment'];
+const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'snapshot', 'adopt'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
 /** Pre-approvals beside taigent commands and MCP read tools: reading a GitHub issue, and using another Taigent skill. */
@@ -246,7 +246,7 @@ test('each taiga-* skill and prd-to-taiga pre-approve only the commands of their
     ],
     'taiga-plan-backlog': shellRules('validate', 'plan', 'preview'),
     'taiga-apply-backlog': shellRules('validate', 'preview', 'plan', 'apply'),
-    'taiga-create-user-story': shellRules('validate', 'plan', 'apply'),
+    'taiga-create-user-story': shellRules('validate', 'snapshot', 'adopt', 'plan', 'apply'),
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),
     'taiga-my-tickets': shellRules('tickets'),
@@ -295,13 +295,14 @@ test('taiga-update-ticket edits your tickets through taigent only, may be invoke
   assert.match(router, /`taiga-update-ticket`/);
 });
 
-test('taiga-create-user-story reads Taiga through MCP read tools only and ask-taigent routes to it', async () => {
+test('taiga-create-user-story reads Taiga through taigent snapshot, adopts a hand-made epic, and ask-taigent routes to it', async () => {
   const { allowedTools } = await readSkill('taiga-create-user-story');
 
-  for (const tool of ['listProjects', 'listEpics', 'getEpic', 'listUserStories', 'getUserStory']) {
-    assert.ok(allowedTools.includes(`mcp__taiga__${tool}`), `allowed-tools has mcp__taiga__${tool}`);
-  }
-  assert.ok(allowedTools.filter((tool) => !tool.includes('(')).every((tool) => MCP_READ_TOOLS.has(tool)), allowedTools.join(' '));
+  assert.ok(allowedTools.every((tool) => tool.includes('(')), allowedTools.join(' '));
+  const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-create-user-story/SKILL.md'), 'utf8');
+  assert.match(skill, /npx taigent snapshot --project <slug>/);
+  assert.match(skill, /npx taigent adopt --project <slug> --ref <epic ref> --key <KEY>/);
+  assert.match(skill, /Exit 6/);
   const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
   assert.match(router, /`taiga-create-user-story`/);
 });

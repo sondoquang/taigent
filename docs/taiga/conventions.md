@@ -141,11 +141,15 @@ Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên
   `taigent adopt --project <slug> --ref <n> --key <KEY>`, sau khi người dùng xác nhận từng item. Lệnh chỉ đọc Taiga
   và chỉ ghi `backlog.yaml`: một backlog item mới có `ref: <n>`, chép nguyên văn subject, mô tả, các tag có prefix
   hợp lệ (§4; tag khác vẫn nằm trên Taiga), và `type`/`severity`/`priority` theo tên với issue; không chép custom
-  attribute. Hiện lệnh nhận epic và issue. Lệnh từ chối item đã đóng, item đã có tag `src:`, story/task, key hoặc ref
-  đã có trong manifest. Sau đó `plan` đề xuất action `adopt` (thêm tag `src:<key>`, cùng các update nội dung nếu có)
-  và `apply` ghi tag đó. `ref` giữ lại trong manifest sau apply, làm phép kiểm (rule `item-ref`).
-- Story và task tạo tay nằm dưới một epic hoặc story của manifest được `plan` liệt kê riêng trong
-  `handMadeChildren`, không phải `staleLinks`. Taigent không động vào nội dung và liên kết của chúng.
+  attribute. Epic và issue nằm ở đầu `backlog.yaml`. Story cần thêm `--epic <KEY>`: epic cha trong manifest (story
+  chưa nối với epic đó trên Taiga thì `plan` đề xuất thêm liên kết). Story giữ legacy format (§6.2). Task cần thêm
+  `--story <KEY>`: story trong manifest, và phải đúng là backlog item mà task đang nằm trong trên Taiga. Lệnh từ chối
+  item đã đóng, item đã có tag `src:`, key hoặc ref đã có trong manifest, story/task thiếu cha trong manifest, và task
+  có story trên Taiga không phải backlog item (adopt story đó trước). Sau đó `plan` đề xuất action `adopt` (thêm tag
+  `src:<key>`, cùng các update nội dung nếu có) và `apply` ghi tag đó. `ref` giữ lại trong manifest sau apply, làm
+  phép kiểm (rule `item-ref`).
+- Story và task tạo tay nằm dưới một epic hoặc story của manifest (kể cả epic, story đã adopt) được `plan` liệt kê
+  riêng trong `handMadeChildren`, không phải `staleLinks`. Taigent không động vào nội dung và liên kết của chúng.
 - Item bỏ khỏi manifest không bị xoá trên Taiga. `plan` báo nó là mồ côi để người quyết định.
 - Chuyển task sang story khác (hoặc story sang epic khác) trong manifest: `apply` gắn task vào story mới
   (`user_story`), và gắn story vào epic mới. Liên kết cũ với epic cũ **không bị gỡ**; `plan` báo nó trong
@@ -247,8 +251,9 @@ Mỗi scenario là một checkbox để QA viết test case và tick khi đã ki
 
 ### 6.2 Legacy format (chỉ cho story đã có trên Taiga)
 
-Story đã có trên Taiga (có tag `src:<key>`) được giữ legacy format: `description` là câu `Là <vai trò>, tôi muốn
-<mục tiêu>, để <lợi ích>.` (kèm ngữ cảnh) và `acceptance_criteria` là danh sách câu kiểm được. `apply` ghép:
+Legacy format chỉ dành cho story đã có trên Taiga: story có tag `src:<key>`, hoặc story được adopt (có `ref`, §5).
+`description` là câu `Là <vai trò>, tôi muốn <mục tiêu>, để <lợi ích>.` (kèm ngữ cảnh) và `acceptance_criteria` là
+danh sách câu kiểm được. `apply` ghép:
 
 ```markdown
 Là người dùng, tôi muốn đăng nhập bằng email, để truy cập dữ liệu của mình.
@@ -261,9 +266,15 @@ Là người dùng, tôi muốn đăng nhập bằng email, để truy cập d�
 Spec: docs/specs/auth.md
 ```
 
+**Story tạo tay được adopt.** `taigent adopt` ghi story viết tự do trên Taiga thành story legacy format: toàn bộ mô tả
+nằm nguyên văn trong `description`, không tách `acceptance_criteria` và không có `spec`. Story legacy không có
+`acceptance_criteria` và không có `spec` được ghép ra **đúng** `description`, từng byte (giữ CRLF, khoảng trắng cuối
+dòng, dòng trống cuối). Vì vậy adopt rồi `plan` ngay thì không có update nội dung nào, chỉ có tag `src:<key>`.
+
 Không dùng legacy format cho story mới: `plan` và `apply` thoát exit 4 (rule `story-format`) khi một story sắp được
-tạo không có `use_case`/`scenarios`. Story cũ chỉ được chuyển sang user story format khi người dùng yêu cầu; khi đó
-`apply` cập nhật `description` của nó như một thay đổi bình thường.
+tạo không có `use_case`/`scenarios`. Story được adopt không bị rule này chặn, vì action của nó là `adopt`, không phải
+`create`. Story cũ chỉ được chuyển sang user story format khi người dùng yêu cầu; khi đó `apply` cập nhật
+`description` của nó như một thay đổi bình thường.
 
 ### 6.3 Task, epic và custom attributes
 

@@ -1,5 +1,6 @@
-// Adopt a hand-made epic or issue (spec #53, ticket #57): `taigent adopt` writes the item from Taiga into
-// backlog.yaml with its `ref`, plan proposes the `adopt` action and apply only adds the `src:<key>` tag.
+// Adopt a hand-made item (spec #53, tickets #57 and #58): `taigent adopt` writes the item from Taiga into
+// backlog.yaml with its `ref` (a story under a manifest epic, a task under a manifest story), plan proposes the
+// `adopt` action and apply only adds the `src:<key>` tag.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -158,13 +159,11 @@ test('adopting a hand-made issue copies its type, severity and priority by name,
   assert.equal(h.fake.state.issues[0]!.status, id('issueStatuses', 'In progress'), 'the status set on Taiga stays');
 });
 
-test('adopt refuses a closed item, an item already tagged src:, a story or task, an unknown ref and a used key or ref; it writes nothing', async (t) => {
+test('adopt refuses a closed item, an item already tagged src:, an unknown ref and a used key or ref; it writes nothing', async (t) => {
   const h = await startHarness(t);
   const project = h.fake.addProject({ slug: 'demo' });
   const closed = h.fake.addIssue({ project: project.id, subject: 'Old bug', status: valueId(h, 'issueStatuses', project.id, 'Closed') });
   const tagged = h.fake.addEpic({ project: project.id, subject: 'Accounts', tags: ['src:account'] });
-  const story = h.fake.addUserStory({ project: project.id, subject: 'Hand-made story' });
-  const task = h.fake.addTask({ project: project.id, subject: 'Hand-made task' });
   const free = h.fake.addEpic({ project: project.id, subject: 'Free epic' });
 
   const refused = async (ref: number, key: string, message: RegExp) => {
@@ -176,8 +175,6 @@ test('adopt refuses a closed item, an item already tagged src:, a story or task,
   };
   await refused(closed.ref, 'BUG-OLD', new RegExp(`issue #${closed.ref} is closed`));
   await refused(tagged.ref, 'ACCOUNTS', new RegExp(`epic #${tagged.ref} already carries src:account: it is backlog item ACCOUNT`));
-  await refused(story.ref, 'STORY', new RegExp(`#${story.ref} is a user story; taigent adopt takes epics and issues`));
-  await refused(task.ref, 'TASK', new RegExp(`#${task.ref} is a task; taigent adopt takes epics and issues`));
   await refused(999, 'NOTHING', /no epic, user story, task or issue #999 in project demo/);
   assert.deepEqual(writes(h.fake), []);
   await assert.rejects(readFile(join(h.manifestsDir, 'demo', 'backlog.yaml')), { code: 'ENOENT' });
@@ -185,13 +182,15 @@ test('adopt refuses a closed item, an item already tagged src:, a story or task,
   assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(free.ref), '--key', 'FREE'])).code, 0);
   const before = await readFile(join(h.manifestsDir, 'demo', 'backlog.yaml'), 'utf8');
   await refused(free.ref, 'FREE-AGAIN', new RegExp(`#${free.ref} is already adopted by FREE in backlog.yaml`));
-  await refused(story.ref, 'FREE', /key FREE is already in backlog.yaml/);
+  await refused(closed.ref, 'FREE', /key FREE is already in backlog.yaml/);
   assert.equal(await readFile(join(h.manifestsDir, 'demo', 'backlog.yaml'), 'utf8'), before);
 
-  for (const args of [['--key', 'X'], ['--ref', '1'], ['--ref', 'abc', '--key', 'X'], ['--ref', '1', '--key', 'lower']]) {
+  for (const args of [['--key', 'X'], ['--ref', '1'], ['--ref', 'abc', '--key', 'X'], ['--ref', '1', '--key', 'lower'], ['--ref', '1', '--key', 'X', '--epic', 'A', '--story', 'B'], ['--ref', '1', '--key', 'X', '--epic', 'lower']]) {
     assert.equal((await h.taigent(['adopt', '--project', 'demo', ...args])).code, 2, args.join(' '));
   }
   assert.equal((await h.taigent(['plan', '--project', 'demo', '--ref', '1'])).code, 2, '--ref applies only to adopt');
+  assert.equal((await h.taigent(['plan', '--project', 'demo', '--epic', 'A'])).code, 2, '--epic applies only to adopt');
+  assert.equal((await h.taigent(['plan', '--project', 'demo', '--story', 'A'])).code, 2, '--story applies only to adopt');
 });
 
 test('plan and apply fail with item-ref when a ref does not match Taiga, before any write', async (t) => {
@@ -288,4 +287,129 @@ test('hand-made stories under a backlog epic and hand-made tasks in a backlog st
   const applied = await h.taigent(['apply', '--project', 'demo', '--yes']);
   assert.equal(applied.code, 0, applied.stderr);
   assert.deepEqual(writes(h.fake), [`PATCH /epics/${handMadeEpic.id}`], 'hand-made children and their links are never touched');
+});
+
+test('adopting a free-text story under a backlog epic keeps its whole description verbatim (CRLF, trailing whitespace) in the legacy format: plan has no content update', async (t) => {
+  const h = await startHarness(t);
+  const project = h.fake.addProject({ slug: 'demo' });
+  const epic = h.fake.addEpic({ project: project.id, subject: 'Payments' });
+  const description = 'Customers pay by card.  \r\n\r\nAcceptance:\r\n- [ ] Visa works   \r\n- [x] Mastercard works\t\r\n\r\n';
+  const story = h.fake.addUserStory({ project: project.id, subject: 'Pay by card', description, tags: ['area:payments', 'urgent'] });
+  h.fake.addEpicRelatedUserStory(epic.id, story.id);
+  const task = h.fake.addTask({ project: project.id, subject: 'Card form', description: 'Form fields.  \r\n', user_story: story.id });
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(epic.ref), '--key', 'PAY'])).code, 0);
+
+  const adopted = await h.taigent(['adopt', '--project', 'demo', '--ref', String(story.ref), '--key', 'PAY-CARD', '--epic', 'PAY', '--json']);
+
+  assert.equal(adopted.code, 0, adopted.stderr);
+  assert.deepEqual(adopted.json(), { project: { id: project.id, slug: 'demo' }, type: 'story', key: 'PAY-CARD', ref: story.ref, id: story.id, path: 'epics[0].stories[0]' });
+  assert.deepEqual(writes(h.fake), [], 'adopt writes the manifest only');
+  // Legacy format: the whole description as it is, no acceptance criteria split out of it.
+  assert.deepEqual(await readBacklog(h), {
+    epics: [{ key: 'PAY', ref: epic.ref, subject: 'Payments', stories: [{ key: 'PAY-CARD', ref: story.ref, subject: 'Pay by card', description, tags: ['area:payments'] }] }],
+  });
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, 3, plan.stderr);
+  const { operations, handMadeChildren } = plan.json<Plan>();
+  assert.deepEqual(
+    operations.map((op) => [op.action, op.key, 'changes' in op ? Object.keys(op.changes) : []]),
+    [['adopt', 'PAY', ['tags']], ['adopt', 'PAY-CARD', ['tags']]],
+    'adopting changes nothing but the src: tag: no content update, no link',
+  );
+  // The hand-made task in the adopted story is listed apart, never touched.
+  assert.deepEqual(handMadeChildren, [{ type: 'task', id: task.id, ref: task.ref, subject: 'Card form', parent: 'PAY-CARD' }]);
+
+  const applied = await h.taigent(['apply', '--project', 'demo', '--yes']);
+  assert.equal(applied.code, 0, applied.stderr);
+  assert.deepEqual(writes(h.fake), [`PATCH /epics/${epic.id}`, `PATCH /userstories/${story.id}`]);
+  assert.deepEqual(h.fake.requests.filter((r) => r.method === 'PATCH').at(-1)!.body, { tags: ['area:payments', 'urgent', 'src:pay-card'], version: 1 });
+  assert.equal(h.fake.state.userStories[0]!.description, description);
+  const again = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(again.code, 0, again.stderr);
+  assert.deepEqual(again.json<Plan>().operations.map((op) => [op.action, op.key]), [['skip', 'PAY'], ['skip', 'PAY-CARD']]);
+
+  // The task, now in a backlog story, is adopted under it: verbatim too.
+  const adoptedTask = await h.taigent(['adopt', '--project', 'demo', '--ref', String(task.ref), '--key', 'PAY-CARD-FORM', '--story', 'PAY-CARD', '--json']);
+  assert.equal(adoptedTask.code, 0, adoptedTask.stderr);
+  assert.equal(adoptedTask.json<{ path: string }>().path, 'epics[0].stories[0].tasks[0]');
+  const withTask = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(withTask.code, 3, withTask.stderr);
+  const taskPlan = withTask.json<Plan>();
+  assert.deepEqual(
+    taskPlan.operations.map((op) => [op.action, op.key, 'changes' in op ? Object.keys(op.changes) : []]),
+    [['skip', 'PAY', []], ['skip', 'PAY-CARD', []], ['adopt', 'PAY-CARD-FORM', ['tags']]],
+  );
+  assert.deepEqual(taskPlan.handMadeChildren, []);
+});
+
+test('an adopted legacy story is planned, but a new story in the legacy format is still refused by story-format', async (t) => {
+  const h = await startHarness(t);
+  const project = h.fake.addProject({ slug: 'demo' });
+  const epic = h.fake.addEpic({ project: project.id, subject: 'Payments' });
+  const story = h.fake.addUserStory({ project: project.id, subject: 'Pay by card', description: 'Free text.' });
+  h.fake.addEpicRelatedUserStory(epic.id, story.id);
+  await h.writeManifest(
+    'demo',
+    'backlog.yaml',
+    `epics:
+  - key: PAY
+    ref: ${epic.ref}
+    subject: Payments
+    stories:
+      - key: PAY-CARD
+        ref: ${story.ref}
+        subject: Pay by card
+        description: Free text.
+      - key: PAY-CASH
+        subject: Pay cash
+        description: Free text too.
+`,
+  );
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, 4, plan.stderr);
+  assert.deepEqual(plan.json<ErrorOutput>().error.issues?.map((issue) => [issue.path, issue.rule]), [['epics[0].stories[1]', 'story-format']]);
+  assert.deepEqual(writes(h.fake), []);
+});
+
+test('adopt takes a story only under a manifest epic and a task only under the backlog story it is in on Taiga; otherwise it refuses and writes nothing', async (t) => {
+  const h = await startHarness(t);
+  const project = h.fake.addProject({ slug: 'demo' });
+  const epic = h.fake.addEpic({ project: project.id, subject: 'Payments' });
+  const otherEpic = h.fake.addEpic({ project: project.id, subject: 'Shipping' });
+  const story = h.fake.addUserStory({ project: project.id, subject: 'Pay by card' });
+  const handMadeStory = h.fake.addUserStory({ project: project.id, subject: 'Pay cash' });
+  const inStory = h.fake.addTask({ project: project.id, subject: 'Card form', user_story: story.id });
+  const inHandMade = h.fake.addTask({ project: project.id, subject: 'Cash drawer', user_story: handMadeStory.id });
+  const loose = h.fake.addTask({ project: project.id, subject: 'Loose task' });
+  const issue = h.fake.addIssue({ project: project.id, subject: 'Bug' });
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(epic.ref), '--key', 'PAY'])).code, 0);
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(story.ref), '--key', 'PAY-CARD', '--epic', 'PAY'])).code, 0);
+  const before = await readFile(join(h.manifestsDir, 'demo', 'backlog.yaml'), 'utf8');
+
+  const refused = async (ref: number, parent: string[], message: RegExp) => {
+    const result = await h.taigent(['adopt', '--project', 'demo', '--ref', String(ref), '--key', 'NEW', ...parent, '--json']);
+    assert.equal(result.code, 2, `${ref} ${parent.join(' ')}: ${result.stderr}`);
+    const { error } = result.json<ErrorOutput>();
+    assert.equal(error.kind, 'usage');
+    assert.match(error.message, message);
+  };
+  await refused(handMadeStory.ref, [], new RegExp(`user story #${handMadeStory.ref} goes under an epic of backlog.yaml: add --epic <KEY>`));
+  await refused(handMadeStory.ref, ['--epic', 'SHIP'], /--epic SHIP is not an epic of backlog.yaml/);
+  await refused(handMadeStory.ref, ['--epic', 'PAY-CARD'], /--epic PAY-CARD is not an epic of backlog.yaml/);
+  await refused(handMadeStory.ref, ['--story', 'PAY-CARD'], new RegExp(`user story #${handMadeStory.ref} goes under an epic of backlog.yaml: add --epic <KEY>, not --story`));
+  await refused(inHandMade.ref, [], new RegExp(`task #${inHandMade.ref} goes under a story of backlog.yaml: add --story <KEY>`));
+  await refused(inStory.ref, ['--story', 'PAY'], /--story PAY is not a story of backlog.yaml/);
+  await refused(inHandMade.ref, ['--story', 'PAY-CARD'], new RegExp(`task #${inHandMade.ref} is in user story #${handMadeStory.ref}, which is not a backlog item; adopt that story first`));
+  await refused(loose.ref, ['--story', 'PAY-CARD'], new RegExp(`task #${loose.ref} is in no user story`));
+  await refused(otherEpic.ref, ['--epic', 'PAY'], new RegExp(`epic #${otherEpic.ref} sits at the top of backlog.yaml: drop --epic`));
+  await refused(issue.ref, ['--story', 'PAY-CARD'], new RegExp(`issue #${issue.ref} sits at the top of backlog.yaml: drop --story`));
+  assert.equal(await readFile(join(h.manifestsDir, 'demo', 'backlog.yaml'), 'utf8'), before);
+  assert.deepEqual(writes(h.fake), []);
+
+  // Once its story is adopted, the task can be: a task in another backlog story than --story is still refused.
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(handMadeStory.ref), '--key', 'PAY-CASH', '--epic', 'PAY'])).code, 0);
+  await refused(inHandMade.ref, ['--story', 'PAY-CARD'], new RegExp(`task #${inHandMade.ref} is in user story #${handMadeStory.ref}, which is backlog item PAY-CASH, not PAY-CARD`));
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(inHandMade.ref), '--key', 'PAY-CASH-DRAWER', '--story', 'PAY-CASH'])).code, 0);
 });
