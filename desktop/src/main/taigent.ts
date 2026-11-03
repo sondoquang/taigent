@@ -120,8 +120,9 @@ export function parseCliJson<T>(run: CliRun): { value?: T; error?: CliError } {
     const error = body.error as CliError;
     return { error };
   }
-  if ((run.code === 0 || run.code === 3) && body !== undefined) {
-    // taigent's documented `--json` output for the command the caller ran.
+  if ((run.code === 0 || run.code === 3 || run.code === 6) && body !== undefined) {
+    // taigent's documented `--json` output for the command the caller ran; `plan` still prints its plan on exit 6
+    // (blocked items), `apply --yes` prints the `{ error }` body handled above instead.
     const value = body as T;
     return { value };
   }

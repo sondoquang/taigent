@@ -820,7 +820,7 @@ legend {
   color: var(--warn);
 }
 
-.stat.conflict strong {
+.stat.both-edited strong {
   color: var(--signal);
 }
 
@@ -1164,7 +1164,7 @@ legend {
   color: var(--warn);
 }
 
-.badge.conflict {
+.badge.both-edited {
   background: var(--signal-tint);
   color: var(--signal-strong);
 }

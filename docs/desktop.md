@@ -142,13 +142,13 @@ Mục **Backlog** gồm:
   [Nút chạy skill headless](#nút-chạy-skill-headless)).
 - **Thanh tổng quan**: số epic/story/task/issue; *Mới* (chưa có trên Taiga), *Adopt* (sẽ nhận một mục làm tay trên
   Taiga, chỉ hiện khi có) và *Đã đẩy*; khi có `snapshot.json` thì thêm giờ chụp *Snapshot Taiga* và số mục *Sửa trên
-  Taiga*, *Xung đột với Taiga*, *Khác Taiga* (mỗi số chỉ hiện khi lớn hơn 0; xem [Badge từ Taiga](#badge-từ-taiga));
+  Taiga*, *Cả hai cùng sửa*, *Khác Taiga* (mỗi số chỉ hiện khi lớn hơn 0; xem [Badge từ Taiga](#badge-từ-taiga));
   thanh tiến độ duyệt (số mục *Đạt* trên tổng số mục, chia màu theo *Đạt*, *Cần sửa*, *Đã đổi sau khi duyệt*, *Chưa
   duyệt*) cùng số của từng trạng thái; số góp ý chưa xử lý; kết quả `taigent validate` (bấm *Manifest lỗi* để xem
   từng lỗi). Mục **Thay đổi** hiện cùng các số *Mới*/*Adopt*/*Đã đẩy* và các số từ snapshot.
 - **Cây bên trái**: epic → story → task, rồi nhóm **Issues** (các issue của `backlog.yaml`, không thuộc epic nào).
-  Mỗi mục có nhãn *Mới*, *Adopt #ref* hoặc *Đã đẩy #ref*, nhãn từ snapshot nếu có (*Sửa trên Taiga*, *Xung đột với
-  Taiga*, *Khác Taiga*), trạng thái duyệt và số góp ý mở; *Mới* và *Chưa duyệt* (trạng thái mặc định) hiện dạng chữ
+  Mỗi mục có nhãn *Mới*, *Adopt #ref* hoặc *Đã đẩy #ref*, nhãn từ snapshot nếu có (*Sửa trên Taiga*, *Cả hai cùng
+  sửa*, *Khác Taiga*), trạng thái duyệt và số góp ý mở; *Mới* và *Chưa duyệt* (trạng thái mặc định) hiện dạng chữ
   nhạt, các trạng thái còn lại dạng nhãn màu. Bộ lọc: *Tất cả*, *Chưa duyệt*, *Cần sửa*, *Đã đổi*.
   Khi lọc, epic/story cha vẫn hiện (mờ) để bạn biết mục nằm ở đâu.
 - **Chi tiết bên phải**: tiêu đề, mô tả hiển thị dạng Markdown, đúng nội dung ghi lên Taiga (với story, mô tả đã gồm
@@ -177,12 +177,13 @@ và không có nút adopt hay pull: các việc đó làm bằng CLI hoặc skil
 - **Adopt #ref**: mục trong `backlog.yaml` có `ref` mà `state.json` chưa ghi key của nó. Lần đẩy tới sẽ *adopt* mục
   làm tay `#ref` trên Taiga, tức gắn tag `src:<key>` (xem `taigent adopt`). Đẩy xong thì nhãn chuyển thành
   *Đã đẩy #ref*.
-- **Sửa trên Taiga**, **Xung đột với Taiga**, **Khác Taiga**: chỉ hiện khi có `taiga/<slug>/snapshot.json`, file do
+- **Sửa trên Taiga**, **Cả hai cùng sửa**, **Khác Taiga**: chỉ hiện khi có `taiga/<slug>/snapshot.json`, file do
   `taigent snapshot --project <slug>` ghi (skill chạy lệnh này trước khi lập kế hoạch). Ứng dụng so snapshot với
-  baseline trong `state.json` và với manifest. Đây chính là phép so ba chiều mà `plan` dùng để chặn đẩy (exit 6):
-  - *Sửa trên Taiga*: mục bị sửa trên Taiga còn manifest không đổi.
-  - *Xung đột với Taiga*: cả hai cùng đổi, mỗi bên một kiểu.
-  - *Khác Taiga*: mục chưa có baseline và khác Taiga.
+  baseline trong `state.json` và với manifest. Đây chính là phép so ba chiều mà `plan` dùng để chặn đẩy (exit 6), và
+  là cùng ba nhãn mà **Xem thay đổi trên Taiga** dùng cho các mục bị chặn:
+  - *Sửa trên Taiga* (`remote-edit`): mục bị sửa trên Taiga còn manifest không đổi.
+  - *Cả hai cùng sửa* (`both-edited`): cả hai cùng đổi, mỗi bên một kiểu.
+  - *Khác Taiga* (`unknown`): mục chưa có baseline và khác Taiga.
 
   Rê chuột lên nhãn để xem giờ chụp snapshot và các trường liên quan. Ở phần chi tiết, nhãn ghi luôn các trường đó.
   Không có snapshot thì không có các nhãn này. Snapshot là bản chụp tại một thời điểm: nếu nó được chụp trước lần đẩy
@@ -331,14 +332,21 @@ hợp lệ hay không) và hiện kết quả của lần chạy gần nhất ng
 khác.
 
 - **Xem thay đổi trên Taiga** chạy `taigent plan --project <slug> --json`: chỉ đọc Taiga, không ghi gì. Kết quả liệt
-  kê các mục sẽ được tạo mới, cập nhật (kèm trường thay đổi) hoặc gắn vào epic, cả issue, rồi hai danh sách không phải
-  thay đổi (taigent không bao giờ gỡ hay xoá chúng):
+  kê các mục sẽ được tạo mới, cập nhật (kèm trường thay đổi), adopt (mục làm tay trên Taiga) hoặc gắn vào epic, cả
+  issue, rồi hai danh sách không phải thay đổi (taigent không bao giờ gỡ hay xoá chúng):
   - **mục mồ côi**: mục trên Taiga không còn trong backlog, kèm loại của từng mục;
   - **liên kết cũ (stale link)**: story trên Taiga còn gắn với một epic taigent khác epic của nó trong backlog (story
     đã chuyển epic). `apply` gắn story vào epic mới nhưng không gỡ liên kết cũ; nếu không cần nữa, gỡ tay trên Taiga.
+
+  Khi `plan` exit 6 (có mục bị chặn), ứng dụng vẫn đọc kế hoạch JSON mà `plan` in ra và hiện nó như mọi kết quả khác,
+  không coi là lỗi: tiêu đề *Có mục bị chặn, chưa thể đẩy lên Taiga*, rồi khung **mục bị chặn** liệt kê từng mục với
+  nhãn loại (*Sửa trên Taiga*, *Cả hai cùng sửa*, *Khác Taiga*, xem [Badge từ Taiga](#badge-từ-taiga)), loại mục,
+  `#ref`, key và các trường khác nhau. Xử lý từng mục trong `backlog.yaml` (nhờ agent, skill `taiga-plan-backlog`:
+  lấy giá trị trên Taiga bằng `taigent pull` hoặc gộp hai bên) rồi xem lại.
 - **Đẩy lên Taiga** bị chặn khi `taigent validate` báo lỗi hoặc còn mục **Cần sửa** có góp ý chưa xử lý. Nếu không
-  bị chặn, ứng dụng chạy `plan` trước. Không có thay đổi thì dừng ở đó. Có thay đổi thì ứng dụng mở hộp thoại xác nhận
-  liệt kê số mục tạo mới/cập nhật (trong đó bao nhiêu issue)/gắn epic, số mục chưa duyệt và số mục đã đổi sau khi duyệt. **Bấm "Đẩy lên Taiga"
+  bị chặn, ứng dụng chạy `plan` trước. Còn mục bị chặn (exit 6) thì dừng ở đó, không mở hộp thoại, và hiện kế hoạch
+  cùng các mục bị chặn như trên. Không có thay đổi thì cũng dừng. Có thay đổi thì ứng dụng mở hộp thoại xác nhận
+  liệt kê số mục tạo mới/cập nhật (trong đó bao nhiêu issue)/adopt (gắn tag `src:` cho mục làm tay)/gắn epic, số mục chưa duyệt và số mục đã đổi sau khi duyệt. **Bấm "Đẩy lên Taiga"
   trong hộp thoại này chính là đồng ý apply** (conventions §1). Chỉ sau đó ứng dụng mới chạy
   `taigent apply --project <slug> --yes --json` và hiện báo cáo. Nếu apply lỗi giữa chừng, các mục đã ghi được lưu
   trong `state.json`, lần chạy sau sẽ tiếp tục từ chỗ dừng.
@@ -635,9 +643,12 @@ nguyên), sửa trang đó (slug bị khoá, chỉ file trang đổi). *Đẩy w
 `TAIGA_PASSWORD` của nó trong lúc đó): hộp thoại xác nhận liệt kê tạo mới, cập nhật, bỏ qua và được trả lời *Huỷ*
 (Taiga giả không nhận request ghi nào); sai mật khẩu thì hiện thông báo tiếng Việt kèm cách sửa; cuối cùng, chỉ với
 Taiga giả, hộp thoại được trả lời đồng ý trong khi trang bị sửa trên Taiga giữa chừng, và màn hình hiện thông báo
-conflict kèm cách sửa. Tiếp đó, cũng với một Taiga giả có story `REVIEW-MARKDOWN` còn gắn với epic cũ `OLD-REVIEW`,
-script bấm *Xem thay đổi trên Taiga* trong mục Thay đổi và kiểm tra màn hình liệt kê liên kết cũ đó (stale link) và
-epic cũ là mục mồ côi, không có request ghi nào. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
+conflict kèm cách sửa. Tiếp đó, với một Taiga giả khác, script chạy `taigent apply --yes` một lần để mọi mục có
+baseline trong `state.json` (thay `state.json` của fixture trong lúc chạy, xong thì trả lại), gắn thêm story
+`REVIEW-MARKDOWN` vào epic cũ `OLD-REVIEW`, bấm *Xem thay đổi trên Taiga* trong mục Thay đổi và kiểm tra màn hình liệt
+kê liên kết cũ đó (stale link), epic cũ là mục mồ côi và không có mục bị chặn. Rồi script sửa subject của story đó trên
+Taiga giả, bấm lại và kiểm tra `plan` exit 6 vẫn hiện kế hoạch với khung mục bị chặn (*Sửa trên Taiga*, `#ref`, key,
+`subject`); `plan` không gửi request ghi nào. Nếu đã đăng nhập, script chạy thêm *Xem thay đổi trên Taiga* trong mục
 Thay đổi (chỉ đọc; với fixture, Taiga báo không có project `smoke-taigent-desktop`), rồi tạo tạm một `backlog.yaml`
 trống cho project Taiga đầu tiên bạn là thành viên, mở form issue của project đó và kiểm tra ba dropdown type,
 severity, priority có đúng các giá trị trong `taigent projects --project <slug> --json` (bấm *Huỷ*, không lưu gì; thư

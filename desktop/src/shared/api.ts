@@ -7,7 +7,7 @@ import type { InitFile, InitReport } from '../../../src/init.ts';
 import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
-import type { StaleLink } from '../../../src/planner.ts';
+import type { BlockedItem, StaleLink } from '../../../src/planner.ts';
 import type { ProjectDetailReport, StoryStatusEntry } from '../../../src/projects.ts';
 import type { ProjectReport } from '../../../src/report.ts';
 import type { Preview, PreviewEpic, PreviewIssue, PreviewItem, PreviewStory, PreviewSummary, ReviewComment, Verdict } from '../../../src/review.ts';
@@ -113,16 +113,6 @@ export interface Plan {
   handMadeChildren: { type: string; id: number; ref: number; subject: string; parent: string }[];
 }
 
-export interface BlockedItem {
-  kind: 'remote-edit' | 'conflict' | 'unknown';
-  type: string;
-  key: string;
-  id: number;
-  ref: number;
-  /** Per field: the baseline (absent for `unknown`), Taiga's and the manifest's value. */
-  fields: Record<string, { baseline?: unknown; taiga: unknown; manifest: unknown }>;
-}
-
 export interface ApplyReport {
   project: { id: number; slug: string };
   operations: { action: string; type: string; key: string; id: number; ref: number; epic?: string; result: string }[];
@@ -131,6 +121,8 @@ export interface ApplyReport {
 
 export type ApplyOutcome =
   | { status: 'blocked'; reasons: string[] }
+  /** `plan` exited 6: items blocked on Taiga; nothing was asked or written. */
+  | { status: 'plan-blocked'; plan: Plan }
   | { status: 'no-changes'; plan: Plan }
   | { status: 'cancelled' }
   | { status: 'applied'; report: ApplyReport };

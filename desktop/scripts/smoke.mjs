@@ -10,7 +10,7 @@
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -509,20 +509,33 @@ async function wikiScenario(page) {
 }
 
 /**
- * Thay đổi › "Xem thay đổi trên Taiga" against a fake Taiga where story REVIEW-MARKDOWN is still linked to an old
- * taigent epic: the screen lists that stale link (and the old epic as an orphan) next to the changes.
+ * Thay đổi › "Xem thay đổi trên Taiga" against a fake Taiga. The backlog is first applied to it with the CLI, so every
+ * item has a baseline in state.json (else plan blocks them as `unknown`). Then story REVIEW-MARKDOWN is also linked to
+ * an old taigent epic: the screen lists that stale link (and the old epic as an orphan) next to the changes. Last, the
+ * story is edited on Taiga: plan exits 6 and the screen lists it as a blocked item. state.json is put back afterwards.
  */
 async function staleLinkScenario(page) {
   const { startFakeTaiga } = await import(pathToFileURL(join(repo, 'test', 'support', 'fake-taiga.ts')).href);
   const fake = await startFakeTaiga();
-  const before = await setMainEnv(app, { TAIGA_API_URL: fake.url, TAIGA_USERNAME: fake.user.username, TAIGA_PASSWORD: fake.user.password, TAIGA_TOKEN: null });
+  const credentials = { TAIGA_API_URL: fake.url, TAIGA_USERNAME: fake.user.username, TAIGA_PASSWORD: fake.user.password, TAIGA_TOKEN: null };
+  const before = await setMainEnv(app, credentials);
+  const stateFile = join(manifests, project, 'state.json');
+  const recorded = await readFile(stateFile, 'utf8');
   try {
     const remote = fake.addProject({ slug: project });
     // The epic form step filled this attribute of project.yaml: plan needs the project to define it.
     fake.addCustomAttribute({ itemType: 'epic', project: remote.id, name: 'Mục tiêu quý' });
+    // The fixture's state.json names items of another Taiga: start from none, then apply records every baseline.
+    await writeFile(stateFile, JSON.stringify({ items: {} }));
+    const applied = await taigentAsync(credentials, 'apply', '--project', project, '--yes', '--json');
+    check(applied.status === 0, `taigent apply seeds the fake Taiga and the baselines (exit ${applied.status}: ${applied.stderr.trim()})`);
+    const markdownId = JSON.parse(await readFile(stateFile, 'utf8')).items['REVIEW-MARKDOWN']?.id;
+    const markdown = fake.state.userStories.find((candidate) => candidate.id === markdownId);
+    check(markdown?.tags.includes('src:review-markdown'), 'apply created story REVIEW-MARKDOWN and state.json records it');
     const old = fake.addEpic({ project: remote.id, subject: 'Epic cũ', tags: ['src:old-review'] });
-    const markdown = fake.addUserStory({ project: remote.id, subject: 'Mô tả hiển thị Markdown', tags: ['src:review-markdown'] });
     fake.addEpicRelatedUserStory(old.id, markdown.id);
+    const seeded = fake.requests.length;
+
     await goTo(page, 'changes');
     await page.click('#plan-btn');
     await page.waitForSelector('#changes-result h2', { timeout: 120_000 });
@@ -533,11 +546,26 @@ async function staleLinkScenario(page) {
       `Thay đổi lists the stale link of REVIEW-MARKDOWN to the old epic, which apply never removes${stale ? '' : ` (screen: ${result})`}`,
     );
     check(result?.includes('OLD-REVIEW – Epic cũ'), 'the old epic is listed as an orphan');
-    check(fake.requests.every((request) => request.method === 'GET' || request.path === '/auth'), 'plan writes nothing to Taiga');
+    check(!(await page.isVisible('#plan-blocked')), `with the baselines of apply, nothing is blocked (screen: ${result})`);
     await page.screenshot({ path: join(shots, '9b-plan-stale-link.png') });
+
+    // Edited on Taiga since apply: plan exits 6, and the plan still shows, with the blocked item.
+    fake.editItem(markdown, { subject: 'Sửa trên Taiga giả' });
+    await page.click('#plan-btn');
+    await page.waitForSelector('#plan-blocked', { timeout: 120_000 });
+    const title = await page.textContent('#changes-result h2');
+    const blocked = await page.textContent('#plan-blocked');
+    check(title?.includes('bị chặn'), `an exit-6 plan is shown as a plan with blocked items, not as a failure (${title})`);
+    check(
+      blocked?.includes('Sửa trên Taiga') && blocked.includes(`#${markdown.ref}`) && blocked.includes('REVIEW-MARKDOWN') && blocked.includes('subject'),
+      `the blocked item names its kind, ref, key and fields (${blocked})`,
+    );
+    check(fake.requests.slice(seeded).every((request) => request.method === 'GET' || request.path === '/auth'), 'plan writes nothing to Taiga');
+    await page.screenshot({ path: join(shots, '9c-plan-blocked.png') });
   } finally {
     await setMainEnv(app, before);
     await fake.close();
+    await writeFile(stateFile, recorded);
   }
   await goTo(page, 'backlog');
 }
@@ -564,7 +592,7 @@ async function snapshotBadgeScenario(page) {
   await page.waitForSelector('#tree .node[data-key="REVIEW"] .badge.remote.unknown', { timeout: 10_000 });
   check((await page.textContent('#tree .node[data-key="REVIEW"] .badge.remote')) === 'Khác Taiga', 'epic REVIEW is labelled Khác Taiga from snapshot.json');
   check((await page.textContent('#summary'))?.includes('Snapshot Taiga'), 'the summary dates the snapshot');
-  await page.screenshot({ path: join(shots, '9c-snapshot-badges.png') });
+  await page.screenshot({ path: join(shots, '9d-snapshot-badges.png') });
 
   await rm(snapshotFile);
   await writeFile(backlogFile, backlog);
@@ -575,6 +603,24 @@ async function snapshotBadgeScenario(page) {
 /** Runs the taigent CLI of this repository on the temporary manifests (offline commands only). */
 function taigent(...args) {
   return spawnSync(process.execPath, [join(repo, 'bin', 'taigent.js'), ...args], { cwd: work, env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests }, encoding: 'utf8' });
+}
+
+/** Runs the taigent CLI on the temporary manifests with `env` on top, without blocking the in-process fake Taiga. */
+function taigentAsync(env, ...args) {
+  const merged = { ...process.env, TAIGENT_MANIFESTS_DIR: manifests };
+  for (const [name, value] of Object.entries(env)) {
+    if (value === null) delete merged[name];
+    else merged[name] = value;
+  }
+  return new Promise((done, reject) => {
+    const child = spawn(process.execPath, [join(repo, 'bin', 'taigent.js'), ...args], { cwd: work, env: merged });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => (stdout += chunk));
+    child.stderr.setEncoding('utf8').on('data', (chunk) => (stderr += chunk));
+    child.on('error', reject);
+    child.on('close', (status) => done({ status, stdout, stderr }));
+  });
 }
 
 /** The story `key` as backlog.yaml holds it now. */

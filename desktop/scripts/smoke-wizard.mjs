@@ -104,9 +104,10 @@ export async function smokeWizard({ app, page, repo, work, shots, check, goTo, l
   }
   check(JSON.parse(await readFile(join(created, '.mcp.json'), 'utf8')).mcpServers?.taiga !== undefined, 'wizard: .mcp.json has the taiga server');
   const rows = await page.locator('#setup-init-result tr[data-status]').evaluateAll((trs) => trs.map((tr) => `${tr.dataset.path}=${tr.dataset.status}`));
+  // The wizard writes .gitignore before init, which adds Taigent's lines to it; every other file is new.
   check(
-    rows.length === after.files.length && rows.every((row) => row.endsWith('=created')),
-    `wizard: lists the ${rows.length} files init created`,
+    rows.length === after.files.length && rows.every((row) => row.endsWith(row.startsWith('.gitignore=') ? '=updated' : '=created')),
+    `wizard: lists the ${rows.length} files init created or updated (${rows.filter((row) => !row.endsWith('=created')).join(', ')})`,
   );
   await waitSetupState('current');
   check((await bannerState()) === undefined, 'wizard: no setup suggestion for the set-up repository');

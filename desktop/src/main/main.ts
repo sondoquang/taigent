@@ -192,16 +192,11 @@ async function logout(): Promise<Result<LoginStatus>> {
   return { ok: true, value: await whoami() };
 }
 
+/** `taigent plan --json`: exit 0/3 (nothing or something to write) and exit 6 (blocked items, listed in `blocked`) all carry the plan. */
 async function plan(slug: string): Promise<Result<Plan>> {
   const run = await runCli(['plan', '--project', slug, '--json'], requireRepo());
   const { value, error } = parseCliJson<Plan>(run);
-  if (value && (run.code === 0 || run.code === 3)) return { ok: true, value };
-  // Exit 6: items changed on Taiga since taigent last wrote them (or never recorded); apply would refuse.
-  if (value && run.code === 6) {
-    return failure('Có mục đã bị sửa trên Taiga (hoặc chưa có baseline): cần xử lý trong backlog.yaml trước khi đẩy lên Taiga.', {
-      detail: value.blocked.map((item) => `${item.key} (${item.kind}): ${Object.keys(item.fields).join(', ')}`).join('\n'),
-    });
-  }
+  if (value && (run.code === 0 || run.code === 3 || run.code === 6)) return { ok: true, value };
   return failure('Không lấy được thay đổi từ Taiga.', { detail: error?.message, issues: error?.issues });
 }
 
@@ -217,6 +212,8 @@ async function apply(slug: string): Promise<Result<ApplyOutcome>> {
   if (reasons.length > 0) return { ok: true, value: { status: 'blocked', reasons } };
   const planned = await plan(slug);
   if (!planned.ok) return planned;
+  // Exit 6: apply would refuse; the renderer lists the blocked items with how to settle them.
+  if (planned.value.blocked.length > 0) return { ok: true, value: { status: 'plan-blocked', plan: planned.value } };
   if (!planned.value.changes) return { ok: true, value: { status: 'no-changes', plan: planned.value } };
 
   const { summary } = view.value.preview;
@@ -226,7 +223,7 @@ async function apply(slug: string): Promise<Result<ApplyOutcome>> {
     `Dự án: ${slug}`,
     `Tạo mới: ${counts.create} mục`,
     `Cập nhật: ${counts.update} mục`,
-    `Adopt (gắn tag src: cho item tạo tay): ${counts.adopt} mục`,
+    `Adopt (gắn tag src: cho mục làm tay): ${counts.adopt} mục`,
     `Trong đó issue: tạo mới ${issueOps.filter((op) => op.action === 'create').length}, cập nhật ${issueOps.filter((op) => op.action === 'update').length}`,
     `Gắn story vào epic: ${counts.link}`,
     '',

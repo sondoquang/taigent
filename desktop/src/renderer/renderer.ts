@@ -70,12 +70,16 @@ function reviewStatus(item: PreviewItem): { label: string; css: string } {
   return { label: 'Chưa duyệt', css: 'unreviewed' };
 }
 
-/** How the review screen names what plan would block, from snapshot.json (`PreviewItem.blocked`). */
+/**
+ * How the app names what plan blocks: the snapshot badges and summary (`PreviewItem.blocked`) and the blocked items of
+ * `taigent plan` (exit 6) all take their label from here.
+ */
 const BLOCKED_LABEL: Record<NonNullable<PreviewItem['blocked']>['kind'], { label: string; hint: string }> = {
-  'remote-edit': { label: 'Sửa trên Taiga', hint: 'đã bị sửa trên Taiga sau lần đẩy cuối, manifest không đổi' },
-  conflict: { label: 'Xung đột với Taiga', hint: 'cả Taiga và manifest đều đổi, khác nhau' },
+  'remote-edit': { label: 'Sửa trên Taiga', hint: 'đã bị sửa trên Taiga sau lần ghi cuối, manifest không đổi' },
+  'both-edited': { label: 'Cả hai cùng sửa', hint: 'cả Taiga và manifest đều đổi, khác nhau' },
   unknown: { label: 'Khác Taiga', hint: 'khác Taiga và chưa có baseline trong state.json' },
 };
+const BLOCKED_KINDS = Object.keys(BLOCKED_LABEL) as (keyof typeof BLOCKED_LABEL)[];
 
 function badges(item: PreviewItem, compact: boolean): HTMLElement {
   const status = reviewStatus(item);
@@ -213,9 +217,7 @@ function originCells(view: ProjectView): HTMLElement[] {
     cells.push(
       h('div', { class: 'sep' }),
       statCell('Snapshot Taiga', formatTime(snapshot.readAt)),
-      blocked['remote-edit'] > 0 && statCell('Sửa trên Taiga', blocked['remote-edit'], 'remote'),
-      blocked.conflict > 0 && statCell('Xung đột với Taiga', blocked.conflict, 'conflict'),
-      blocked.unknown > 0 && statCell('Khác Taiga', blocked.unknown, 'remote'),
+      ...BLOCKED_KINDS.map((kind) => blocked[kind] > 0 && statCell(BLOCKED_LABEL[kind].label, blocked[kind], `remote ${kind}`)),
     );
   }
   return cells.filter((cell): cell is HTMLElement => cell !== false);
@@ -622,7 +624,28 @@ function planTable(plan: Plan): HTMLElement {
       {},
       `Tạo mới ${plan.summary.create} · Cập nhật ${plan.summary.update} · Adopt ${plan.summary.adopt} · Gắn epic ${plan.summary.link} · Không đổi ${plan.summary.skip}`,
     ),
-    operations.length === 0 && h('p', {}, 'Không có thay đổi nào cần đẩy.'),
+    plan.blocked.length > 0 &&
+      h(
+        'div',
+        { class: 'warn-box', id: 'plan-blocked' },
+        h('strong', {}, `${plan.blocked.length} mục bị chặn: đẩy lên Taiga không ghi gì cho tới khi backlog.yaml xử lý chúng.`),
+        h('p', {}, 'Nhờ agent xử lý (skill taiga-plan-backlog): lấy giá trị trên Taiga (taigent pull) hoặc gộp hai bên trong backlog.yaml, rồi xem lại thay đổi.'),
+        h(
+          'ul',
+          {},
+          ...plan.blocked.map((item) =>
+            h(
+              'li',
+              { class: `blocked-${item.kind}`, title: BLOCKED_LABEL[item.kind].hint },
+              h('span', { class: `badge remote ${item.kind}` }, BLOCKED_LABEL[item.kind].label),
+              ` ${TYPE_LABEL[item.type as PreviewItem['type']] ?? item.type} #${item.ref} `,
+              h('code', {}, item.key),
+              `: ${Object.keys(item.fields).join(', ')}`,
+            ),
+          ),
+        ),
+      ),
+    operations.length === 0 && plan.blocked.length === 0 && h('p', {}, 'Không có thay đổi nào cần đẩy.'),
     operations.length > 0 &&
       h(
         'table',
@@ -685,7 +708,7 @@ async function showPlan(): Promise<void> {
   if (!result.ok) return showChangesResult(slug, 'Xem thay đổi trên Taiga', failureBlock(result));
   showChangesResult(
     slug,
-    result.value.changes ? 'Thay đổi sẽ ghi lên Taiga' : 'Taiga đã khớp với backlog',
+    result.value.blocked.length > 0 ? 'Có mục bị chặn, chưa thể đẩy lên Taiga' : result.value.changes ? 'Thay đổi sẽ ghi lên Taiga' : 'Taiga đã khớp với backlog',
     planTable(result.value),
   );
 }
@@ -703,6 +726,7 @@ function applyOutcome(slug: string, outcome: ApplyOutcome): void {
       h('p', { class: 'muted' }, 'Nhờ agent xử lý góp ý (skill taiga-plan-backlog), rồi duyệt lại trong mục Backlog.'),
     );
   }
+  if (outcome.status === 'plan-blocked') return showChangesResult(slug, 'Có mục bị chặn, chưa thể đẩy lên Taiga', planTable(outcome.plan));
   if (outcome.status === 'no-changes') return showChangesResult(slug, 'Taiga đã khớp với backlog', h('p', {}, 'Không có thay đổi nào cần đẩy.'));
   const { report } = outcome;
   const RESULT: Record<string, string> = { created: 'Đã tạo', updated: 'Đã cập nhật', adopted: 'Đã adopt', linked: 'Đã gắn', unchanged: 'Không đổi' };
