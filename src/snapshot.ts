@@ -7,7 +7,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { writeAtomic } from './files.ts';
 import { ISSUE_VALUE_FIELDS, type IssueValueField } from './items.ts';
-import { keyOf } from './planner.ts';
+import { keyOf } from './managed.ts';
 import type { TaigaClient, TaigaItem } from './taiga/client.ts';
 
 /** One epic, story, task or issue as Taiga holds it. */

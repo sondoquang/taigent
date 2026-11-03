@@ -446,7 +446,14 @@ members:                            # optional
     role: Front
 wiki_home: |                        # optional Markdown for the wiki page `home`
   # Acme Portal
+existing: true                      # optional, default false: a project made in Taiga before taigent (see below)
 ```
+
+`existing: true` declares a Hand-made project that already exists on Taiga: the `project-name` and `project-slug`
+rules do not apply (`name` must be non-empty, `slug` is the project's real Taiga slug, still equal to the directory
+name), and bootstrap never creates it. When no visible project has the slug, bootstrap exits 5 before any write
+(`--dry-run` too); otherwise it fills the gaps like for any existing project. Taigent Desktop's project form writes
+the flag when it takes the project name from Taiga.
 
 Steps, in order (each is `create`, `update` or `skip` in the plan):
 
@@ -459,7 +466,7 @@ Steps, in order (each is `create`, `update` or `skip` in the plan):
 | membership | `POST /memberships {project, role, username}` (role id looked up by name) | username not a member / e-mail not invited |
 | wiki | `POST /wiki {project, slug: "home", content}` | `GET /wiki/by_slug` finds no `home` (an existing page is left alone) |
 
-Refusals (exit 5, nothing written): the slug exists but `i_am_admin` is false (`status: 403`); the slug belongs to a
+Refusals (exit 5, nothing written): `existing: true` but no visible project has the slug; the slug exists but `i_am_admin` is false (`status: 403`); the slug belongs to a
 private project the user cannot see (`status: 403`); a member's role is not defined by the template/project; the
 template is unknown. `GET /projects/by_slug` answers 404 both for a free slug and for a private project the user is not
 a member of, so when it finds nothing bootstrap asks `GET /resolver?project=<slug>`, which taiga-back answers 403 for
@@ -977,6 +984,7 @@ skill checks all of it and names each fix.
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links, issue values (when the backlog has issues) and attribute values `buildPlan` needs |
+| Managed values | `src/managed.ts` | pure `manifestManagedValues(entry)` and `remoteManagedValues(type, item, remote, attributes)` → `ManagedValues` (plain JSON): the fields taigent owns on an item (subject, description, `type:`/`area:` tags, declared custom attributes, an issue's type/severity/priority names, a task's story key, a story's epic keys), projected the same way from the manifest and from Taiga; `differingFields(manifest, remote)` (tags and epic links additive), `keyOf(item)`. Status, assignee, sprint, points and unprefixed tags are outside the projection |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)` |
 | Story template | `src/story-template.ts` | pure `storyDescription(story)`: the description apply writes for a story, shared by the planner, `preview` and Taigent Desktop's story form (bundled into its renderer, so the module imports nothing from Node) |
 | Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, `reviewKeys(backlog)` (the keys `review.yaml` may name), pure `setVerdict`/`addComment`, pure `rekeyReview(review, keys)` and `rekeyReviewFile(dir, keys)` (a renamed item keeps its comments and loses its verdict; a removed one loses its entry), `itemDigest`, `buildPreview(dir, slug)` → `Preview` (epic tree + `issues`), `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |

@@ -24,6 +24,7 @@ Read `docs/cli.md` section "Bootstrap" (the `project.yaml` schema; fields it doe
 - **`taiga/<slug>/project.yaml` exists**: read it and check it against what the user asked for. Edit only the lines that must change.
 - **No manifest yet**: gather from the user what you cannot derive (the name, a one-line description, the template, members and their roles), then write `taiga/<slug>/project.yaml` per those conventions.
 - To see whether the project already exists, use `listProjects` (and `getProject` for details); without these tools, rely on the dry run of step 2. An existing slug is completed, not duplicated; bootstrap needs the user to be its admin.
+- **Hand-made project** (made in Taiga before taigent, name not `<A> - <B>` or slug not derived from it): copy its exact name and slug from Taiga and add `existing: true`. The name and slug rules then do not apply, and bootstrap refuses (exit 5, nothing written) when no visible project has that slug instead of creating one. Never rename the project to satisfy the conventions.
 
 Then run `npx taigent validate --project <slug>`. Exit 4 prints each problem as `file: path: message [rule]`; fix every one and run it again. Done when it exits 0.
 
