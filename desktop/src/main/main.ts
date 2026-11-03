@@ -196,6 +196,12 @@ async function plan(slug: string): Promise<Result<Plan>> {
   const run = await runCli(['plan', '--project', slug, '--json'], requireRepo());
   const { value, error } = parseCliJson<Plan>(run);
   if (value && (run.code === 0 || run.code === 3)) return { ok: true, value };
+  // Exit 6: items changed on Taiga since taigent last wrote them (or never recorded); apply would refuse.
+  if (value && run.code === 6) {
+    return failure('Có mục đã bị sửa trên Taiga (hoặc chưa có baseline): cần xử lý trong backlog.yaml trước khi đẩy lên Taiga.', {
+      detail: value.blocked.map((item) => `${item.key} (${item.kind}): ${Object.keys(item.fields).join(', ')}`).join('\n'),
+    });
+  }
   return failure('Không lấy được thay đổi từ Taiga.', { detail: error?.message, issues: error?.issues });
 }
 

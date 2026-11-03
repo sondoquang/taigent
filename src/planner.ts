@@ -1,4 +1,4 @@
-// Planner: pure function from (manifest, Taiga state read back) to an ordered plan. No I/O.
+// Planner: pure function from (manifest, Taiga state read back, baselines of state.json) to an ordered plan. No I/O.
 
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
 import {
@@ -9,7 +9,17 @@ import {
   type LegacyStoryCreate,
   type UnknownIssueValue,
 } from './manifest/backlog.ts';
-import { differingFields, keyOf, manifestManagedValues, remoteManagedValues, type ManagedField, type ManifestItem } from './managed.ts';
+import {
+  differingFields,
+  keyOf,
+  manifestManagedValues,
+  remoteEditedFields,
+  remoteManagedValues,
+  type ManagedField,
+  type ManagedValues,
+  type ManifestItem,
+} from './managed.ts';
+import type { StateEntry } from './manifest/state.ts';
 import { summarize, type Action, type PlanSummary } from './operations.ts';
 import {
   TaigaError,
@@ -117,11 +127,45 @@ export interface StaleLink {
   epicRef: number;
 }
 
+/**
+ * Why plan blocks an item, from its baseline (B, state.json), Taiga's values (T) and the manifest's (M):
+ * `remote-edit` T changed since B and M did not; `conflict` both changed, differently; `unknown` no B and M ≠ T.
+ */
+export type BlockedKind = 'remote-edit' | 'conflict' | 'unknown';
+
+/** One field of a blocked item: its baseline (absent for `unknown`), Taiga's and the manifest's value. */
+export interface BlockedField {
+  baseline?: ManagedValues[ManagedField];
+  taiga: ManagedValues[ManagedField];
+  manifest: ManagedValues[ManagedField];
+}
+
+/** A tagged item plan neither updates nor skips until a person settles it; apply refuses while there is one. */
+export interface BlockedItem {
+  kind: BlockedKind;
+  type: ItemType;
+  key: string;
+  id: number;
+  ref: number;
+  /** The fields that differ between any two of the versions. */
+  fields: Partial<Record<ManagedField, BlockedField>>;
+}
+
 export interface Plan extends PlanSummary<Action> {
   project: PlanProject;
   operations: Operation[];
   orphans: Orphan[];
   staleLinks: StaleLink[];
+  blocked: BlockedItem[];
+}
+
+/**
+ * A plan and the baseline apply records for each item once its operation succeeds (by key; a story's epic links are
+ * those before its `link` operation, which adds its epic).
+ */
+export interface PlannedBacklog {
+  plan: Plan;
+  baselines: Map<string, ManagedValues>;
 }
 
 /**
@@ -184,7 +228,8 @@ export function describePlanOperation(op: Operation): string {
 }
 
 
-export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
+/** `state`: the items of state.json; an entry's baseline counts only for the Taiga item of its type and id. */
+export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly<Record<string, StateEntry>> = {}): PlannedBacklog {
   const remoteItems: Record<ItemType, TaigaItem[]> = { epic: remote.epics, story: remote.stories, task: remote.tasks, issue: remote.issues };
   const bySrcTag = {} as Record<ItemType, Map<string, TaigaItem>>;
   for (const type of ITEM_TYPES) {
@@ -201,11 +246,13 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   const unknownAttributes: string[] = [];
   const legacyCreates: LegacyStoryCreate[] = [];
   const unknownIssueValues: UnknownIssueValue[] = [];
+  const blocked: BlockedItem[] = [];
+  const baselines = new Map<string, ManagedValues>();
 
   /**
-   * Plans create/update/skip for one manifest item from its managed values and those of its Taiga counterpart.
-   * Returns the counterpart, if any, and the fields where it differs. `values`: an issue's type, severity and
-   * priority ids.
+   * Plans create/update/skip for one manifest item from its managed values, those of its Taiga counterpart and its
+   * baseline, or blocks it. Returns the counterpart, if any, and the fields to write (none when blocked).
+   * `values`: an issue's type, severity and priority ids.
    */
   function reconcile(entry: ManifestItem, values?: Record<IssueValueField, number>): { existing?: TaigaItem; differing?: ManagedField[] } {
     const { type } = entry;
@@ -231,10 +278,30 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
         fields: { subject: want.subject, description: want.description, tags: [...new Set([...want.tags, tag])], ...values },
         ...(declared.length > 0 && { custom_attributes: entry.item.customAttributes }),
       });
+      // A story's epic link is recorded by its own link operation.
+      baselines.set(key, entry.type === 'story' ? { ...want, epics: [] } : want);
       return {};
     }
     const have = remoteManagedValues(type, existing, remote, declared);
     const differing = differingFields(want, have);
+    const recorded = state[key];
+    const baseline = recorded?.type === type && recorded.id === existing.id ? recorded.baseline : undefined;
+    let kind: BlockedKind | undefined;
+    let fields: ManagedField[] = differing;
+    if (!baseline) {
+      if (differing.length > 0) kind = 'unknown';
+    } else {
+      const remoteEdits = remoteEditedFields(baseline, have, want);
+      const manifestEdits = differingFields(want, baseline);
+      // Both changed the same way (differing is empty): a skip that takes Taiga's values as the new baseline.
+      if (remoteEdits.length > 0 && manifestEdits.length === 0) [kind, fields] = ['remote-edit', remoteEdits];
+      else if (remoteEdits.length > 0 && differing.length > 0) [kind, fields] = ['conflict', [...new Set([...remoteEdits, ...manifestEdits, ...differing])]];
+    }
+    if (kind) {
+      const versions = fields.map((field) => [field, { ...(baseline && { baseline: baseline[field] }), taiga: have[field], manifest: want[field] }]);
+      blocked.push({ kind, type, key, id: existing.id, ref: existing.ref, fields: Object.fromEntries(versions) });
+      return { existing, differing: [] };
+    }
     const changes: FieldChanges = {};
     for (const field of differing) {
       switch (field) {
@@ -275,6 +342,8 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
         ? { action: 'update', type, key, id, ref, version, changes }
         : { action: 'skip', type, key, id, ref, version },
     );
+    // What Taiga holds once the changes are written: tags are only added; a story's links change by link operations.
+    baselines.set(key, differing.length === 0 ? have : { ...want, tags: [...new Set([...have.tags, ...want.tags])], ...(have.epics && { epics: have.epics }) });
     return { existing, differing };
   }
 
@@ -329,5 +398,5 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
     }
   }
 
-  return { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans, staleLinks };
+  return { plan: { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans, staleLinks, blocked }, baselines };
 }

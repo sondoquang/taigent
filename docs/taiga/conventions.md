@@ -42,6 +42,9 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
 story sắp được tạo (§6.2) và rule `issue-value` (§6.4) được kiểm sau khi đọc Taiga, vì chỉ Taiga biết story nào là mới
 và project có những giá trị issue nào. Chạy lại `apply` luôn an toàn: item đã có thì bỏ qua (khớp theo tag
 `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
+Item bị sửa trên Taiga sau lần apply trước (remote edit), bị sửa khác nhau ở cả hai bên (conflict), hoặc chưa có
+baseline trong `state.json` mà khác manifest (unknown) thì bị chặn: `plan` liệt kê chúng kèm giá trị từng bên và thoát
+exit 6, `apply --yes` thoát exit 6 và không ghi gì (`docs/cli.md` §Baseline and remote edits).
 
 `taigent validate` kiểm cả `review.yaml` (khi có):
 

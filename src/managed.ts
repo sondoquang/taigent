@@ -118,3 +118,24 @@ export function differingFields(manifest: ManagedValues, remote: ManagedValues):
   if (manifest.epics?.some((key) => !remote.epics?.includes(key))) fields.push('epics');
   return fields;
 }
+
+/**
+ * The fields whose value on Taiga (`remote`) is no longer the one taigent last wrote or accepted (`baseline`): a
+ * remote edit. Prefixed tags compare as sets (one added or removed on Taiga counts); custom attributes and epic links
+ * only those the manifest declares, since nothing else is managed (an attribute value never recorded counts as unset).
+ */
+export function remoteEditedFields(baseline: ManagedValues, remote: ManagedValues, manifest: ManagedValues): ManagedField[] {
+  const fields: ManagedField[] = [];
+  if (remote.subject !== baseline.subject) fields.push('subject');
+  if (remote.description !== baseline.description) fields.push('description');
+  const tags = new Set(baseline.tags);
+  if (remote.tags.length !== tags.size || remote.tags.some((t) => !tags.has(t))) fields.push('tags');
+  for (const field of ISSUE_VALUE_FIELDS) if (field in manifest && remote[field] !== baseline[field]) fields.push(field);
+  const declared = Object.keys(manifest.custom_attributes);
+  if (declared.some((name) => JSON.stringify(remote.custom_attributes[name] ?? null) !== JSON.stringify(baseline.custom_attributes[name] ?? null))) {
+    fields.push('custom_attributes');
+  }
+  if ('story' in manifest && remote.story !== baseline.story) fields.push('story');
+  if (manifest.epics?.some((key) => remote.epics?.includes(key) !== baseline.epics?.includes(key))) fields.push('epics');
+  return fields;
+}

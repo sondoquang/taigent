@@ -1,11 +1,12 @@
-// Executor: runs a plan through the Taiga client in dependency order and records every item in the
-// state file, writing it after each successful write to Taiga so a failed run can be resumed.
+// Executor: runs a plan through the Taiga client in dependency order and records every item, with its baseline, in
+// the state file, writing it after each successful write to Taiga so a failed run can be resumed.
 
 import type { ItemType } from './items.ts';
 import type { AttributeValue } from './manifest/backlog.ts';
+import type { ManagedValues } from './managed.ts';
 import { readState, writeState, type StateFile } from './manifest/state.ts';
 import { RESULT, tally, type Result } from './operations.ts';
-import { PLAN_ACTIONS, type Operation, type Plan, type PlanProject, type RemoteState } from './planner.ts';
+import { PLAN_ACTIONS, type Operation, type Plan, type PlanProject, type PlannedBacklog, type RemoteState } from './planner.ts';
 import { TaigaConflictError, TaigaError, type ItemPatch, type TaigaClient, type TaigaItem } from './taiga/client.ts';
 
 export interface AppliedOperation {
@@ -76,28 +77,38 @@ async function writeAttributes(
   await client.updateAttributeValues(type, itemId, merged, version ?? current.version);
 }
 
-/** `attributes`: the project's custom attributes, to resolve the attribute names of the plan to ids. */
-export async function executePlan(plan: Plan, client: TaigaClient, statePath: string, attributes: RemoteState['customAttributes']): Promise<ApplyReport> {
+/**
+ * `baselines`: what to record for each item once its operation succeeded. `attributes`: the project's custom
+ * attributes, to resolve the attribute names of the plan to ids.
+ */
+export async function executePlan({ plan, baselines }: PlannedBacklog, client: TaigaClient, statePath: string, attributes: RemoteState['customAttributes']): Promise<ApplyReport> {
   const state = await readState(statePath, plan.project);
   const operations: AppliedOperation[] = [];
 
   for (const op of plan.operations) {
     let applied: AppliedOperation;
     if (op.action === 'skip') {
-      state.items[op.key] = { type: op.type, id: op.id, ref: op.ref, version: op.version };
+      state.items[op.key] = { type: op.type, id: op.id, ref: op.ref, version: op.version, baseline: baselines.get(op.key)! };
       applied = { action: op.action, type: op.type, key: op.key, id: op.id, ref: op.ref, result: RESULT[op.action] };
     } else {
       try {
         if (op.action === 'link') {
           const story = state.items[op.key]!;
           await client.linkEpicUserStory(recordedId(state, op.epic), story.id);
+          if (story.baseline?.epics && !story.baseline.epics.includes(op.epic)) story.baseline.epics.push(op.epic);
           applied = { action: op.action, type: op.type, key: op.key, id: story.id, ref: story.ref, epic: op.epic, result: RESULT[op.action] };
         } else {
           const item = op.action === 'create' ? await create(op, plan, state, client) : await update(op, state, client);
-          state.items[op.key] = { type: op.type, id: item.id, ref: item.ref, version: item.version };
+          const baseline = baselines.get(op.key)!;
           const values = op.action === 'create' ? op.custom_attributes : op.changes.custom_attributes?.to;
+          // Until the attribute values are written, the baseline keeps those Taiga still holds (unset on a new item).
+          const before: ManagedValues['custom_attributes'] = op.action === 'create' ? {} : { ...baseline.custom_attributes, ...op.changes.custom_attributes?.from } as ManagedValues['custom_attributes'];
+          state.items[op.key] = { type: op.type, id: item.id, ref: item.ref, version: item.version, baseline: values ? { ...baseline, custom_attributes: before } : baseline };
           const valuesVersion = op.action === 'update' ? op.changes.custom_attributes?.version : undefined;
-          if (values) await writeAttributes(op.type, item.id, values, valuesVersion, attributes, client);
+          if (values) {
+            await writeAttributes(op.type, item.id, values, valuesVersion, attributes, client);
+            state.items[op.key]!.baseline = baseline;
+          }
           applied = { action: op.action, type: op.type, key: op.key, id: item.id, ref: item.ref, result: RESULT[op.action] };
         }
       } catch (error) {
