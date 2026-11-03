@@ -13,6 +13,8 @@ export type AttributeValue = string | number | boolean;
 
 interface ItemSpec {
   key: string;
+  /** Taiga ref of the hand-made item this backlog item adopts (`taigent adopt`); stays after apply as an assertion. */
+  ref?: number;
   subject: string;
   description: string;
   tags: string[];
@@ -76,7 +78,7 @@ export interface Backlog {
 
 type Kind = 'epic' | 'story' | 'task' | 'issue';
 
-const ITEM_FIELDS = ['key', 'subject', 'description', 'tags', 'custom_attributes'];
+const ITEM_FIELDS = ['key', 'ref', 'subject', 'description', 'tags', 'custom_attributes'];
 const KNOWN_FIELDS: Record<Kind, readonly string[]> = {
   epic: [...ITEM_FIELDS, 'stories'],
   story: [...ITEM_FIELDS, 'acceptance_criteria', 'use_case', 'scenarios', 'spec', 'tasks'],
@@ -179,16 +181,22 @@ export function checkBacklog(doc: unknown, path: string): Backlog {
     throw new ManifestError(issues);
   }
   const seenKeys = new Map<string, string>();
+  const seenRefs = new Map<number, string>();
 
   /** Validates the fields every item has; returns undefined when `raw` is not a mapping. */
-  function checkItem(raw: unknown, at: string, kind: Kind): (ItemSpec & { raw: Record<string, unknown> }) | undefined {
+  function checkItem(raw: unknown, at: string, kind: Kind): { spec: ItemSpec; raw: Record<string, unknown> } | undefined {
     if (!isRecord(raw)) {
       issue(at, 'type', `${kind} must be a mapping`);
       return undefined;
     }
     checkKnownFields(raw, at, KNOWN_FIELDS[kind], kind);
-    const { key, subject, description = '', tags = [], custom_attributes: customAttributes = {} } = raw;
+    const { key, ref, subject, description = '', tags = [], custom_attributes: customAttributes = {} } = raw;
     checkKey(key, `${at}.key`, issue, seenKeys);
+    if (ref !== undefined) {
+      if (typeof ref !== 'number' || !Number.isInteger(ref) || ref < 1) issue(`${at}.ref`, 'type', "must be a positive integer: the item's #ref on Taiga");
+      else if (seenRefs.has(ref)) issue(`${at}.ref`, 'ref-unique', `ref ${ref} is already adopted by ${seenRefs.get(ref)}`);
+      else seenRefs.set(ref, at);
+    }
     if (typeof subject !== 'string' || subject.trim() === '') issue(`${at}.subject`, 'required', 'subject is required');
     if (typeof description !== 'string') issue(`${at}.description`, 'type', 'must be a string');
     if (!Array.isArray(tags)) issue(`${at}.tags`, 'type', 'must be a list of tags');
@@ -202,7 +210,8 @@ export function checkBacklog(doc: unknown, path: string): Backlog {
         }
       }
     }
-    return { key, subject, description, tags, customAttributes, raw } as ItemSpec & { raw: Record<string, unknown> };
+    const spec = { key, ...(ref !== undefined && { ref }), subject, description, tags, customAttributes } as ItemSpec;
+    return { spec, raw };
   }
 
   /** Children list of an item (`stories`, `tasks`): absent means empty. */
@@ -292,24 +301,15 @@ export function checkBacklog(doc: unknown, path: string): Backlog {
       const tasks: TaskSpec[] = [];
       children(story.raw.tasks, `${storyAt}.tasks`).forEach((rawTask, t) => {
         const task = checkItem(rawTask, `${storyAt}.tasks[${t}]`, 'task');
-        if (task) tasks.push({ key: task.key, subject: task.subject, description: task.description, tags: task.tags, customAttributes: task.customAttributes });
+        if (task) tasks.push(task.spec);
       });
       const format: UserStoryFormat | LegacyFormat =
         hasUseCase || hasScenarios
           ? { format: 'user-story', useCase, scenarios }
           : { format: 'legacy', acceptanceCriteria: acceptanceCriteria as string[] };
-      stories.push({
-        key: story.key,
-        subject: story.subject,
-        description: story.description,
-        tags: story.tags,
-        customAttributes: story.customAttributes,
-        ...format,
-        spec: spec as string,
-        tasks,
-      });
+      stories.push({ ...story.spec, ...format, spec: spec as string, tasks });
     });
-    epics.push({ key: epic.key, subject: epic.subject, description: epic.description, tags: epic.tags, customAttributes: epic.customAttributes, stories });
+    epics.push({ ...epic.spec, stories });
   });
 
   const issueSpecs: IssueSpec[] = [];
@@ -318,8 +318,7 @@ export function checkBacklog(doc: unknown, path: string): Backlog {
     const item = checkItem(rawIssue, issueAt, 'issue');
     if (!item) return;
     const [type, severity, priority] = ISSUE_VALUE_FIELDS.map((field) => checkText(item.raw[field], `${issueAt}.${field}`)) as [string, string, string];
-    const { key, subject, description, tags, customAttributes } = item;
-    issueSpecs.push({ key, subject, description, tags, customAttributes, type, severity, priority });
+    issueSpecs.push({ ...item.spec, type, severity, priority });
   });
 
   if (issues.length > 0) throw new ManifestError(issues);

@@ -44,9 +44,10 @@ function create(op: Extract<Operation, { action: 'create' }>, plan: Plan, state:
 
 /**
  * PATCHes the changed item fields (a moved task: `user_story` = its manifest parent, recorded earlier in the run);
- * an update of custom attribute values alone leaves the item untouched.
+ * an update of custom attribute values alone leaves the item untouched. An adopt PATCHes its tags (`src:<key>` added)
+ * and its content updates the same way.
  */
-async function update(op: Extract<Operation, { action: 'update' }>, state: StateFile, client: TaigaClient): Promise<Pick<TaigaItem, 'id' | 'ref' | 'version'>> {
+async function update(op: Extract<Operation, { action: 'update' | 'adopt' }>, state: StateFile, client: TaigaClient): Promise<Pick<TaigaItem, 'id' | 'ref' | 'version'>> {
   const { custom_attributes: _attributes, parent, ...fields } = op.changes;
   const patch: ItemPatch = Object.fromEntries(Object.entries(fields).map(([field, change]) => [field, change.to]));
   if (parent) patch.user_story = recordedId(state, parent.to);
@@ -96,7 +97,7 @@ export async function executePlan(plan: Plan, client: TaigaClient, statePath: st
           const item = op.action === 'create' ? await create(op, plan, state, client) : await update(op, state, client);
           state.items[op.key] = { type: op.type, id: item.id, ref: item.ref, version: item.version };
           const values = op.action === 'create' ? op.custom_attributes : op.changes.custom_attributes?.to;
-          const valuesVersion = op.action === 'update' ? op.changes.custom_attributes?.version : undefined;
+          const valuesVersion = op.action === 'create' ? undefined : op.changes.custom_attributes?.version;
           if (values) await writeAttributes(op.type, item.id, values, valuesVersion, attributes, client);
           applied = { action: op.action, type: op.type, key: op.key, id: item.id, ref: item.ref, result: RESULT[op.action] };
         }

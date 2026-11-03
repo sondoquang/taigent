@@ -115,6 +115,8 @@ export interface TaigaItem {
   description: string;
   /** Tag names (Taiga stores them lowercased). */
   tags: string[];
+  /** Whether its status is a closed one (`is_closed`, else `status_extra_info.is_closed`). */
+  closed: boolean;
 }
 
 export interface TaigaTask extends TaigaItem {
@@ -189,6 +191,7 @@ function parseItem(raw: unknown, what: string): TaigaItem {
     subject: field(raw, 'subject', 'string', what),
     description: typeof raw.description === 'string' ? raw.description : '',
     tags,
+    closed: raw.is_closed === true || (isRecord(raw.status_extra_info) && raw.status_extra_info.is_closed === true),
   };
 }
 

@@ -41,6 +41,8 @@ export interface ManifestFile {
  * manifest and an empty one (`''`, `[]`, `{}`) is removed from it.
  */
 export interface ItemFields {
+  /** Taiga ref of the hand-made item the backlog item adopts (`taigent adopt` sets it). */
+  ref?: number;
   subject?: string;
   description?: string;
   tags?: string[];
@@ -131,15 +133,15 @@ interface ItemKind {
 }
 
 const KINDS: Record<ItemType, ItemKind> = {
-  epic: { list: 'epics', child: 'story', order: ['key', 'subject', 'description', 'tags', 'custom_attributes', 'stories'] },
+  epic: { list: 'epics', child: 'story', order: ['key', 'ref', 'subject', 'description', 'tags', 'custom_attributes', 'stories'] },
   story: {
     list: 'stories',
     parent: 'epic',
     child: 'task',
-    order: ['key', 'subject', 'use_case', 'scenarios', 'acceptance_criteria', 'description', 'spec', 'tags', 'custom_attributes', 'tasks'],
+    order: ['key', 'ref', 'subject', 'use_case', 'scenarios', 'acceptance_criteria', 'description', 'spec', 'tags', 'custom_attributes', 'tasks'],
   },
-  task: { list: 'tasks', parent: 'story', order: ['key', 'subject', 'description', 'tags', 'custom_attributes'] },
-  issue: { list: 'issues', order: ['key', 'subject', 'description', 'type', 'severity', 'priority', 'tags', 'custom_attributes'] },
+  task: { list: 'tasks', parent: 'story', order: ['key', 'ref', 'subject', 'description', 'tags', 'custom_attributes'] },
+  issue: { list: 'issues', order: ['key', 'ref', 'subject', 'description', 'type', 'severity', 'priority', 'tags', 'custom_attributes'] },
 };
 
 /** Top-level fields of backlog.yaml and of docs.yaml, in order. */
@@ -154,6 +156,7 @@ const NOT_A_MAPPING: Record<EditableManifest, string> = {
 
 /** Manifest field name of each input field. */
 const FIELD_NAMES: Record<string, string> = {
+  ref: 'ref',
   subject: 'subject',
   description: 'description',
   tags: 'tags',

@@ -66,8 +66,16 @@ export function manifestManagedValues(entry: ManifestItem): ManagedValues {
 /**
  * The managed values of a Taiga item. `attributes`: names of the custom attributes the manifest declares for it;
  * only those the project defines are projected (their values must have been read into `remote.attributeValues`).
+ * `backlogKey`: the key of the backlog item a Taiga epic or story is, for epic links and a task's story; by default
+ * its `src:` tag (the planner adds the items the backlog adopts by `ref`).
  */
-export function remoteManagedValues(type: ItemType, item: TaigaItem, remote: RemoteState, attributes: readonly string[]): ManagedValues {
+export function remoteManagedValues(
+  type: ItemType,
+  item: TaigaItem,
+  remote: RemoteState,
+  attributes: readonly string[],
+  backlogKey: (item: TaigaItem) => string | undefined = keyOf,
+): ManagedValues {
   const defined = attributes.flatMap((name) => {
     const attribute = remote.customAttributes[type].find((a) => a.name === name);
     return attribute ? [{ name, id: attribute.id }] : [];
@@ -75,20 +83,20 @@ export function remoteManagedValues(type: ItemType, item: TaigaItem, remote: Rem
   const custom: Record<string, JsonValue> = {};
   if (defined.length > 0) {
     const current = remote.attributeValues[type].get(item.id);
-    if (!current) throw new Error(`planner: custom attribute values of ${type} ${keyOf(item)} were not read`);
+    if (!current) throw new Error(`planner: custom attribute values of ${type} ${backlogKey(item)} were not read`);
     for (const { name, id } of defined) custom[name] = (current.values[String(id)] ?? null) as JsonValue;
   }
   const values: ManagedValues = { subject: item.subject, description: item.description, tags: managedTags(item.tags), custom_attributes: custom };
   if (type === 'story') {
     values.epics = remote.epics.flatMap((epic) => {
-      const key = keyOf(epic);
+      const key = backlogKey(epic);
       return key !== undefined && remote.epicStories.get(epic.id)?.includes(item.id) ? [key] : [];
     });
   }
   if (type === 'task') {
     const id = (item as TaigaTask).userStory;
     const story = id === null ? undefined : remote.stories.find((s) => s.id === id);
-    values.story = (story && keyOf(story)) ?? null;
+    values.story = (story && backlogKey(story)) ?? null;
   }
   if (type === 'issue') {
     for (const field of ISSUE_VALUE_FIELDS) {
