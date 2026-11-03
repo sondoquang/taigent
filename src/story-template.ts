@@ -9,9 +9,11 @@ export type StoryText = { description: string; spec: string } & (UserStoryFormat
 /**
  * Story description. The user story format renders the use case, the free text, one checkbox per scenario with its
  * Given/When/Then, then the spec link. The legacy format keeps its template byte for byte: free text, acceptance
- * criteria as a checklist, then the spec link.
+ * criteria as a checklist, then the spec link; a legacy story with neither criteria nor spec (a free-text story
+ * adopted from Taiga) renders exactly its description, line endings and trailing whitespace included.
  */
 export function storyDescription(story: StoryText): string {
+  if (story.format === 'legacy' && story.acceptanceCriteria.length === 0 && story.spec === '') return story.description;
   const parts: string[] = [];
   let checklist: string[];
   if (story.format === 'user-story') {

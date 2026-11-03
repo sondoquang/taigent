@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
-import { AdoptError, adoptItem } from './adopt.ts';
+import { AdoptError, adoptItem, type AdoptParent } from './adopt.ts';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
@@ -44,7 +44,8 @@ Commands:
   bootstrap Create or complete the Taiga project declared in project.yaml (requires --yes)
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
-  adopt     Write the hand-made epic or issue #--ref of --project into backlog.yaml as backlog item --key, verbatim
+  adopt     Write the hand-made epic, user story, task or issue #--ref of --project into backlog.yaml as backlog
+            item --key, verbatim: a story under the manifest epic --epic, a task under the manifest story --story
             (plan then proposes adopting it: apply adds its src:<key> tag); reads Taiga, writes the manifest only
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
   tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
@@ -70,6 +71,7 @@ Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets, notify and projects)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
   --ref <n>, --key <KEY>  adopt: the Taiga ref of the hand-made item and the key of the new backlog item
+  --epic <KEY>, --story <KEY>  adopt: the manifest parent of a user story (an epic) or of a task (a story)
   --out <file>      preview: write the page (or the JSON) to this file instead of stdout
   --application <id>  login: store an application token of this Application (created by the instance admin)
                     instead of a refresh token
@@ -160,6 +162,8 @@ interface Options {
   text?: string;
   /** `adopt`: key of the new backlog item (`--key`). */
   key?: string;
+  /** `adopt`: the manifest parent of the new backlog item (`--epic` for a story, `--story` for a task). */
+  parent?: AdoptParent;
   /** `notify`: which message. */
   notifyKind?: NotifyKind;
   /** `login`: Application id for an application token. */
@@ -202,6 +206,8 @@ function parseOptions(argv: string[]): Options | 'help' {
         out: { type: 'string' },
         ref: { type: 'string' },
         key: { type: 'string' },
+        epic: { type: 'string' },
+        story: { type: 'string' },
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
@@ -234,6 +240,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     if (text === '') throw new UsageError(`${command} needs ${what} after the ref`);
   }
   let key: string | undefined;
+  let parent: AdoptParent | undefined;
   if (command === 'adopt') {
     ref = values.ref === undefined ? undefined : parseRef(values.ref);
     if (ref === undefined) throw new UsageError(`adopt needs --ref <n>, the Taiga ref of the hand-made item (e.g. 84 or #84)${values.ref === undefined ? '' : `, got "${values.ref}"`}`);
@@ -241,8 +248,12 @@ function parseOptions(argv: string[]): Options | 'help' {
     if (key === undefined || !KEY_PATTERN.test(key)) {
       throw new UsageError(`adopt needs --key <KEY> for the new backlog item, matching ${KEY_PATTERN} (e.g. AUTH-LOGIN)${key === undefined ? '' : `, got "${key}"`}`);
     }
-  } else if (values.ref !== undefined || values.key !== undefined) {
-    throw new UsageError('--ref and --key apply only to adopt');
+    if (values.epic !== undefined && values.story !== undefined) throw new UsageError('adopt takes one parent: --epic for a user story, --story for a task');
+    if (values.epic !== undefined) parent = { type: 'epic', key: values.epic };
+    if (values.story !== undefined) parent = { type: 'story', key: values.story };
+    if (parent && !KEY_PATTERN.test(parent.key)) throw new UsageError(`--${parent.type} must be a backlog item key matching ${KEY_PATTERN}, got "${parent.key}"`);
+  } else if (values.ref !== undefined || values.key !== undefined || values.epic !== undefined || values.story !== undefined) {
+    throw new UsageError('--ref, --key, --epic and --story apply only to adopt');
   }
   let notifyKind: NotifyKind | undefined;
   if (command === 'notify') {
@@ -279,6 +290,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     ref,
     text,
     key,
+    parent,
     notifyKind,
     application: values.application,
     out: values.out,
@@ -684,7 +696,7 @@ async function runAdopt(run: Run): Promise<number> {
     // A project directory without any manifest yet is fine: adopt writes the first backlog.yaml.
     if (!(error instanceof ManifestError) || !error.issues.every((issue) => issue.rule === 'file-exists')) throw error;
   }
-  const adopted = await adoptItem(layout.dir, slug, await connectTaiga(run), { ref: options.ref!, key: options.key! });
+  const adopted = await adoptItem(layout.dir, slug, await connectTaiga(run), { ref: options.ref!, key: options.key!, ...(options.parent && { parent: options.parent }) });
   emit(
     run,
     adopted,
