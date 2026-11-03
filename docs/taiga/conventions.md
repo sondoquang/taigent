@@ -48,13 +48,22 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
 story sắp được tạo (§6.2), rule `issue-value` (§6.4) và rule `item-ref` (§5) được kiểm sau khi đọc Taiga, vì chỉ
 Taiga biết story nào là mới, project có những giá trị issue nào và mỗi `ref` là item nào. Chạy lại `apply` luôn an
 toàn: item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
-Item bị sửa trên Taiga sau lần apply trước (remote edit), bị sửa khác nhau ở cả hai bên (conflict), hoặc chưa có
-baseline trong `state.json` mà khác manifest (unknown) thì bị chặn: `plan` liệt kê chúng kèm giá trị từng bên và thoát
-exit 6, `apply --yes` thoát exit 6 và không ghi gì (`docs/cli.md` §Baseline and remote edits). Item được adopt theo
-`ref` thì không bị chặn: chính lần adopt ghi baseline đầu tiên của nó. Agent không chạy `apply --yes` khi còn item bị
-chặn; mỗi item được gỡ bằng `taigent pull` (lấy giá trị Taiga vào manifest), hoặc gộp với người dùng rồi
-`pull --keep-manifest` (conflict), hoặc `--keep-manifest` khi người dùng chủ ý giữ manifest. Lần `plan` đầu sau khi
-nâng cấp hiện các item apply trước đây mà khác Taiga là `unknown`.
+Item bị sửa trên Taiga sau lần apply trước (remote edit), bị sửa khác nhau ở cả hai bên (both edited, `both-edited`),
+hoặc chưa có baseline trong `state.json` mà khác manifest (unknown) thì bị chặn: `plan` liệt kê chúng kèm giá trị từng
+bên và thoát exit 6, `apply --yes` thoát exit 6 và không ghi gì (`docs/cli.md` §Baseline and remote edits). Item
+đang được adopt theo `ref` được so ba bên với baseline mà `taigent adopt` ghi vào map `adopted` của `state.json`: Taiga
+bị sửa sau lần adopt thì item bị chặn như trên. Item có `ref` viết tay mà không có mục `adopted` thì không bị chặn.
+Item `state.json` đã ghi (key → id) mà trên Taiga mất tag `src:<key>` bị chặn `remote-edit` ở field `tags` (không
+bao giờ tạo bản trùng); gỡ bằng cách gắn lại tag `src:<key>` trên Taiga, hoặc ghi `ref: <n>` của item vào
+`backlog.yaml` để apply adopt lại (`pull` từ chối item này). Agent không chạy `apply --yes` khi còn item bị chặn; mỗi
+item được gỡ bằng `taigent pull` (lấy giá trị Taiga vào manifest), hoặc gộp với người dùng rồi `pull --keep-manifest`
+(both edited), hoặc `--keep-manifest` khi người dùng chủ ý giữ manifest sau khi đã xem item (không bao giờ mặc định).
+`pull` story user story format phải parse lại được, không thì dừng (exit 4, kind `pull`); story legacy có
+`acceptance_criteria` cũng vậy; story legacy không có `acceptance_criteria` lẫn `spec` (dạng adopt ghi) thì nhận
+nguyên mô tả Taiga vào `description`. Khi parse lỗi, agent viết lại item theo **đúng format của nó**: user story
+format cho story user story format; story legacy thì cùng người dùng tách lại `acceptance_criteria`, không bao giờ
+chuyển legacy sang user story format. Lần `plan` đầu sau khi nâng cấp hiện các item apply trước đây mà khác Taiga là
+`unknown`.
 
 `taigent validate` kiểm cả `review.yaml` (khi có):
 
@@ -148,15 +157,18 @@ Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên
   `Enhancement` → `ENH`, type khác (kể cả `Bug`) → `BUG`. Ví dụ `BUG-LONG-PASSWORD`.
 - **Adopt hand-made item.** Item tạo tay trên Taiga (chưa có tag `src:`) chỉ vào manifest qua
   `taigent adopt --project <slug> --ref <n> --key <KEY>`, sau khi người dùng xác nhận từng item. Lệnh chỉ đọc Taiga
-  và chỉ ghi `backlog.yaml`: một backlog item mới có `ref: <n>`, chép nguyên văn subject, mô tả, các tag có prefix
-  hợp lệ (§4; tag khác vẫn nằm trên Taiga), và `type`/`severity`/`priority` theo tên với issue; không chép custom
-  attribute. Epic và issue nằm ở đầu `backlog.yaml`. Story cần thêm `--epic <KEY>`: epic cha trong manifest (story
-  chưa nối với epic đó trên Taiga thì `plan` đề xuất thêm liên kết). Story giữ legacy format (§6.2). Task cần thêm
-  `--story <KEY>`: story trong manifest, và phải đúng là backlog item mà task đang nằm trong trên Taiga. Lệnh từ chối
-  item đã đóng, item đã có tag `src:`, key hoặc ref đã có trong manifest, story/task thiếu cha trong manifest, và task
-  có story trên Taiga không phải backlog item (adopt story đó trước). Sau đó `plan` đề xuất action `adopt` (thêm tag
-  `src:<key>`, cùng các update nội dung nếu có) và `apply` ghi tag đó. `ref` giữ lại trong manifest sau apply, làm
-  phép kiểm (rule `item-ref`).
+  và chỉ ghi file local: trong `backlog.yaml` một backlog item mới có `ref: <n>`, chép nguyên văn subject, mô tả, các
+  tag có prefix hợp lệ (§4; tag khác vẫn nằm trên Taiga), và `type`/`severity`/`priority` theo tên với issue; không
+  chép custom attribute; trong `state.json` (map `adopted`) các giá trị đã chép, làm baseline. Epic và issue nằm ở
+  đầu `backlog.yaml`. Story cần thêm `--epic <KEY>`: nếu story đã nối với một hay nhiều epic trên Taiga thì `--epic`
+  phải là một trong số đó (khớp theo tag `src:` hoặc `ref`), không thì adopt epic đó trước; story chưa nối epic nào
+  thì `plan` đề xuất thêm `link`, nên adopt cũng nối nó vào epic `--epic`. Story giữ legacy format (§6.2). Task cần
+  thêm `--story <KEY>`: story trong manifest, và phải đúng là backlog item mà task đang nằm trong trên Taiga. Lệnh từ
+  chối (exit 2) item đã đóng, item đã có tag `src:`, key hoặc ref đã có trong manifest, story/task thiếu cha trong
+  manifest, story có epic trên Taiga không phải `--epic`, task có story trên Taiga không phải backlog item (adopt story
+  đó trước), và `backlog.yaml` bị sửa trong lúc adopt. Sau đó `plan` đề xuất action `adopt` (thêm tag `src:<key>`,
+  cùng các update nội dung nếu có), so ba bên với baseline của adopt, và `apply` ghi tag đó rồi chuyển mục `adopted`
+  sang `items`. `ref` giữ lại trong manifest sau apply, làm phép kiểm (rule `item-ref`).
 - Story và task tạo tay nằm dưới một epic hoặc story của manifest (kể cả epic, story đã adopt) được `plan` liệt kê
   riêng trong `handMadeChildren`, không phải `staleLinks`. Taigent không động vào nội dung và liên kết của chúng.
 - Item bỏ khỏi manifest không bị xoá trên Taiga. `plan` báo nó là mồ côi để người quyết định.

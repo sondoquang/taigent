@@ -99,7 +99,8 @@ It holds:
   Codex the shell guard below refuses a comment holding `( ) ? *` or the other shell characters it blocks.
   `projects` only reads (the user's projects, or one project's issue types, severities and priorities); so do
   `report` (one project's progress by sprint and by epic), `snapshot` (the whole backlog, written to the
-  git-ignored `taiga/<slug>/snapshot.json`), `adopt` (one hand-made item, written into `backlog.yaml`) and `pull`
+  git-ignored `taiga/<slug>/snapshot.json`), `adopt` (one hand-made item, written into `backlog.yaml` and the
+  `adopted` map of `state.json`) and `pull`
   (Taiga's values of backlog items, written into `backlog.yaml` and `state.json`; allowed under `TAIGENT_READ_ONLY`).
 - The Taiga MCP read tools of `taiga-mcp-server@1.9.20` (`list*`, `get*`, `getMilestoneStats`,
   `getIssuesByMilestone`, `advancedSearch`, `queryHelp`, `validateQuery`) as `mcp__taiga__<tool>`.

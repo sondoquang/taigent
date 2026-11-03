@@ -77,4 +77,4 @@ After the yes:
 
 Done when apply exits 0. Report the story's ref (from `taiga/<slug>/state.json`, under its key) and its URL, `<Taiga web host>/project/<slug>/us/<ref>`, and remind the user to commit `taiga/<slug>/backlog.yaml` together with `taiga/<slug>/state.json`.
 
-This skill reaches Taiga only through `npx taigent`: `snapshot`, `adopt` and `plan` read it (`adopt` writes only `backlog.yaml`), and it writes only through `npx taigent apply --yes` after the user's confirmation (`docs/taiga/conventions.md` §10).
+This skill reaches Taiga only through `npx taigent`: `snapshot`, `adopt` and `plan` read it (`adopt` writes only `backlog.yaml` and the `adopted` entry of `state.json`), and it writes only through `npx taigent apply --yes` after the user's confirmation (`docs/taiga/conventions.md` §10).
