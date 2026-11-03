@@ -72,8 +72,14 @@ test('apply --yes creates epics with subject, description and src:<key> tag, and
   assert.deepEqual(await h.readState('demo'), {
     project: { id: project.id, slug: 'demo' },
     items: {
-      AUTH: { type: 'epic', id: auth!.id, ref: auth!.ref, version: auth!.version },
-      BILLING: { type: 'epic', id: billing!.id, ref: billing!.ref, version: billing!.version },
+      AUTH: {
+        type: 'epic',
+        id: auth!.id,
+        ref: auth!.ref,
+        version: auth!.version,
+        baseline: { subject: 'Authentication', description: 'Users can sign in.', tags: ['type:feature', 'area:auth'], custom_attributes: {} },
+      },
+      BILLING: { type: 'epic', id: billing!.id, ref: billing!.ref, version: billing!.version, baseline: { subject: 'Billing', description: '', tags: [], custom_attributes: {} } },
     },
   });
   const report = result.json<ApplyReport>();

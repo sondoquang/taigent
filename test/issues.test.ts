@@ -174,7 +174,13 @@ test('apply creates each issue tagged src:<key> with the ids of its type, severi
     ],
   );
   const sso = issueByKey(h.fake.state, 'ASK-SSO');
-  assert.deepEqual((await h.readState('demo'))!.items['ASK-SSO'], { type: 'issue', id: sso.id, ref: sso.ref, version: 1 });
+  assert.deepEqual((await h.readState('demo'))!.items['ASK-SSO'], {
+    type: 'issue',
+    id: sso.id,
+    ref: sso.ref,
+    version: 1,
+    baseline: { subject: 'Do we support single sign-on?', description: '', tags: [], custom_attributes: {}, type: 'Question', severity: 'Minor', priority: 'Low' },
+  });
 
   // The src: tag is the identity: a re-run, even without state.json, plans nothing.
   await h.deleteState('demo');

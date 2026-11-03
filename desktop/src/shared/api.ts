@@ -108,6 +108,18 @@ export interface Plan {
   operations: PlanOperation[];
   orphans: { type: string; key: string; id: number; ref: number; subject: string }[];
   staleLinks: StaleLink[];
+  /** Items apply refuses to touch until settled (`docs/cli.md` §Baseline and remote edits); plan exits 6 when any. */
+  blocked: BlockedItem[];
+}
+
+export interface BlockedItem {
+  kind: 'remote-edit' | 'conflict' | 'unknown';
+  type: string;
+  key: string;
+  id: number;
+  ref: number;
+  /** Per field: the baseline (absent for `unknown`), Taiga's and the manifest's value. */
+  fields: Record<string, { baseline?: unknown; taiga: unknown; manifest: unknown }>;
 }
 
 export interface ApplyReport {

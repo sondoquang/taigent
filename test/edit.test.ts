@@ -475,6 +475,8 @@ test('editing a legacy story through the story form keeps its format; converting
   const h = await startHarness(t);
   seedLegacy(h);
   await h.writeManifest('demo', 'backlog.yaml', LEGACY);
+  // Records the baseline, so the edits below are the manifest's changes, not remote edits.
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
   const dir = join(h.manifestsDir, 'demo');
   const updates = async () => {
     const plan = await h.taigent(['plan', '--project', 'demo', '--json']);

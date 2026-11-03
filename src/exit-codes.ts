@@ -12,6 +12,8 @@ export const ExitCode = {
   Validation: 4,
   /** Taiga or the network failed (HTTP error, unreachable host, login refused). */
   Taiga: 5,
+  /** `plan`/`apply` found items blocked by a remote edit, a conflict or no baseline; apply wrote nothing. */
+  Blocked: 6,
 } as const;
 
 export type ExitCode = (typeof ExitCode)[keyof typeof ExitCode];

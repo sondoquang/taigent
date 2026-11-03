@@ -84,21 +84,20 @@ test('plan shows values that differ on Taiga; apply sets them and keeps values t
   const owner = h.fake.addCustomAttribute({ itemType: 'userstory', project: project.id, name: 'Owner' });
   const story = h.fake.addUserStory({ project: project.id, subject: 'User can log in', tags: ['src:auth-login'] });
   h.fake.editAttributeValues('userstory', story.id, { [String(due.id)]: 'next week', [String(owner.id)]: 'alice' });
-  await h.writeManifest(
-    'demo',
-    'backlog.yaml',
-    `epics:
+  h.fake.addEpicRelatedUserStory(h.fake.addEpic({ project: project.id, subject: 'Authentication', tags: ['src:auth'] }).id, story.id);
+  const backlog = (note: string, billable = '') => `epics:
   - key: AUTH
     subject: Authentication
     stories:
       - key: AUTH-LOGIN
         subject: User can log in
         custom_attributes:
-          Due note: before launch
-          Billable: true
-`,
-  );
-  h.fake.addEpicRelatedUserStory(h.fake.addEpic({ project: project.id, subject: 'Authentication', tags: ['src:auth'] }).id, story.id);
+          Due note: ${note}
+${billable}`;
+  // Apply what Taiga holds first: it records the baseline, so the change below is the manifest's, not a remote edit.
+  await h.writeManifest('demo', 'backlog.yaml', backlog('next week'));
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
+  await h.writeManifest('demo', 'backlog.yaml', backlog('before launch', '          Billable: true\n'));
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
   assert.equal(plan.code, 3, plan.stderr);
@@ -161,6 +160,9 @@ test('values changed on Taiga between plan and apply are not overwritten (versio
   const h = await startHarness(t);
   const { project, client } = await projectWithAttributes(h);
   const epic = h.fake.addEpic({ project: project.id, subject: 'Authentication', tags: ['src:auth'] });
+  // A first apply without values records the baseline; then the manifest declares one.
+  await h.writeManifest('demo', 'backlog.yaml', 'epics:\n  - key: AUTH\n    subject: Authentication\n');
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
   await h.writeManifest('demo', 'backlog.yaml', 'epics:\n  - key: AUTH\n    subject: Authentication\n    custom_attributes:\n      Client: Acme\n');
   h.fake.onRequest({
     method: 'GET',

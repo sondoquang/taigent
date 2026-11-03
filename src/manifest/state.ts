@@ -1,10 +1,12 @@
-// Per-project state file `taiga/<slug>/state.json`: key → Taiga id/ref/version, committed with the
-// manifests. It is only a cache: the `src:<key>` tag on Taiga is the source of truth.
+// Per-project state file `taiga/<slug>/state.json`: key → Taiga id/ref/version and baseline, committed with the
+// manifests. The `src:<key>` tag on Taiga stays the only identity; the baseline (the managed values taigent last
+// wrote or accepted for the item) lets plan tell a manifest change from an edit made on Taiga.
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { isFileNotFound } from '../guards.ts';
 import type { ItemType } from '../items.ts';
+import type { ManagedValues } from '../managed.ts';
 
 export const STATE_FILE = 'state.json';
 
@@ -13,6 +15,8 @@ export interface StateEntry {
   id: number;
   ref: number;
   version: number;
+  /** Managed values taigent last wrote or accepted; absent in state files from before baselines. */
+  baseline?: ManagedValues;
 }
 
 export interface StateFile {
@@ -48,8 +52,8 @@ export async function readSavedProject(path: string): Promise<StateFile['project
 export async function writeState(path: string, state: StateFile): Promise<void> {
   const items: Record<string, StateEntry> = {};
   for (const key of Object.keys(state.items).sort()) {
-    const { type, id, ref, version } = state.items[key]!;
-    items[key] = { type, id, ref, version };
+    const { type, id, ref, version, baseline } = state.items[key]!;
+    items[key] = { type, id, ref, version, ...(baseline && { baseline }) };
   }
   const body = `${JSON.stringify({ project: state.project, items }, null, 2)}\n`;
   await mkdir(dirname(path), { recursive: true });

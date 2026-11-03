@@ -12,12 +12,13 @@ import { legacyStoryCreatesError, unknownIssueValuesError } from './manifest/bac
 import { PROJECT_SLUG_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
+import { readState } from './manifest/state.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
 import { initRepository, InitError, type InitStatus } from './init.ts';
 import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
 import { serveMcp, startProxy } from './mcp.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
-import { buildPlan, describePlanOperation, LegacyStoryCreateError, UnknownIssueValueError, type Plan } from './planner.ts';
+import { buildPlan, describePlanOperation, LegacyStoryCreateError, UnknownIssueValueError, type BlockedItem, type Plan, type PlannedBacklog } from './planner.ts';
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { formatProjectDetailText, formatProjectsText, readProjectDetail, readProjects } from './projects.ts';
@@ -107,6 +108,20 @@ class UsageError extends Error {}
 
 /** A Taiga write refused under TAIGENT_READ_ONLY. Maps to ExitCode.Usage, kind `read-only`. */
 class ReadOnlyError extends Error {}
+
+/** How the text output names each kind of blocked item. */
+const BLOCKED_LABEL: Record<BlockedItem['kind'], string> = { 'remote-edit': 'remote edit', conflict: 'conflict', unknown: 'unknown' };
+
+/** `apply --yes` refused because the plan blocks items. Maps to ExitCode.Blocked, kind `blocked`. */
+class BlockedPlanError extends Error {
+  readonly blocked: readonly BlockedItem[];
+
+  constructor(blocked: readonly BlockedItem[]) {
+    const items = blocked.map((item) => `${item.key} (${BLOCKED_LABEL[item.kind]}: ${Object.keys(item.fields).join(', ')})`);
+    super(`refusing to apply: ${items.join('; ')} must be settled first; run taigent plan to see the baseline, Taiga's and the manifest's values. Nothing was written.`);
+    this.blocked = blocked;
+  }
+}
 
 /** Commands that write to Taiga with `--yes` (without `--dry-run`), and those that write at once. */
 const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap'];
@@ -345,13 +360,14 @@ function formatPlanText<A extends Action, O extends { action: A }>(
   title: string,
   plan: PlanSummary<A> & { operations: O[] },
   describe: (op: O) => string,
-  texts: { empty: string; matches: string; extra?: string[] },
+  texts: { empty: string; matches: string; extra?: string[]; blocked?: number },
 ): string {
   const lines = [title, ...plan.operations.map((op) => `${MARKER[op.action]}${describe(op)}`)];
   if (plan.operations.length === 0) lines.push(`  (${texts.empty})`);
   lines.push(...(texts.extra ?? []));
   const counts = Object.entries<number>(plan.summary).map(([action, n]) => `${n} ${action === 'skip' ? 'unchanged' : `to ${action}`}`);
-  lines.push(plan.changes ? `${counts.join(', ')}.` : `No changes. Taiga matches ${texts.matches}.`);
+  if (texts.blocked) counts.push(`${texts.blocked} blocked`);
+  lines.push(plan.changes || texts.blocked ? `${counts.join(', ')}.` : `No changes. Taiga matches ${texts.matches}.`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -366,9 +382,22 @@ function formatReportText<O extends { result: Result }>(
   return `${lines.join('\n')}\n`;
 }
 
-/** The parts of a backlog plan that are reported but never acted on: orphans and stale epic links. */
+/**
+ * The parts of a backlog plan that are reported but never acted on: blocked items (with each version of the fields
+ * at stake), orphans and stale epic links.
+ */
 function formatLeftovers(plan: Plan): string[] {
   const lines: string[] = [];
+  if (plan.blocked.length > 0) {
+    lines.push('Blocked (changed on Taiga since taigent last wrote it, or never recorded; apply refuses until each is settled in backlog.yaml):');
+    for (const item of plan.blocked) {
+      lines.push(`  ! ${BLOCKED_LABEL[item.kind]} ${item.type} ${item.key}  (#${item.ref}, id ${item.id}): ${Object.keys(item.fields).join(', ')}`);
+      for (const [field, versions] of Object.entries(item.fields)) {
+        const baseline = 'baseline' in versions ? `baseline ${JSON.stringify(versions.baseline)}, ` : '';
+        lines.push(`      ${field}: ${baseline}Taiga ${JSON.stringify(versions.taiga)}, manifest ${JSON.stringify(versions.manifest)}`);
+      }
+    }
+  }
   if (plan.orphans.length > 0) {
     lines.push('Orphans (tagged src: on Taiga but not in the manifest; never deleted):');
     lines.push(...plan.orphans.map((orphan) => `  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`));
@@ -568,32 +597,44 @@ async function runSkills(run: Run): Promise<number> {
   }
 }
 
-/** `plan` and `apply`: compare backlog.yaml with Taiga, then (apply --yes) run the plan. */
+/**
+ * `plan` and `apply`: compare backlog.yaml with Taiga and the baselines of state.json, then (apply --yes) run the
+ * plan. Any blocked item makes them exit 6; `apply --yes` then refuses before writing anything.
+ */
 async function runPlan(run: Run): Promise<number> {
-  const slug = run.options.project!;
+  const { options } = run;
+  const slug = options.project!;
   const layout = projectLayout(slug, run.env, run.cwd);
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
   const client = await connectTaiga(run);
   const remote = await readBacklogRemote(backlog, client, slug);
-  let plan: Plan;
+  const state = await readState(layout.state, remote.project);
+  let planned: PlannedBacklog;
   try {
-    plan = buildPlan(backlog, remote);
+    planned = buildPlan(backlog, remote, state.items);
   } catch (error) {
     if (error instanceof LegacyStoryCreateError) throw legacyStoryCreatesError(layout.backlog, error.stories);
     if (error instanceof UnknownIssueValueError) throw unknownIssueValuesError(layout.backlog, error.values);
     throw error;
   }
-
-  const gate = reviewGate(run, plan, () =>
+  const { plan } = planned;
+  const text = () =>
     formatPlanText(`Plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describePlanOperation, {
       empty: 'manifest has no items',
       matches: 'the manifest',
       extra: formatLeftovers(plan),
-    }),
-  );
+      blocked: plan.blocked.length,
+    });
+
+  if (plan.blocked.length > 0) {
+    if (options.command === 'apply' && options.yes && !options.dryRun) throw new BlockedPlanError(plan.blocked);
+    emit(run, plan, text);
+    return ExitCode.Blocked;
+  }
+  const gate = reviewGate(run, plan, text);
   if (gate !== undefined) return gate;
 
-  const report = await executePlan(plan, client, layout.state, remote.customAttributes);
+  const report = await executePlan(planned, client, layout.state, remote.customAttributes);
   emit(run, report, () => formatReportText(`Applied to project ${report.project.slug} (id ${report.project.id}):`, report, describeAppliedOperation));
   return ExitCode.Ok;
 }
@@ -857,6 +898,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (error instanceof UploadTooLargeError) {
       return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
     }
+    if (error instanceof BlockedPlanError) return fail(secrets, ExitCode.Blocked, 'blocked', error, json, { blocked: error.blocked });
     if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
     if (error instanceof ReadOnlyError) return fail(secrets, ExitCode.Usage, 'read-only', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
