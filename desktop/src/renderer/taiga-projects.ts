@@ -38,7 +38,7 @@ interface FormState {
   conflict: boolean;
 }
 
-const NEW_PROJECT: ProjectSettings = { name: '', description: '', template: 'scrum', isPrivate: true, modules: ['epics', 'backlog', 'wiki'] };
+const NEW_PROJECT: ProjectSettings = { name: '', description: '', template: 'scrum', isPrivate: true, modules: ['epics', 'backlog', 'wiki'], existing: false };
 
 let context: TaigaProjectsContext;
 let overview: TaigaProjectsOverview | undefined;
@@ -140,6 +140,8 @@ function readForm(): ProjectSettings {
     template: byId<HTMLSelectElement>('pf-template').value,
     isPrivate: byId<HTMLInputElement>('pf-private').checked,
     modules: [...document.querySelectorAll<HTMLInputElement>('#project-form input[name="pf-module"]:checked')].map((input) => input.value),
+    // Not a form control: set when the name was taken from the project on Taiga (formFor), kept from the file otherwise.
+    existing: form?.settings.existing ?? false,
   };
 }
 
@@ -261,7 +263,8 @@ function renderDetail(): void {
 }
 
 function formFor(found: TaigaProjectDetail): FormState {
-  const fromTaiga = found.taiga ? { ...NEW_PROJECT, name: found.taiga.project.name } : NEW_PROJECT;
+  // The name comes from a project already on Taiga, which may not follow `<A> - <B>`: mark it `existing: true`.
+  const fromTaiga = found.taiga ? { ...NEW_PROJECT, name: found.taiga.project.name, existing: true } : NEW_PROJECT;
   return { slug: found.slug, baseDigest: found.file.digest, settings: found.file.settings ?? fromTaiga, issues: found.file.issues, dirty: false, conflict: false };
 }
 

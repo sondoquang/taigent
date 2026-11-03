@@ -12,6 +12,7 @@ const SETTINGS: ProjectSettings = {
   template: 'scrum',
   isPrivate: true,
   modules: ['epics', 'backlog', 'wiki'],
+  existing: false,
 };
 
 const EXISTING = `# Written by the agent (taiga-bootstrap-project).
@@ -62,11 +63,24 @@ test('a new project.yaml goes into the directory of the slug Taiga derives from 
   assert.deepEqual(read.issues, []);
 });
 
+test('a project named from Taiga is saved with existing: true, so its legacy name and slug validate', async (t) => {
+  const root = await manifestsRoot(t);
+
+  const result = await saveProjectSettings(root, { ...SETTINGS, name: 'Core Mapping (cũ)', existing: true }, { slug: 'vigo-core-mapping', baseDigest: null });
+
+  assert.equal(result.status, 'saved');
+  const manifest = await loadProject(join(root, 'vigo-core-mapping', 'project.yaml'), 'vigo-core-mapping');
+  assert.equal(manifest.existing, true);
+  const read = await readProjectSettings(root, 'vigo-core-mapping');
+  assert.equal(read.settings?.existing, true);
+  assert.deepEqual(read.issues, []);
+});
+
 test('saving over an existing project.yaml changes the form fields only and keeps comments, tags, members and wiki_home', async (t) => {
   const root = await manifestsRoot(t);
   const path = await writeExisting(root);
   const before = await readProjectSettings(root, 'vigo-core-mapping');
-  assert.deepEqual(before.settings, { name: 'Vigo - Core Mapping', description: 'Old description.', template: 'kanban', isPrivate: true, modules: ['epics', 'kanban', 'wiki'] });
+  assert.deepEqual(before.settings, { name: 'Vigo - Core Mapping', description: 'Old description.', template: 'kanban', isPrivate: true, modules: ['epics', 'kanban', 'wiki'], existing: false });
 
   const result = await saveProjectSettings(root, { ...SETTINGS, description: 'New description.', isPrivate: false }, { slug: 'vigo-core-mapping', baseDigest: before.digest });
 

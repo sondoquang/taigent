@@ -7,6 +7,7 @@ import {
   checkModules,
   checkProjectName,
   checkProjectSlug,
+  PROJECT_SLUG_PATTERN,
   checkTag,
   checkTagColor,
   checkTemplate,
@@ -55,11 +56,13 @@ export interface ProjectManifest {
   members: MemberSpec[];
   /** Markdown of the wiki page `home`, when declared. */
   wikiHome: string | undefined;
+  /** `existing: true`: the project was made in Taiga before taigent; name/slug rules do not apply and bootstrap never creates it. */
+  existing: boolean;
 }
 
 const PROJECT_FIELDS: Record<string, true> = {
   name: true, slug: true, description: true, template: true, is_private: true, modules: true, tags: true,
-  custom_attributes: true, members: true, wiki_home: true,
+  custom_attributes: true, members: true, wiki_home: true, existing: true,
 };
 const TAG_FIELDS: Record<string, true> = { name: true, color: true };
 const ATTRIBUTE_FIELDS: Record<string, true> = { name: true, description: true, type: true };
@@ -82,10 +85,16 @@ export async function loadProject(path: string, dirSlug: string): Promise<Projec
     throw new ManifestError(issues);
   }
   unknownFields(doc, PROJECT_FIELDS, '', 'project');
-  const { name, slug, description, template, is_private: isPrivate = true, modules, tags = [], custom_attributes: attributes = {}, members = [], wiki_home: wikiHome } = doc;
+  const { name, slug, description, template, is_private: isPrivate = true, modules, tags = [], custom_attributes: attributes = {}, members = [], wiki_home: wikiHome, existing = false } = doc;
 
-  checkProjectName(name, 'name', issue);
-  checkProjectSlug(slug, name, 'slug', issue);
+  if (typeof existing !== 'boolean') issue('existing', 'type', 'must be true or false');
+  if (existing === true) {
+    if (typeof name !== 'string' || name.trim() === '') issue('name', 'required', 'name is required');
+    if (typeof slug !== 'string' || !PROJECT_SLUG_PATTERN.test(slug)) issue('slug', 'project-slug', 'slug must be the Taiga slug of the existing project');
+  } else {
+    checkProjectName(name, 'name', issue);
+    checkProjectSlug(slug, name, 'slug', issue);
+  }
   if (typeof slug === 'string' && slug !== dirSlug) {
     issue('slug', 'project-dir', `slug "${slug}" must equal the manifest directory name "${dirSlug}"`);
   }
@@ -178,5 +187,6 @@ export async function loadProject(path: string, dirSlug: string): Promise<Projec
     customAttributes,
     members: memberSpecs,
     wikiHome: wikiHome as string | undefined,
+    existing: existing === true,
   };
 }
