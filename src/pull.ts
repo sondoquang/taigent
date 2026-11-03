@@ -5,7 +5,7 @@
 // baseline to Taiga's values, so the next plan proposes writing the manifest's values: the way to settle a conflict,
 // an unknown item or a deliberate overwrite.
 
-import { readManifestFile, saveItems, type BacklogItem, type IssueFields, type ItemFields, type StoryFields } from './edit.ts';
+import { ManifestChangedError, saveItems, type BacklogItem, type IssueFields, type ItemFields, type StoryFields } from './edit.ts';
 import { ISSUE_VALUE_FIELDS, type ItemType } from './items.ts';
 import type { AttributeValue, Backlog, EpicSpec, IssueSpec, StorySpec, TaskSpec } from './manifest/backlog.ts';
 import { ManifestError } from './manifest/errors.ts';
@@ -38,6 +38,8 @@ export interface PullRequest {
   key?: string;
   /** Leave backlog.yaml as it is and only set the baseline to Taiga's values. */
   keepManifest: boolean;
+  /** Digest of backlog.yaml as read before Taiga: pull writes nothing when the file changed since. */
+  baseDigest: string;
 }
 
 /** One pulled item: `kind` why plan blocked it (null when it was not blocked), `fields` where Taiga and the manifest differed. */
@@ -168,10 +170,9 @@ export async function pullItems(layout: ProjectLayout, backlog: Backlog, { plan,
 
   if (!request.keepManifest) {
     const items = keys.map((key) => ({ original: key, item: pulledItem(located.get(key)!, counterparts.get(key)!, located) }));
-    const manifest = await readManifestFile(layout.dir, 'backlog');
-    const saved = await saveItems(layout.dir, { baseDigest: manifest.digest, items });
+    const saved = await saveItems(layout.dir, { baseDigest: request.baseDigest, items });
     if (saved.status === 'invalid') throw new ManifestError(saved.issues);
-    if (saved.status === 'conflict') throw new PullError('backlog.yaml changed while pulling; nothing was written, run pull again', keys[0]!);
+    if (saved.status === 'conflict') throw new ManifestChangedError('backlog.yaml changed while pulling; nothing was written, run pull again');
   }
   const state = await readState(layout.state, plan.project);
   for (const key of keys) {

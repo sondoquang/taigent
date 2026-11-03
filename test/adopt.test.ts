@@ -2,6 +2,7 @@
 // backlog.yaml with its `ref` (a story under a manifest epic, a task under a manifest story), plan proposes the
 // `adopt` action and apply only adds the `src:<key>` tag.
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -406,4 +407,20 @@ test('adopt takes a story only under a manifest epic and a task only under the b
   assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(handMadeStory.ref), '--key', 'PAY-CASH', '--epic', 'PAY'])).code, 0);
   await refused(inHandMade.ref, ['--story', 'PAY-CARD'], new RegExp(`task #${inHandMade.ref} is in user story #${handMadeStory.ref}, which is backlog item PAY-CASH, not PAY-CARD`));
   assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(inHandMade.ref), '--key', 'PAY-CASH-DRAWER', '--story', 'PAY-CASH'])).code, 0);
+});
+
+test('backlog.yaml edited while adopt reads Taiga: exit 2, nothing written over the edit', async (t) => {
+  const h = await startHarness(t);
+  const project = h.fake.addProject({ slug: 'demo' });
+  const epic = h.fake.addEpic({ project: project.id, subject: 'Payments' });
+  const edited = 'epics:\n  - key: AUTH\n    subject: Authentication\n';
+  await h.writeManifest('demo', 'backlog.yaml', '');
+  h.fake.onRequest({ method: 'GET', path: '/epics', run: () => writeFileSync(join(h.manifestsDir, 'demo', 'backlog.yaml'), edited) });
+
+  const adopted = await h.taigent(['adopt', '--project', 'demo', '--ref', String(epic.ref), '--key', 'PAY', '--json']);
+
+  assert.equal(adopted.code, ExitCode.Usage, adopted.stderr);
+  assert.equal(adopted.json<ErrorOutput>().error.kind, 'usage');
+  assert.match(adopted.stderr, /backlog\.yaml changed while adopting/);
+  assert.equal(await readFile(join(h.manifestsDir, 'demo', 'backlog.yaml'), 'utf8'), edited);
 });

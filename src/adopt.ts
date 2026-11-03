@@ -10,7 +10,7 @@
 
 import { mkdir } from 'node:fs/promises';
 import { parse } from 'yaml';
-import { readManifestFile, saveItem, type BacklogItem } from './edit.ts';
+import { ManifestChangedError, readManifestFile, saveItem, type BacklogItem } from './edit.ts';
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
 import { keyOf } from './managed.ts';
 import { checkBacklog, type Backlog } from './manifest/backlog.ts';
@@ -143,6 +143,6 @@ export async function adoptItem(dir: string, slug: string, client: TaigaClient, 
   await mkdir(dir, { recursive: true });
   const saved = await saveItem(dir, { baseDigest: manifest.digest, item: adopting });
   if (saved.status === 'invalid') throw new ManifestError(saved.issues);
-  if (saved.status === 'conflict') throw new AdoptError('backlog.yaml changed while adopting; nothing was written, run adopt again');
+  if (saved.status === 'conflict') throw new ManifestChangedError('backlog.yaml changed while adopting; nothing was written, run adopt again');
   return { project: { id: project.id, slug: project.slug }, type, key, ref, id: item.id, path: saved.path };
 }

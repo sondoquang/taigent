@@ -129,6 +129,12 @@ export type EditResult<T extends object> =
   | { status: 'conflict'; current: ManifestFile }
   | { status: 'invalid'; issues: ManifestIssue[] };
 
+/**
+ * A command (`adopt`, `pull`) read backlog.yaml before reading Taiga, and the file changed before it wrote it (a person
+ * or an agent edited it). Nothing was written; running the command again starts from the current file.
+ */
+export class ManifestChangedError extends Error {}
+
 interface ItemKind {
   /** The list that holds items of this kind, in their parent item (or at the top of the file). */
   list: string;

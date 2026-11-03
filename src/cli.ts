@@ -6,6 +6,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { AdoptError, adoptItem, type AdoptParent } from './adopt.ts';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
+import { ManifestChangedError, readManifestFile } from './edit.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
@@ -746,8 +747,10 @@ async function runAdopt(run: Run): Promise<number> {
  */
 async function runPull(run: Run): Promise<number> {
   const { options } = run;
+  // backlog.yaml as read before Taiga: pull refuses to write over an edit made while it reads Taiga.
+  const { digest } = await readManifestFile(projectLayout(options.project!, run.env, run.cwd).dir, 'backlog');
   const { layout, backlog, planned } = await readPlan(run);
-  const report = await pullItems(layout, backlog, planned, { key: options.key, keepManifest: options.keepManifest });
+  const report = await pullItems(layout, backlog, planned, { key: options.key, keepManifest: options.keepManifest, baseDigest: digest });
   const { slug } = report.project;
   emit(run, report, () => {
     if (report.pulled.length === 0) return `Nothing to pull: no item of project ${slug} is blocked.\n`;
@@ -1032,7 +1035,14 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
     if (error instanceof ReadOnlyError) return fail(secrets, ExitCode.Usage, 'read-only', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
-    if (error instanceof TicketError || error instanceof NotifyConfigError || error instanceof InitError || error instanceof AdoptError || error instanceof PullKeyError) {
+    if (
+      error instanceof TicketError ||
+      error instanceof NotifyConfigError ||
+      error instanceof InitError ||
+      error instanceof AdoptError ||
+      error instanceof PullKeyError ||
+      error instanceof ManifestChangedError
+    ) {
       return fail(secrets, ExitCode.Usage, 'usage', error, json);
     }
     if (error instanceof TelegramError) return fail(secrets, ExitCode.Taiga, 'telegram', error, json);

@@ -4,6 +4,7 @@
 // apply writes the manifest's values. Pull reads Taiga and writes local files only.
 
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -306,6 +307,21 @@ test('pull runs under TAIGENT_READ_ONLY, never writes to Taiga, and has nothing 
   assert.equal(pull.code, 0, pull.stderr);
   assert.deepEqual(writes(h.fake), []);
   assert.match(await readFile(backlogPath(h), 'utf8'), /subject: Sign-in/);
+});
+
+test('backlog.yaml edited while pull reads Taiga: exit 2 like adopt, and the edit is kept', async (t) => {
+  const h = await startHarness(t);
+  await applied(h, BACKLOG);
+  h.fake.editItem(h.fake.state.epics[0]!, { subject: 'Sign-in' });
+  const edited = BACKLOG.replace('subject: User can log out', 'subject: User can sign out');
+  h.fake.onRequest({ method: 'GET', path: '/userstories', run: () => writeFileSync(backlogPath(h), edited) });
+
+  const pull = await h.taigent(['pull', '--project', 'demo', '--json']);
+
+  assert.equal(pull.code, ExitCode.Usage, pull.stderr);
+  assert.equal(pull.json<PullError>().error.kind, 'usage');
+  assert.match(pull.stderr, /backlog\.yaml changed while pulling/);
+  assert.equal(await readFile(backlogPath(h), 'utf8'), edited);
 });
 
 test('pull refuses a key that is not in backlog.yaml or not on Taiga yet, and --keep-manifest elsewhere', async (t) => {
