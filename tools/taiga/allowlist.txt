@@ -6,7 +6,7 @@
 # docs/taiga/conventions.md §10: writes to Taiga go through the taigent CLI (test/headless.test.ts enforces this).
 
 # taigent CLI, as Claude Code's Bash and (Windows) PowerShell tools run it. status/comment edit one of the user's own
-# tickets, named in the request (taiga-update-ticket).
+# tickets, named in the request (taiga-update-ticket); snapshot only reads Taiga and writes taiga/<slug>/snapshot.json.
 Bash(npx taigent validate *)
 Bash(npx taigent plan *)
 Bash(npx taigent apply *)
@@ -18,6 +18,7 @@ Bash(npx taigent comment *)
 Bash(npx taigent preview *)
 Bash(npx taigent projects *)
 Bash(npx taigent report *)
+Bash(npx taigent snapshot *)
 PowerShell(npx taigent validate *)
 PowerShell(npx taigent plan *)
 PowerShell(npx taigent apply *)
@@ -29,6 +30,7 @@ PowerShell(npx taigent comment *)
 PowerShell(npx taigent preview *)
 PowerShell(npx taigent projects *)
 PowerShell(npx taigent report *)
+PowerShell(npx taigent snapshot *)
 
 # Taiga MCP read tools (taiga-mcp-server@1.9.20).
 mcp__taiga__listProjects

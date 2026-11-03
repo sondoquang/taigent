@@ -184,7 +184,7 @@ export function describePlanOperation(op: Operation): string {
 }
 
 /** The manifest key of an item, from its first `src:` tag (Taiga lowercases tags; keys are uppercase). */
-function keyOf(item: TaigaItem): string | undefined {
+export function keyOf(item: Pick<TaigaItem, 'tags'>): string | undefined {
   return item.tags.find((t) => t.startsWith('src:'))?.slice('src:'.length).toUpperCase();
 }
 

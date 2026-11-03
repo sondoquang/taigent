@@ -1,6 +1,6 @@
 // Init: installs into a repository everything Taigent needs, taken from the running taigent package: the Taigent
 // skills (.agents/skills and the .claude/skills copy), the `taiga` MCP server entries (.mcp.json, .codex/config.toml),
-// the headless kit, the `.gitignore` lines of the BA preview working copies and the `taigent` devDependency pinned to
+// the headless kit, the `.gitignore` lines of the local copies (BA preview, snapshot) and the `taigent` devDependency pinned to
 // this version's git tag. Offline; never runs npm or logs in. Only Taigent's own files and entries are written: other
 // skills, servers, keys, ignore lines and dependencies stay as they are.
 
@@ -42,9 +42,12 @@ const CODEX_HEADER = `# Project-scoped Codex config (loaded only when this proje
 const TAIGA_TABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'taiga')\s*\]\s*(?:#.*)?$/;
 const TAIGA_SUBTABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'taiga')\s*\./;
 
-/** `.gitignore` lines of the BA preview working copies: `taiga-apply-backlog` carries their edits into `backlog.yaml`. */
-const GITIGNORE_COMMENT = '# Taigent: BA preview working copies (taiga-apply-backlog carries the edits into backlog.yaml)';
-const GITIGNORE_LINES: readonly string[] = ['taiga/*/preview.md', 'taiga/*/.preview/'];
+/**
+ * `.gitignore` lines of the local copies: the BA preview working copies (`taiga-apply-backlog` carries their edits into
+ * `backlog.yaml`) and the snapshot of `taigent snapshot`. An older install gets the lines it lacks on the next init.
+ */
+const GITIGNORE_COMMENT = '# Taigent: local copies, never committed (the BA preview, whose edits taiga-apply-backlog carries into backlog.yaml; the snapshot of taigent snapshot)';
+const GITIGNORE_LINES: readonly string[] = ['taiga/*/preview.md', 'taiga/*/.preview/', 'taiga/*/snapshot.json'];
 
 export type InitStatus = 'created' | 'updated' | 'unchanged' | 'removed';
 
