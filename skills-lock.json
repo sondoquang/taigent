@@ -139,6 +139,12 @@
       "skillPath": "skills/engineering/triage/SKILL.md",
       "computedHash": "453a7a098edcbec2a6ef67f8aa6720433672ebdf93023c90cefa79f160c72599"
     },
+    "user-story": {
+      "source": "deanpeters/product-manager-skills",
+      "sourceType": "github",
+      "skillPath": "skills/user-story/SKILL.md",
+      "computedHash": "f8c59eabc45c2db2ee865ef03a30362b4de09d0ce175cf9e8142426202557a36"
+    },
     "wait-what": {
       "source": "mattpocock/skills",
       "sourceType": "github",
