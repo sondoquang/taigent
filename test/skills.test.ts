@@ -295,14 +295,10 @@ test('taiga-update-ticket edits your tickets through taigent only, may be invoke
   assert.match(router, /`taiga-update-ticket`/);
 });
 
-test('taiga-create-user-story reads Taiga through taigent snapshot, adopts a hand-made epic, and ask-taigent routes to it', async () => {
+test('taiga-create-user-story pre-approves only taigent commands, and ask-taigent routes to it', async () => {
   const { allowedTools } = await readSkill('taiga-create-user-story');
 
   assert.ok(allowedTools.every((tool) => tool.includes('(')), allowedTools.join(' '));
-  const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-create-user-story/SKILL.md'), 'utf8');
-  assert.match(skill, /npx taigent snapshot --project <slug>/);
-  assert.match(skill, /npx taigent adopt --project <slug> --ref <epic ref> --key <KEY>/);
-  assert.match(skill, /Exit 6/);
   const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
   assert.match(router, /`taiga-create-user-story`/);
 });

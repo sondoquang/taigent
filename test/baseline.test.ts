@@ -7,11 +7,11 @@ import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { ExitCode } from '../src/exit-codes.ts';
 import type { BlockedItem, Plan } from '../src/planner.ts';
+import { applied } from './support/backlog.ts';
 import type { FakeEpic } from './support/fake-taiga.ts';
 import { startHarness, writes, type Harness } from './support/harness.ts';
-
-const EXIT_BLOCKED = 6;
 
 /** One epic AUTH; `subject` replaces its subject. */
 function backlog(subject = 'Authentication', extra = ''): string {
@@ -30,11 +30,8 @@ interface BlockedError {
 }
 
 /** Applies backlog() to an empty project, so AUTH exists on Taiga with a baseline. Returns the epic on the fake. */
-async function applied(h: Harness): Promise<FakeEpic> {
-  h.fake.addProject({ slug: 'demo' });
-  await h.writeManifest('demo', 'backlog.yaml', backlog());
-  const result = await h.taigent(['apply', '--project', 'demo', '--yes']);
-  assert.equal(result.code, 0, result.stderr);
+async function appliedEpic(h: Harness): Promise<FakeEpic> {
+  await applied(h, backlog());
   return h.fake.state.epics[0]!;
 }
 
@@ -46,14 +43,14 @@ function seeded(h: Harness, subject = 'Authentication'): FakeEpic {
 
 test('apply records the baseline of each item it creates in state.json', async (t) => {
   const h = await startHarness(t);
-  const epic = await applied(h);
+  const epic = await appliedEpic(h);
 
   assert.deepEqual((await h.readState('demo'))?.items.AUTH, { type: 'epic', id: epic.id, ref: epic.ref, version: epic.version, baseline: BASELINE });
 });
 
 test('baseline present, Taiga and manifest unchanged: skip, nothing blocked', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await appliedEpic(h);
   h.fake.requests.length = 0;
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
@@ -66,7 +63,7 @@ test('baseline present, Taiga and manifest unchanged: skip, nothing blocked', as
 
 test('baseline present, manifest changed: update, and apply moves the baseline to the written values', async (t) => {
   const h = await startHarness(t);
-  const epic = await applied(h);
+  const epic = await appliedEpic(h);
   await h.writeManifest('demo', 'backlog.yaml', backlog('Sign-in'));
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
@@ -83,7 +80,7 @@ test('baseline present, manifest changed: update, and apply moves the baseline t
 
 test('baseline present, Taiga changed, manifest unchanged: blocked as a remote edit; apply --yes exits 6 and writes nothing', async (t) => {
   const h = await startHarness(t);
-  const epic = await applied(h);
+  const epic = await appliedEpic(h);
   h.fake.editItem(epic, { subject: 'Login' });
   // Another change apply would make, to show that a blocked item stops the whole apply.
   await h.writeManifest('demo', 'backlog.yaml', backlog('Authentication', '  - key: BILLING\n    subject: Billing\n'));
@@ -91,18 +88,18 @@ test('baseline present, Taiga changed, manifest unchanged: blocked as a remote e
   h.fake.requests.length = 0;
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
-  assert.equal(plan.code, EXIT_BLOCKED, plan.stderr);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
   const json = plan.json<Plan>();
   assert.deepEqual(json.blocked, [
     { kind: 'remote-edit', type: 'epic', key: 'AUTH', id: epic.id, ref: epic.ref, fields: { subject: { baseline: 'Authentication', taiga: 'Login', manifest: 'Authentication' } } },
   ]);
   assert.deepEqual(json.operations.map((op) => [op.action, op.key]), [['create', 'BILLING']]);
   const text = await h.taigent(['plan', '--project', 'demo']);
-  assert.equal(text.code, EXIT_BLOCKED);
+  assert.equal(text.code, ExitCode.Blocked);
   assert.match(text.stdout, /remote edit epic AUTH .*subject/);
 
   const apply = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
-  assert.equal(apply.code, EXIT_BLOCKED, apply.stderr);
+  assert.equal(apply.code, ExitCode.Blocked, apply.stderr);
   const { error } = apply.json<BlockedError>();
   assert.equal(error.kind, 'blocked');
   assert.deepEqual(error.blocked, json.blocked);
@@ -115,7 +112,7 @@ test('baseline present, Taiga changed, manifest unchanged: blocked as a remote e
 
 test('baseline present, Taiga and manifest changed the same way: skip, and apply refreshes the baseline', async (t) => {
   const h = await startHarness(t);
-  const epic = await applied(h);
+  const epic = await appliedEpic(h);
   h.fake.editItem(epic, { subject: 'Login' });
   await h.writeManifest('demo', 'backlog.yaml', backlog('Login'));
   h.fake.requests.length = 0;
@@ -134,13 +131,13 @@ test('baseline present, Taiga and manifest changed the same way: skip, and apply
 
 test('baseline present, Taiga and manifest changed differently: blocked as a conflict with all three versions', async (t) => {
   const h = await startHarness(t);
-  const epic = await applied(h);
+  const epic = await appliedEpic(h);
   h.fake.editItem(epic, { subject: 'Login' });
   await h.writeManifest('demo', 'backlog.yaml', backlog('Sign-in'));
   h.fake.requests.length = 0;
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
-  assert.equal(plan.code, EXIT_BLOCKED, plan.stderr);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
   const { operations, blocked } = plan.json<Plan>();
   assert.deepEqual(operations, []);
   assert.deepEqual(blocked, [
@@ -148,7 +145,7 @@ test('baseline present, Taiga and manifest changed differently: blocked as a con
   ]);
 
   const apply = await h.taigent(['apply', '--project', 'demo', '--yes']);
-  assert.equal(apply.code, EXIT_BLOCKED);
+  assert.equal(apply.code, ExitCode.Blocked);
   assert.deepEqual(writes(h.fake), []);
   assert.equal(epic.subject, 'Login');
 });
@@ -174,13 +171,13 @@ test('no baseline, manifest different from Taiga: blocked as unknown with both v
   await h.writeManifest('demo', 'backlog.yaml', backlog());
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
-  assert.equal(plan.code, EXIT_BLOCKED, plan.stderr);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
   assert.deepEqual(plan.json<Plan>().blocked, [
     { kind: 'unknown', type: 'epic', key: 'AUTH', id: epic.id, ref: epic.ref, fields: { subject: { taiga: 'Login', manifest: 'Authentication' } } },
   ]);
 
   const apply = await h.taigent(['apply', '--project', 'demo', '--yes']);
-  assert.equal(apply.code, EXIT_BLOCKED);
+  assert.equal(apply.code, ExitCode.Blocked);
   assert.deepEqual(writes(h.fake), []);
   assert.equal(await h.readState('demo'), undefined);
 });
@@ -203,7 +200,7 @@ test('an older state.json without baselines is migrated by apply when the manife
   // From now on an edit on Taiga is told apart from a manifest change.
   h.fake.editItem(epic, { subject: 'Login' });
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
-  assert.equal(plan.code, EXIT_BLOCKED, plan.stderr);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
   assert.deepEqual(plan.json<Plan>().blocked.map((item) => [item.kind, item.key]), [['remote-edit', 'AUTH']]);
 });
 

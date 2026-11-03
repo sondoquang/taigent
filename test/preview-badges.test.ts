@@ -5,13 +5,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { ExitCode } from '../src/exit-codes.ts';
 import type { Preview } from '../src/review.ts';
 import type { Snapshot } from '../src/snapshot.ts';
-import { startHarness, type Harness } from './support/harness.ts';
+import { applied } from './support/backlog.ts';
+import { OFFLINE, startHarness, type Harness } from './support/harness.ts';
 
-/** No Taiga connection at all: preview works offline, without any TAIGA_* variable. */
-const OFFLINE = { TAIGA_API_URL: undefined, TAIGA_USERNAME: undefined, TAIGA_PASSWORD: undefined };
-
+/** Preview works offline, without any TAIGA_* variable. */
 async function preview(h: Harness): Promise<{ json: Preview; page: string }> {
   const json = await h.taigent(['preview', '--project', 'demo', '--json'], { env: OFFLINE });
   assert.equal(json.code, 0, json.stderr);
@@ -20,13 +20,8 @@ async function preview(h: Harness): Promise<{ json: Preview; page: string }> {
   return { json: json.json<Preview>(), page: page.stdout };
 }
 
-/** Applies one epic AUTH to an empty project, so it is on Taiga with a baseline in state.json. */
-async function applied(h: Harness, backlog = 'epics:\n  - key: AUTH\n    subject: Authentication\n    tags: [type:feature]\n'): Promise<void> {
-  h.fake.addProject({ slug: 'demo' });
-  await h.writeManifest('demo', 'backlog.yaml', backlog);
-  const result = await h.taigent(['apply', '--project', 'demo', '--yes']);
-  assert.equal(result.code, 0, result.stderr);
-}
+/** One epic AUTH. */
+const EPIC = 'epics:\n  - key: AUTH\n    subject: Authentication\n    tags: [type:feature]\n';
 
 /** Runs `taigent snapshot` and returns its readAt. */
 async function snapshot(h: Harness): Promise<string> {
@@ -61,7 +56,7 @@ test('preview shows "adopt #ref" for an item adopting a hand-made one until appl
 
 test('preview shows a remote edit from snapshot.json with its readAt, and no remote badge without a snapshot', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, EPIC);
   h.fake.editItem(h.fake.state.epics[0]!, { subject: 'Login' });
 
   const without = await preview(h);
@@ -85,7 +80,7 @@ test('preview shows a remote edit from snapshot.json with its readAt, and no rem
 
 test('a snapshot read before taigent last wrote an item shows no remote edit for it', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, EPIC);
   await snapshot(h);
   await h.writeManifest('demo', 'backlog.yaml', 'epics:\n  - key: AUTH\n    subject: Sign-in\n    tags: [type:feature]\n');
   assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
@@ -159,7 +154,7 @@ test('preview compares every item type with the snapshot: nothing right after ap
 
   // Plan, reading Taiga itself, blocks the same items the same way.
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
-  assert.equal(plan.code, 6, plan.stderr);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
   const blocked = plan.json<{ blocked: { key: string; kind: string; fields: Record<string, unknown> }[] }>().blocked;
   assert.deepEqual(
     blocked.map((item) => [item.key, item.kind, Object.keys(item.fields)]).sort(),

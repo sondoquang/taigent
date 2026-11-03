@@ -6,10 +6,11 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { parse } from 'yaml';
+import { ExitCode } from '../src/exit-codes.ts';
 import type { ApplyReport } from '../src/executor.ts';
 import type { ManifestIssue } from '../src/manifest/errors.ts';
 import type { Plan } from '../src/planner.ts';
-import type { FakeIssueValue } from './support/fake-taiga.ts';
+import { valueId } from './support/backlog.ts';
 import { startHarness, writes, type Harness } from './support/harness.ts';
 
 interface ErrorOutput {
@@ -95,23 +96,16 @@ test('an adopted epic is never blocked before its adopt; after apply, a subject 
   h.fake.requests.length = 0;
   const edited = await h.taigent(['plan', '--project', 'demo', '--json']);
 
-  assert.equal(edited.code, 6, edited.stderr);
+  assert.equal(edited.code, ExitCode.Blocked, edited.stderr);
   const blockedPlan = edited.json<Plan>();
   assert.deepEqual(blockedPlan.operations, []);
   assert.deepEqual(blockedPlan.blocked, [
     { kind: 'remote-edit', type: 'epic', key: 'PAY', id: epic.id, ref: epic.ref, fields: { subject: { baseline: 'Payments and refunds', taiga: 'Payments (Q3)', manifest: 'Payments and refunds' } } },
   ]);
   const refused = await h.taigent(['apply', '--project', 'demo', '--yes']);
-  assert.equal(refused.code, 6, refused.stderr);
+  assert.equal(refused.code, ExitCode.Blocked, refused.stderr);
   assert.deepEqual(writes(h.fake), []);
 });
-
-/** Id of the value named `name` in one of the project's issue value lists on the fake. */
-function valueId(h: Harness, list: 'issueStatuses' | 'issueTypes' | 'severities' | 'priorities', project: number, name: string): number {
-  const value = (h.fake.state[list] as FakeIssueValue[]).find((v) => v.project === project && v.name === name);
-  assert.ok(value, `no ${list} value "${name}" in project ${project}`);
-  return value.id;
-}
 
 test('adopting a hand-made issue copies its type, severity and priority by name, after the items already in backlog.yaml', async (t) => {
   const h = await startHarness(t);
