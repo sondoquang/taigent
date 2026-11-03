@@ -11,8 +11,8 @@ import type { AttributeValue, Backlog, EpicSpec, IssueSpec, StorySpec, TaskSpec 
 import { ManifestError } from './manifest/errors.ts';
 import type { ProjectLayout } from './manifest/layout.ts';
 import { readState, writeState } from './manifest/state.ts';
-import { differingFields, type ManagedField } from './managed.ts';
-import type { BlockedKind, Counterpart, PlannedBacklog, PlanProject } from './planner.ts';
+import { differingFields, type BlockedKind, type ManagedField } from './managed.ts';
+import type { Counterpart, PlannedBacklog, PlanProject } from './planner.ts';
 import { parseStoryDescription } from './story-template.ts';
 
 /** `--key` names no backlog item, or one not on Taiga yet. Maps to a usage error; nothing was written. */

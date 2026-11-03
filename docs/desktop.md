@@ -140,12 +140,16 @@ Mục **Backlog** gồm:
 
 - **Thanh Nhờ agent**: ba nút chạy skill headless và kết quả của lần chạy gần nhất (xem
   [Nút chạy skill headless](#nút-chạy-skill-headless)).
-- **Thanh tổng quan**: số epic/story/task/issue; *Mới* (chưa có trên Taiga) và *Đã đẩy*; thanh tiến độ duyệt (số mục
-  *Đạt* trên tổng số mục, chia màu theo *Đạt*, *Cần sửa*, *Đã đổi sau khi duyệt*, *Chưa duyệt*) cùng số của từng trạng
-  thái; số góp ý chưa xử lý; kết quả `taigent validate` (bấm *Manifest lỗi* để xem từng lỗi).
+- **Thanh tổng quan**: số epic/story/task/issue; *Mới* (chưa có trên Taiga), *Adopt* (sẽ nhận một mục làm tay trên
+  Taiga, chỉ hiện khi có) và *Đã đẩy*; khi có `snapshot.json` thì thêm giờ chụp *Snapshot Taiga* và số mục *Sửa trên
+  Taiga*, *Xung đột với Taiga*, *Khác Taiga* (mỗi số chỉ hiện khi lớn hơn 0; xem [Badge từ Taiga](#badge-từ-taiga));
+  thanh tiến độ duyệt (số mục *Đạt* trên tổng số mục, chia màu theo *Đạt*, *Cần sửa*, *Đã đổi sau khi duyệt*, *Chưa
+  duyệt*) cùng số của từng trạng thái; số góp ý chưa xử lý; kết quả `taigent validate` (bấm *Manifest lỗi* để xem
+  từng lỗi). Mục **Thay đổi** hiện cùng các số *Mới*/*Adopt*/*Đã đẩy* và các số từ snapshot.
 - **Cây bên trái**: epic → story → task, rồi nhóm **Issues** (các issue của `backlog.yaml`, không thuộc epic nào).
-  Mỗi mục có nhãn *Mới* hoặc *Đã đẩy #ref*, trạng thái duyệt và số góp ý mở; *Mới* và *Chưa duyệt* (trạng thái mặc
-  định) hiện dạng chữ nhạt, các trạng thái còn lại dạng nhãn màu. Bộ lọc: *Tất cả*, *Chưa duyệt*, *Cần sửa*, *Đã đổi*.
+  Mỗi mục có nhãn *Mới*, *Adopt #ref* hoặc *Đã đẩy #ref*, nhãn từ snapshot nếu có (*Sửa trên Taiga*, *Xung đột với
+  Taiga*, *Khác Taiga*), trạng thái duyệt và số góp ý mở; *Mới* và *Chưa duyệt* (trạng thái mặc định) hiện dạng chữ
+  nhạt, các trạng thái còn lại dạng nhãn màu. Bộ lọc: *Tất cả*, *Chưa duyệt*, *Cần sửa*, *Đã đổi*.
   Khi lọc, epic/story cha vẫn hiện (mờ) để bạn biết mục nằm ở đâu.
 - **Chi tiết bên phải**: tiêu đề, mô tả hiển thị dạng Markdown, đúng nội dung ghi lên Taiga (với story, mô tả đã gồm
   tiêu chí chấp nhận dạng checklist `- [ ]` và link spec, nên không lặp lại thành mục riêng), task/story con, với
@@ -163,6 +167,29 @@ Các mục Wiki, Taiga, Thay đổi, Git, Setup repo và Settings dùng hết b�
 bên trái, các nút của mục ở bên phải; danh sách, bảng và dải số liệu trải hết chiều rộng. Git (nhánh và ô commit),
 Setup repo (bước 4 Kiểm tra) và Settings đặt nội dung phụ thành cột bên phải; khi cửa sổ hẹp hơn 1180px, cột này xuống
 dưới nội dung chính.
+
+### Badge từ Taiga
+
+Ứng dụng lấy các nhãn này từ cùng mô hình `buildPreview` (`src/review.ts`) mà `taigent preview` dùng (xem
+[`docs/cli.md` §Review](cli.md#review)), nên CLI và Desktop luôn hiện như nhau. Ứng dụng không tự đọc Taiga để vẽ nhãn
+và không có nút adopt hay pull: các việc đó làm bằng CLI hoặc skill.
+
+- **Adopt #ref**: mục trong `backlog.yaml` có `ref` mà `state.json` chưa ghi key của nó. Lần đẩy tới sẽ *adopt* mục
+  làm tay `#ref` trên Taiga, tức gắn tag `src:<key>` (xem `taigent adopt`). Đẩy xong thì nhãn chuyển thành
+  *Đã đẩy #ref*.
+- **Sửa trên Taiga**, **Xung đột với Taiga**, **Khác Taiga**: chỉ hiện khi có `taiga/<slug>/snapshot.json`, file do
+  `taigent snapshot --project <slug>` ghi (skill chạy lệnh này trước khi lập kế hoạch). Ứng dụng so snapshot với
+  baseline trong `state.json` và với manifest. Đây chính là phép so ba chiều mà `plan` dùng để chặn đẩy (exit 6):
+  - *Sửa trên Taiga*: mục bị sửa trên Taiga còn manifest không đổi.
+  - *Xung đột với Taiga*: cả hai cùng đổi, mỗi bên một kiểu.
+  - *Khác Taiga*: mục chưa có baseline và khác Taiga.
+
+  Rê chuột lên nhãn để xem giờ chụp snapshot và các trường liên quan. Ở phần chi tiết, nhãn ghi luôn các trường đó.
+  Không có snapshot thì không có các nhãn này. Snapshot là bản chụp tại một thời điểm: nếu nó được chụp trước lần đẩy
+  cuối cùng của mục (version thấp hơn `state.json`) thì mục đó không có nhãn. Snapshot cũng không chứa custom
+  attribute và mục đã đóng, nên hai thứ này không bao giờ hiện nhãn. Muốn số liệu mới thì chạy lại
+  `taigent snapshot`; ứng dụng theo dõi thư mục dự án nên tự cập nhật khi file đổi. Trước khi đẩy, hãy xử lý từng mục
+  trong `backlog.yaml`: lấy giá trị trên Taiga hoặc gộp hai bên.
 
 ## Duyệt và góp ý
 

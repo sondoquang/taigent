@@ -3,9 +3,10 @@
 // or carrying a `src:<key>` tag, with their full descriptions. Written to `taiga/<slug>/snapshot.json` (git-ignored);
 // Taigent Desktop and `preview` read it offline. The client disables Taiga's pagination, so every list is complete.
 
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { writeAtomic } from './files.ts';
+import { isFileNotFound } from './guards.ts';
 import { ISSUE_VALUE_FIELDS, type IssueValueField } from './items.ts';
 import { keyOf } from './managed.ts';
 import type { TaigaClient, TaigaItem } from './taiga/client.ts';
@@ -14,6 +15,8 @@ import type { TaigaClient, TaigaItem } from './taiga/client.ts';
 export interface SnapshotItem {
   id: number;
   ref: number;
+  /** Taiga's version of the item (its OCC counter, as state.json records it after a write). */
+  version: number;
   subject: string;
   /** Its status name, null when Taiga sends none. */
   status: string | null;
@@ -67,6 +70,7 @@ function snapshotItem(item: TaigaItem): SnapshotItem {
   return {
     id: item.id,
     ref: item.ref,
+    version: item.version,
     subject: item.subject,
     status: item.status,
     closed: item.isClosed,
@@ -117,6 +121,19 @@ export async function readSnapshot(client: TaigaClient, slug: string): Promise<S
 export async function writeSnapshot(path: string, snapshot: Snapshot): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeAtomic(path, `${JSON.stringify(snapshot, null, 2)}\n`);
+}
+
+/** Reads snapshot.json; undefined when there is none. */
+export async function readSnapshotFile(path: string): Promise<Snapshot | undefined> {
+  let text: string;
+  try {
+    text = await readFile(path, 'utf8');
+  } catch (error) {
+    if (isFileNotFound(error)) return undefined;
+    throw error;
+  }
+  // Written only by writeSnapshot; a hand-broken file surfaces as a JSON parse error.
+  return JSON.parse(text) as Snapshot;
 }
 
 export function summarizeSnapshot(snapshot: Snapshot, file: string): SnapshotSummary {

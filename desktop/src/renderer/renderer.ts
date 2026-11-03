@@ -70,14 +70,36 @@ function reviewStatus(item: PreviewItem): { label: string; css: string } {
   return { label: 'Chưa duyệt', css: 'unreviewed' };
 }
 
+/** How the review screen names what plan would block, from snapshot.json (`PreviewItem.blocked`). */
+const BLOCKED_LABEL: Record<NonNullable<PreviewItem['blocked']>['kind'], { label: string; hint: string }> = {
+  'remote-edit': { label: 'Sửa trên Taiga', hint: 'đã bị sửa trên Taiga sau lần đẩy cuối, manifest không đổi' },
+  conflict: { label: 'Xung đột với Taiga', hint: 'cả Taiga và manifest đều đổi, khác nhau' },
+  unknown: { label: 'Khác Taiga', hint: 'khác Taiga và chưa có baseline trong state.json' },
+};
+
 function badges(item: PreviewItem, compact: boolean): HTMLElement {
   const status = reviewStatus(item);
+  const { blocked } = item;
+  const kind = blocked && BLOCKED_LABEL[blocked.kind];
+  const fields = blocked?.fields.join(', ');
   return h(
     'span',
     { class: 'badges' },
     item.applied
       ? h('span', { class: 'badge applied', title: `Đã có trên Taiga (id ${item.applied.id})` }, `Đã đẩy #${item.applied.ref}`)
-      : h('span', { class: 'badge new' }, 'Mới'),
+      : item.adopt
+        ? h('span', { class: 'badge adopt', title: `Mục làm tay #${item.adopt.ref} trên Taiga: lần đẩy tới sẽ adopt nó (gắn tag src:<key>)` }, `Adopt #${item.adopt.ref}`)
+        : h('span', { class: 'badge new' }, 'Mới'),
+    blocked &&
+      kind &&
+      h(
+        'span',
+        {
+          class: `badge remote ${blocked.kind}`,
+          title: `Theo snapshot lúc ${formatTime(state.view?.preview.snapshot?.readAt)}: ${kind.hint} (${fields}). Đẩy lên Taiga sẽ bị chặn cho tới khi backlog.yaml xử lý mục này.`,
+        },
+        compact ? kind.label : `${kind.label}: ${fields}`,
+      ),
     h('span', { class: `badge ${status.css}` }, compact && status.css === 'stale' ? 'Đã đổi' : status.label),
     item.review.openComments > 0 &&
       h('span', { class: 'badge comments', title: 'Góp ý chưa xử lý' }, `${item.review.openComments} góp ý`),
@@ -178,6 +200,27 @@ function statCell(label: string, value: number | string, css = ''): HTMLElement 
   return h('div', { class: `stat ${css}` }, h('strong', {}, String(value)), h('span', {}, label));
 }
 
+/**
+ * Where the items stand on Taiga: new, to adopt (shown when any), pushed and, when `taigent snapshot` wrote
+ * snapshot.json, when it read Taiga and how many items plan would block, by kind (shown when any).
+ */
+function originCells(view: ProjectView): HTMLElement[] {
+  const s = view.preview.summary;
+  const cells = [statCell('Mới', s.new, 'new'), s.adopt > 0 && statCell('Adopt', s.adopt, 'adopt'), statCell('Đã đẩy', s.applied, 'applied')];
+  const snapshot = view.preview.snapshot;
+  if (snapshot) {
+    const { blocked } = s;
+    cells.push(
+      h('div', { class: 'sep' }),
+      statCell('Snapshot Taiga', formatTime(snapshot.readAt)),
+      blocked['remote-edit'] > 0 && statCell('Sửa trên Taiga', blocked['remote-edit'], 'remote'),
+      blocked.conflict > 0 && statCell('Xung đột với Taiga', blocked.conflict, 'conflict'),
+      blocked.unknown > 0 && statCell('Khác Taiga', blocked.unknown, 'remote'),
+    );
+  }
+  return cells.filter((cell): cell is HTMLElement => cell !== false);
+}
+
 function renderSummary(): void {
   const summary = byId('summary');
   const view = state.view;
@@ -208,8 +251,7 @@ function renderSummary(): void {
     statCell('Task', s.tasks),
     statCell('Issue', s.issues),
     h('div', { class: 'sep' }),
-    statCell('Mới', s.new, 'new'),
-    statCell('Đã đẩy', s.applied, 'applied'),
+    ...originCells(view),
     h('div', { class: 'sep' }),
     meter,
     statCell('Đạt', s.approved, 'approved'),
@@ -459,8 +501,7 @@ function renderChanges(): void {
     statCell('Task', s.tasks),
     statCell('Issue', s.issues),
     h('div', { class: 'sep' }),
-    statCell('Mới', s.new, 'new'),
-    statCell('Đã đẩy', s.applied, 'applied'),
+    ...originCells(view),
     h('div', { class: 'sep' }),
     statCell('Đạt', s.approved, 'approved'),
     statCell('Cần sửa', s.changes, 'changes'),

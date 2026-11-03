@@ -210,6 +210,7 @@ try {
     await storyFormScenario(page);
     await issueFormScenario(page);
     await wikiScenario(page);
+    await snapshotBadgeScenario(page);
     await staleLinkScenario(page);
   }
 
@@ -539,6 +540,36 @@ async function staleLinkScenario(page) {
     await fake.close();
   }
   await goTo(page, 'backlog');
+}
+
+/**
+ * Badges of the preview (#61): an issue with a `ref` that state.json does not record yet shows "Adopt #ref"; once a
+ * snapshot.json holds epic REVIEW with another subject (state.json has no baseline for it), the epic shows "Khác Taiga"
+ * and the summary dates the snapshot. Without snapshot.json no such badge shows. Both files are put back afterwards.
+ */
+async function snapshotBadgeScenario(page) {
+  const issue = 'BUG-STALE-AFTER-RENAME';
+  const snapshotFile = join(manifests, project, 'snapshot.json');
+  const backlog = await readFile(backlogFile, 'utf8');
+  // A Windows checkout (core.autocrlf) has CRLF line endings.
+  const adopting = backlog.replace(new RegExp(`( *)- key: ${issue}(\\r?\\n)`), `$1- key: ${issue}$2$1  ref: 99$2`);
+  check(adopting !== backlog, `backlog.yaml declares issue ${issue}`);
+  await writeFile(backlogFile, adopting);
+  await page.waitForSelector(`#tree .node[data-key="${issue}"] .badge.adopt`, { timeout: 10_000 });
+  check((await page.textContent(`#tree .node[data-key="${issue}"] .badge.adopt`)) === 'Adopt #99', `issue ${issue} with ref 99 is labelled Adopt #99`);
+  check((await page.locator('#tree .badge.remote').count()) === 0, 'no remote badge without snapshot.json');
+
+  const epic = { id: 1, ref: 1, version: 1, subject: 'Epic đã sửa trên Taiga', status: 'New', closed: false, tags: ['src:review'], key: 'REVIEW', description: '' };
+  await writeFile(snapshotFile, JSON.stringify({ project: { id: 1, slug: project }, readAt: new Date().toISOString(), epics: [epic], stories: [], tasks: [], issues: [] }));
+  await page.waitForSelector('#tree .node[data-key="REVIEW"] .badge.remote.unknown', { timeout: 10_000 });
+  check((await page.textContent('#tree .node[data-key="REVIEW"] .badge.remote')) === 'Khác Taiga', 'epic REVIEW is labelled Khác Taiga from snapshot.json');
+  check((await page.textContent('#summary'))?.includes('Snapshot Taiga'), 'the summary dates the snapshot');
+  await page.screenshot({ path: join(shots, '9c-snapshot-badges.png') });
+
+  await rm(snapshotFile);
+  await writeFile(backlogFile, backlog);
+  await page.waitForFunction(() => document.querySelectorAll('#tree .badge.remote, #tree .badge.adopt').length === 0, undefined, { timeout: 10_000 });
+  log('ok - the badges go once snapshot.json and the ref are gone');
 }
 
 /** Runs the taigent CLI of this repository on the temporary manifests (offline commands only). */

@@ -11,11 +11,12 @@ import {
   type UnknownIssueValue,
 } from './manifest/backlog.ts';
 import {
+  blockedFields,
   differingFields,
   keyOf,
   manifestManagedValues,
-  remoteEditedFields,
   remoteManagedValues,
+  type BlockedKind,
   type ManagedField,
   type ManagedValues,
   type ManifestItem,
@@ -132,12 +133,6 @@ export interface StaleLink {
   epicId: number;
   epicRef: number;
 }
-
-/**
- * Why plan blocks an item, from its baseline (B, state.json), Taiga's values (T) and the manifest's (M):
- * `remote-edit` T changed since B and M did not; `conflict` both changed, differently; `unknown` no B and M ≠ T.
- */
-export type BlockedKind = 'remote-edit' | 'conflict' | 'unknown';
 
 /** One field of a blocked item: its baseline (absent for `unknown`), Taiga's and the manifest's value. */
 export interface BlockedField {
@@ -384,22 +379,11 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
     if (tagged) counterparts.set(key, { type, item: existing, taiga: have, manifest: want });
     const recorded = state[key];
     const baseline = recorded?.type === type && recorded.id === existing.id ? recorded.baseline : undefined;
-    let kind: BlockedKind | undefined;
-    let fields: ManagedField[] = differing;
-    if (!tagged) {
-      // Adopting: the manifest takes over the hand-made item, and the adopt sets its first baseline.
-    } else if (!baseline) {
-      if (differing.length > 0) kind = 'unknown';
-    } else {
-      const remoteEdits = remoteEditedFields(baseline, have, want);
-      const manifestEdits = differingFields(want, baseline);
-      // Both changed the same way (differing is empty): a skip that takes Taiga's values as the new baseline.
-      if (remoteEdits.length > 0 && manifestEdits.length === 0) [kind, fields] = ['remote-edit', remoteEdits];
-      else if (remoteEdits.length > 0 && differing.length > 0) [kind, fields] = ['conflict', [...new Set([...remoteEdits, ...manifestEdits, ...differing])]];
-    }
-    if (kind) {
-      const versions = fields.map((field) => [field, { ...(baseline && { baseline: baseline[field] }), taiga: have[field], manifest: want[field] }]);
-      blocked.push({ kind, type, key, id: existing.id, ref: existing.ref, fields: Object.fromEntries(versions) });
+    // Adopting (no `src:<key>` tag yet): the manifest takes over the hand-made item, and the adopt sets its first baseline.
+    const blocking = tagged ? blockedFields(want, have, baseline) : undefined;
+    if (blocking) {
+      const versions = blocking.fields.map((field) => [field, { ...(baseline && { baseline: baseline[field] }), taiga: have[field], manifest: want[field] }]);
+      blocked.push({ kind: blocking.kind, type, key, id: existing.id, ref: existing.ref, fields: Object.fromEntries(versions) });
       return { existing, differing: [] };
     }
     const changes: FieldChanges = {};

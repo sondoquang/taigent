@@ -9,6 +9,7 @@ import type { EpicSpec, IssueSpec, StorySpec, TaskSpec } from './manifest/backlo
 import { TAG_PREFIXES } from './manifest/conventions.ts';
 import { storyDescription } from './story-template.ts';
 import type { RemoteState } from './planner.ts';
+import type { SnapshotIssue, SnapshotItem, SnapshotStory, SnapshotTask } from './snapshot.ts';
 import type { TaigaIssue, TaigaItem, TaigaTask } from './taiga/client.ts';
 
 /** A value as JSON holds it (custom attribute values on Taiga are arbitrary JSON). */
@@ -107,6 +108,39 @@ export function remoteManagedValues(
   return values;
 }
 
+/** A snapshot.json item of each type. */
+export interface SnapshotItems {
+  epic: SnapshotItem;
+  story: SnapshotStory;
+  task: SnapshotTask;
+  issue: SnapshotIssue;
+}
+
+/**
+ * The managed values of a snapshot.json item, projected like `remoteManagedValues` for an offline comparison.
+ * snapshot.json holds no custom attribute values: each attribute `manifest` declares takes the baseline's value (the
+ * manifest's without a baseline), so the snapshot never shows one as edited on Taiga. `backlogKey`: the key of the
+ * backlog item an epic (a story's links) or story (a task's parent) is, by ref.
+ */
+export function snapshotManagedValues<T extends ItemType>(
+  type: T,
+  item: SnapshotItems[T],
+  manifest: ManagedValues,
+  baseline: ManagedValues | undefined,
+  backlogKey: (type: 'epic' | 'story', ref: number) => string | undefined,
+): ManagedValues {
+  const custom: Record<string, JsonValue> = {};
+  for (const [name, value] of Object.entries(manifest.custom_attributes)) custom[name] = baseline ? (baseline.custom_attributes[name] ?? null) : value;
+  const values: ManagedValues = { subject: item.subject, description: item.description, tags: managedTags(item.tags), custom_attributes: custom };
+  if (type === 'story') values.epics = (item as SnapshotStory).epics.flatMap((ref) => backlogKey('epic', ref) ?? []);
+  if (type === 'task') {
+    const ref = (item as SnapshotTask).story;
+    values.story = (ref !== null && backlogKey('story', ref)) || null;
+  }
+  if (type === 'issue') for (const field of ISSUE_VALUE_FIELDS) values[field] = (item as SnapshotIssue)[field];
+  return values;
+}
+
 /** A managed field. */
 export type ManagedField = keyof ManagedValues;
 
@@ -146,4 +180,31 @@ export function remoteEditedFields(baseline: ManagedValues, remote: ManagedValue
   if ('story' in manifest && remote.story !== baseline.story) fields.push('story');
   if (manifest.epics?.some((key) => remote.epics?.includes(key) !== baseline.epics?.includes(key))) fields.push('epics');
   return fields;
+}
+
+/**
+ * Why plan blocks an item, from its baseline (B, state.json), Taiga's values (T) and the manifest's (M):
+ * `remote-edit` T changed since B and M did not; `conflict` both changed, differently; `unknown` no B and M ≠ T.
+ */
+export type BlockedKind = 'remote-edit' | 'conflict' | 'unknown';
+
+/**
+ * The three-way comparison of an item tagged `src:<key>` (docs/cli.md §Baseline and remote edits): its kind and the
+ * fields that tell why when plan blocks it, undefined when plan updates or skips it. Plan compares with Taiga,
+ * preview with snapshot.json.
+ */
+export function blockedFields(
+  manifest: ManagedValues,
+  remote: ManagedValues,
+  baseline: ManagedValues | undefined,
+): { kind: BlockedKind; fields: ManagedField[] } | undefined {
+  const differing = differingFields(manifest, remote);
+  if (!baseline) return differing.length > 0 ? { kind: 'unknown', fields: differing } : undefined;
+  const remoteEdits = remoteEditedFields(baseline, remote, manifest);
+  if (remoteEdits.length === 0) return undefined;
+  const manifestEdits = differingFields(manifest, baseline);
+  if (manifestEdits.length === 0) return { kind: 'remote-edit', fields: remoteEdits };
+  // Both changed the same way (differing is empty): a skip that takes Taiga's values as the new baseline.
+  if (differing.length > 0) return { kind: 'conflict', fields: [...new Set([...remoteEdits, ...manifestEdits, ...differing])] };
+  return undefined;
 }
