@@ -14,6 +14,7 @@ const STORIES = PAGE_SIZE + 2;
 interface SnapshotItem {
   id: number;
   ref: number;
+  version: number;
   subject: string;
   status: string | null;
   closed: boolean;
@@ -97,9 +98,11 @@ test('snapshot writes every epic and every open story, task and issue to snapsho
   // Every epic, closed ones too.
   assert.deepEqual(snapshot.epics.map((e) => e.ref).sort((a, b) => a - b), [refs.managedEpic, refs.handMadeEpic, refs.closedEpic]);
   assert.equal(snapshot.epics.find((e) => e.ref === refs.closedEpic)!.closed, true);
-  assert.deepEqual(snapshot.epics.find((e) => e.ref === refs.managedEpic), {
-    id: snapshot.epics.find((e) => e.ref === refs.managedEpic)!.id,
+  const managedEpic = snapshot.epics.find((e) => e.ref === refs.managedEpic)!;
+  assert.deepEqual(managedEpic, {
+    id: managedEpic.id,
     ref: refs.managedEpic,
+    version: 1,
     subject: 'Authentication',
     status: 'New',
     closed: false,

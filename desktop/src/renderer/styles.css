@@ -816,6 +816,14 @@ legend {
   color: var(--warn);
 }
 
+.stat.remote strong {
+  color: var(--warn);
+}
+
+.stat.conflict strong {
+  color: var(--signal);
+}
+
 .sep {
   align-self: stretch;
   width: 1px;
@@ -1143,6 +1151,22 @@ legend {
 
 .badge.applied {
   background: var(--wash-2);
+}
+
+.badge.adopt {
+  background: transparent;
+  border: 1px dashed var(--ink-2);
+}
+
+.badge.remote-edit,
+.badge.unknown {
+  background: var(--warn-tint);
+  color: var(--warn);
+}
+
+.badge.conflict {
+  background: var(--signal-tint);
+  color: var(--signal-strong);
 }
 
 .badge.approved {
