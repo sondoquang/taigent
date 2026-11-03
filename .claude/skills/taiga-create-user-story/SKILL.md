@@ -17,7 +17,7 @@ Run each `npx taigent …` command exactly as written, alone in its own shell ca
 
 ## 2. Pick the project and read the standard
 
-The slug the user named. With exactly one directory under `taiga/`, use it; otherwise ask. No `taiga/<slug>/backlog.yaml` yet: there is no epic to attach to; hand over to `taiga-plan-backlog` (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`) and stop.
+The slug the user named. With exactly one directory under `taiga/`, use it; otherwise ask. No `taiga/<slug>/backlog.yaml` yet (a project already on Taiga, never planned with taigent) is no reason to stop or hand over: go on, the epics come from the snapshot (step 4), and adopting a hand-made epic in step 5 creates `backlog.yaml`.
 
 Read conventions §5 (keys) and all of §6 (story format, quality check, anti-patterns, splitting rules) in the taigent root.
 
@@ -38,7 +38,7 @@ Run `npx taigent snapshot --project <slug>`. It writes `taiga/<slug>/snapshot.js
 
 Compare the draft with the stories that already exist:
 
-- the stories in `taiga/<slug>/backlog.yaml`;
+- the stories in `taiga/<slug>/backlog.yaml`, when it exists;
 - the `stories` of `snapshot.json`, manifest and hand-made alike; read the `description` of any whose subject overlaps.
 
 When one looks like the same work, show it with its key or `#ref` and ask whether to create the new story anyway. Go on only on an explicit yes.
