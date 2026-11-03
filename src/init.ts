@@ -1,7 +1,8 @@
 // Init: installs into a repository everything Taigent needs, taken from the running taigent package: the Taigent
 // skills (.agents/skills and the .claude/skills copy), the `taiga` MCP server entries (.mcp.json, .codex/config.toml),
-// the headless kit and the `taigent` devDependency pinned to this version's git tag. Offline; never runs npm or logs
-// in. Only Taigent's own files and entries are written: other skills, servers, keys and dependencies stay as they are.
+// the headless kit, the `.gitignore` lines of the BA preview working copies and the `taigent` devDependency pinned to
+// this version's git tag. Offline; never runs npm or logs in. Only Taigent's own files and entries are written: other
+// skills, servers, keys, ignore lines and dependencies stay as they are.
 
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -40,6 +41,10 @@ const CODEX_HEADER = `# Project-scoped Codex config (loaded only when this proje
 
 const TAIGA_TABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'taiga')\s*\]\s*(?:#.*)?$/;
 const TAIGA_SUBTABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'taiga')\s*\./;
+
+/** `.gitignore` lines of the BA preview working copies: `taiga-apply-backlog` carries their edits into `backlog.yaml`. */
+const GITIGNORE_COMMENT = '# Taigent: BA preview working copies (taiga-apply-backlog carries the edits into backlog.yaml)';
+const GITIGNORE_LINES: readonly string[] = ['taiga/*/preview.md', 'taiga/*/.preview/'];
 
 export type InitStatus = 'created' | 'updated' | 'unchanged' | 'removed';
 
@@ -122,6 +127,18 @@ function mergePackageJson(text: string | undefined, dependency: string): string 
   if (dependencies) delete dependencies.taigent;
   pkg.devDependencies = { ...devDependencies, taigent: dependency };
   return stringifyLike(text, pkg);
+}
+
+/** `.gitignore` with the GITIGNORE_LINES it lacks appended under GITIGNORE_COMMENT; `text` itself when it has them all. */
+function mergeGitignore(text: string | undefined): string {
+  // Git ignores trailing spaces of a pattern, not leading ones.
+  const present = new Set((text ?? '').split(/\r?\n/).map((line) => line.trimEnd()));
+  const missing = GITIGNORE_LINES.filter((line) => !present.has(line));
+  if (text !== undefined && missing.length === 0) return text;
+  const eol = text?.includes('\r\n') ? '\r\n' : '\n';
+  const block = [GITIGNORE_COMMENT, ...missing].join(eol) + eol;
+  if (!text) return block;
+  return `${text}${/\r?\n$/.test(text) ? '' : eol}${eol}${block}`;
 }
 
 function parseCodexToml(text: string): Record<string, unknown> {
@@ -220,6 +237,7 @@ export async function initRepository(root: string, { dryRun }: { dryRun: boolean
   await plan('.mcp.json', mergeMcpJson(await text('.mcp.json')));
   await plan('.codex/config.toml', mergeCodexToml(await text('.codex/config.toml')));
   await plan('package.json', mergePackageJson(await text('package.json'), await taigentDependency()));
+  await plan('.gitignore', mergeGitignore(await text('.gitignore')));
 
   if (!dryRun) {
     for (const { dir, comparison } of skillCopies) await copySkills(skillsSource, join(root, dir), comparison);

@@ -16,7 +16,8 @@ interface InitReport {
 
 const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 const KIT = ['tools/taiga/allowlist.txt', 'tools/taiga/omp-guard.mjs', '.codex/hooks/taigent-shell-guard.mjs', '.codex/rules/taigent.rules'];
-const CONFIGS = ['.mcp.json', '.codex/config.toml', 'package.json'];
+const CONFIGS = ['.mcp.json', '.codex/config.toml', 'package.json', '.gitignore'];
+const PREVIEW_IGNORES = ['taiga/*/preview.md', 'taiga/*/.preview/'];
 
 /** The `taiga` entries of this repository's own config, as another project runs them: from node_modules. */
 const installed = (text: string) => text.replaceAll('"bin/taigent.js"', '"node_modules/taigent/bin/taigent.js"');
@@ -72,6 +73,7 @@ test('init on an empty folder creates the skills, the MCP entries, the headless 
   assert.deepEqual(JSON.parse(await read(h, '.mcp.json')), { mcpServers: { taiga: MCP_ENTRY } });
   assert.deepEqual(toml(await read(h, '.codex/config.toml')), { mcp_servers: { taiga: CODEX_ENTRY } });
   assert.deepEqual(JSON.parse(await read(h, 'package.json')), { devDependencies: { taigent: `github:sondoquang/taigent#v${VERSION}` } });
+  assert.deepEqual((await read(h, '.gitignore')).split('\n').filter((line) => line && !line.startsWith('#')), PREVIEW_IGNORES);
   assert.deepEqual(h.fake.requests, []);
 });
 
@@ -115,6 +117,7 @@ test('init keeps other skills, MCP servers, settings and dependencies, and its m
     '.mcp.json': JSON.stringify({ mcpServers: { github: { command: 'github-mcp' } }, note: 'kept' }, null, 4),
     '.codex/config.toml': codexConfig,
     'package.json': `${JSON.stringify({ name: 'app', scripts: { test: 'vitest' }, dependencies: { react: '^19.0.0', taigent: '^0.0.1' }, devDependencies: { vitest: '^3.0.0' } }, null, 2)}\n`,
+    '.gitignore': 'node_modules/\r\ntaiga/*/preview.md  \r\ndist/',
   });
 
   const result = await init(h, ['--json']);
@@ -124,6 +127,7 @@ test('init keeps other skills, MCP servers, settings and dependencies, and its m
   assert.equal(status['.mcp.json'], 'updated');
   assert.equal(status['.codex/config.toml'], 'updated');
   assert.equal(status['package.json'], 'updated');
+  assert.equal(status['.gitignore'], 'updated');
   assert.equal(status['.agents/skills/tdd/SKILL.md'], undefined);
   assert.equal(await read(h, '.agents/skills/tdd/SKILL.md'), 'agents tdd');
   assert.equal(await read(h, '.claude/skills/grill-me/SKILL.md'), 'claude grill-me');
@@ -146,6 +150,8 @@ test('init keeps other skills, MCP servers, settings and dependencies, and its m
     dependencies: { react: '^19.0.0' },
     devDependencies: { vitest: '^3.0.0', taigent: `github:sondoquang/taigent#v${VERSION}` },
   });
+  // Only the missing preview line is added, in the file's own line endings; every other line stays.
+  assert.equal(await read(h, '.gitignore'), `node_modules/\r\ntaiga/*/preview.md  \r\ndist/\r\n\r\n# Taigent: BA preview working copies (taiga-apply-backlog carries the edits into backlog.yaml)\r\ntaiga/*/.preview/\r\n`);
 
   const again = await init(h, ['--json']);
   assert.ok(again.json<InitReport>().files.every(({ status }) => status === 'unchanged'), again.stdout);

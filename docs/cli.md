@@ -863,8 +863,9 @@ taken from the running taigent (Taigent Desktop runs the copy it ships):
 | `mcpServers.taiga` of `.mcp.json`, `[mcp_servers.taiga]` of `.codex/config.toml` | The Taiga MCP server, `node node_modules/taigent/bin/taigent.js mcp`: the entries of `taiga-setup`, no secrets |
 | `tools/taiga/allowlist.txt`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules` | The headless kit, where `run-skill` and the Codex shell guard look for it ([docs/headless.md](headless.md)) |
 | `devDependencies.taigent` of `package.json` | `github:sondoquang/taigent#v<version>`, the git tag of the running version (moved out of `dependencies`). A missing `package.json` is created |
+| `.gitignore` | `taiga/*/preview.md` and `taiga/*/.preview/` (the BA preview working copies, never committed), appended under a `# Taigent:` comment when missing. A missing `.gitignore` is created |
 
-Running it again is safe. Other skills, MCP servers, keys and dependencies stay as they are: `.mcp.json` and
+Running it again is safe. Other skills, MCP servers, keys, ignore lines and dependencies stay as they are: `.mcp.json` and
 `package.json` are merged by key and keep their indentation, and `.codex/config.toml` gets its `[mcp_servers.taiga]`
 table (subtables included) replaced in place or appended, every other line untouched. Every file is merged before the
 first write: a file that is not valid JSON or TOML, or defines `mcp_servers.taiga` other than as a table, is exit 2
