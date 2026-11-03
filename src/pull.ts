@@ -13,7 +13,7 @@ import type { ProjectLayout } from './manifest/layout.ts';
 import { readState, writeState } from './manifest/state.ts';
 import { differingFields, type BlockedKind, type ManagedField } from './managed.ts';
 import type { Counterpart, PlannedBacklog, PlanProject } from './planner.ts';
-import { parseStoryDescription } from './story-template.ts';
+import { parseStoryDescription, type StoryText } from './story-template.ts';
 
 /** `--key` names no backlog item, or one not on Taiga yet. Maps to a usage error; nothing was written. */
 export class PullKeyError extends Error {}
@@ -110,13 +110,19 @@ function pulledItem(item: Located, { taiga }: Counterpart, located: ReadonlyMap<
       return { type: 'task', key, parent: story, fields };
     }
     case 'story': {
-      const { format } = item.spec;
-      const parsed = parseStoryDescription(taiga.description, format);
+      const { spec } = item;
+      const { format } = spec;
+      // A legacy story with neither criteria nor spec (the shape adopt writes) holds Taiga's whole text as its description.
+      const freeText = spec.format === 'legacy' && spec.acceptanceCriteria.length === 0 && spec.spec === '';
+      const parsed: StoryText | undefined = freeText
+        ? { format: 'legacy', acceptanceCriteria: [], description: taiga.description, spec: '' }
+        : parseStoryDescription(taiga.description, format);
       if (!parsed) {
         throw new PullError(
           `story ${key}: its description on Taiga does not follow the ${format === 'user-story' ? 'user story' : 'legacy'} template, so it cannot be ` +
             `split back into ${format === 'user-story' ? 'use_case, description, scenarios and spec' : 'description, acceptance_criteria and spec'}; ` +
-            `rewrite the story in backlog.yaml from Taiga's description (in --json), then pull it with --keep-manifest so that apply writes it`,
+            `rewrite the story in backlog.yaml in its own ${format === 'user-story' ? 'user story format' : 'legacy format, its acceptance criteria split out again'} from ` +
+            `Taiga's description (in --json), then pull it with --keep-manifest so that apply writes it`,
           key,
           taiga.description,
         );

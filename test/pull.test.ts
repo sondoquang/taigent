@@ -7,13 +7,13 @@ import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { parse } from 'yaml';
+import { ExitCode } from '../src/exit-codes.ts';
 import type { Plan } from '../src/planner.ts';
 import type { Preview } from '../src/review.ts';
+import { applied } from './support/backlog.ts';
 import { startHarness, writes, type Harness } from './support/harness.ts';
 import { LEGACY, LEGACY_DESCRIPTION, seedLegacy } from './support/legacy-story.ts';
-
-const EXIT_BLOCKED = 6;
-const EXIT_VALIDATION = 4;
 
 const BACKLOG = `# Backlog of the demo project.
 epics:
@@ -84,24 +84,16 @@ interface PullError {
   error: { kind: string; message: string; key: string; description: string };
 }
 
-/** Applies BACKLOG (or `backlog`) to an empty project, so every item is on Taiga with a baseline. */
-async function applied(h: Harness, backlog = BACKLOG): Promise<void> {
-  h.fake.addProject({ slug: 'demo' });
-  await h.writeManifest('demo', 'backlog.yaml', backlog);
-  const result = await h.taigent(['apply', '--project', 'demo', '--yes']);
-  assert.equal(result.code, 0, result.stderr);
-}
-
 const backlogPath = (h: Harness) => join(h.manifestsDir, 'demo', 'backlog.yaml');
 const statePath = (h: Harness) => join(h.manifestsDir, 'demo', 'state.json');
 const story = (h: Harness, key: string) => h.fake.state.userStories.find((s) => s.tags.includes(`src:${key.toLowerCase()}`))!;
 
 test('pull writes a remote edit into backlog.yaml, keeps its comments, and the next plan skips the item', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, BACKLOG);
   const epic = h.fake.state.epics[0]!;
   h.fake.editItem(epic, { subject: 'Sign-in', description: 'Users can sign in with a password.', tags: ['type:feature', 'area:auth', 'area:security', 'src:auth', 'urgent'] });
-  assert.equal((await h.taigent(['plan', '--project', 'demo'])).code, EXIT_BLOCKED);
+  assert.equal((await h.taigent(['plan', '--project', 'demo'])).code, ExitCode.Blocked);
   h.fake.requests.length = 0;
 
   const pull = await h.taigent(['pull', '--project', 'demo', '--json']);
@@ -136,7 +128,7 @@ test('pull writes a remote edit into backlog.yaml, keeps its comments, and the n
 
 test('pull parses an edited user-story-format story back into use case, context, scenarios and spec', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, BACKLOG);
   h.fake.editItem(story(h, 'AUTH-LOGIN'), { description: EDITED_LOGIN });
 
   const pull = await h.taigent(['pull', '--project', 'demo', '--key', 'AUTH-LOGIN']);
@@ -198,9 +190,32 @@ test('pull parses an edited legacy story back into its description, acceptance c
   assert.equal((await h.taigent(['plan', '--project', 'demo'])).code, 0);
 });
 
+test('pull writes Taiga\'s whole text into an adopted free-text story, the legacy format without acceptance criteria or spec', async (t) => {
+  const h = await startHarness(t);
+  const project = h.fake.addProject({ slug: 'demo' });
+  const epic = h.fake.addEpic({ project: project.id, subject: 'Payments' });
+  const card = h.fake.addUserStory({ project: project.id, subject: 'Pay by card', description: 'Visa only.' });
+  h.fake.addEpicRelatedUserStory(epic.id, card.id);
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(epic.ref), '--key', 'PAY'])).code, 0);
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(card.ref), '--key', 'PAY-CARD', '--epic', 'PAY'])).code, 0);
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
+  const notes = 'Visa and Mastercard.\n\n## Acceptance criteria\n\nnot a checklist, just notes';
+  h.fake.editItem(card, { description: notes });
+
+  const pull = await h.taigent(['pull', '--project', 'demo', '--json']);
+
+  assert.equal(pull.code, 0, pull.stderr);
+  assert.deepEqual(pull.json<PullOutput>().pulled.map((item) => [item.key, item.kind, item.fields]), [['PAY-CARD', 'remote-edit', ['description']]]);
+  const backlog = parse(await readFile(backlogPath(h), 'utf8')) as { epics: { stories: { description: string }[] }[] };
+  assert.equal(backlog.epics[0]!.stories[0]!.description, notes);
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, 0, plan.stderr);
+  assert.deepEqual(plan.json<Plan>().blocked, []);
+});
+
 test('pull moves a task the team moved to another story on Taiga', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, BACKLOG);
   const task = h.fake.state.tasks.find((s) => s.tags.includes('src:auth-login-api'))!;
   h.fake.editItem(task, { user_story: story(h, 'AUTH-LOGOUT').id });
 
@@ -215,7 +230,7 @@ test('pull moves a task the team moved to another story on Taiga', async (t) => 
 
 test('a description that does not follow the template: exit 4, the raw description in --json, no file changed', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, BACKLOG);
   const free = 'Log in with email.\n\nNo template here, just notes from the meeting.';
   h.fake.editItem(story(h, 'AUTH-LOGIN'), { description: free });
   // Another blocked item, to show that pull changes nothing at all when one item fails.
@@ -225,7 +240,7 @@ test('a description that does not follow the template: exit 4, the raw descripti
 
   const pull = await h.taigent(['pull', '--project', 'demo', '--json']);
 
-  assert.equal(pull.code, EXIT_VALIDATION, pull.stderr);
+  assert.equal(pull.code, ExitCode.Validation, pull.stderr);
   const { error } = pull.json<PullError>();
   assert.equal(error.kind, 'pull');
   assert.equal(error.key, 'AUTH-LOGIN');
@@ -237,7 +252,7 @@ test('a description that does not follow the template: exit 4, the raw descripti
 
 test('--keep-manifest leaves backlog.yaml and moves the baseline to Taiga, so apply writes the manifest value', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, BACKLOG);
   const epic = h.fake.state.epics[0]!;
   h.fake.editItem(epic, { subject: 'Sign-in' });
   const backlogBefore = await readFile(backlogPath(h), 'utf8');
@@ -262,7 +277,7 @@ test('--keep-manifest leaves backlog.yaml and moves the baseline to Taiga, so ap
 
 test('the verdict of a pulled item turns stale in the review', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, BACKLOG);
   const before = (await h.taigent(['preview', '--project', 'demo', '--json'])).json<Preview>();
   const digest = before.epics[0]!.digest;
   await h.writeManifest('demo', 'review.yaml', `items:\n  AUTH:\n    verdict: approved\n    digest: ${digest}\n`);
@@ -279,7 +294,7 @@ test('the verdict of a pulled item turns stale in the review', async (t) => {
 
 test('pull runs under TAIGENT_READ_ONLY, never writes to Taiga, and has nothing to do without blocked items', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, BACKLOG);
   h.fake.requests.length = 0;
 
   const nothing = await h.taigent(['pull', '--project', 'demo', '--json'], { env: { TAIGENT_READ_ONLY: '1' } });
@@ -295,7 +310,7 @@ test('pull runs under TAIGENT_READ_ONLY, never writes to Taiga, and has nothing 
 
 test('pull refuses a key that is not in backlog.yaml or not on Taiga yet, and --keep-manifest elsewhere', async (t) => {
   const h = await startHarness(t);
-  await applied(h);
+  await applied(h, BACKLOG);
   await writeFile(backlogPath(h), `${BACKLOG}  - key: BILLING\n    subject: Billing\n`);
 
   const unknown = await h.taigent(['pull', '--project', 'demo', '--key', 'NOPE', '--json']);
