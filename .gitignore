@@ -20,6 +20,9 @@ tmp/
 taiga/*/preview.md
 taiga/*/.preview/
 
+# Backlog snapshots of `taigent snapshot` (a local copy of Taiga, never committed)
+taiga/*/snapshot.json
+
 # Node
 node_modules/
 

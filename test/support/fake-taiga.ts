@@ -136,6 +136,8 @@ export interface FakeEpic {
   tags: string[];
   status: number | null;
   assigned_to: number | null;
+  /** Whether the epic's status is closed (absent: open); set it with `editItem`. */
+  is_closed?: boolean;
 }
 
 /** Points estimate: role id → points id ("dictionary of points" in the Taiga API docs). */
@@ -816,7 +818,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   /** Creates an epic, user story, task or issue with the next project ref and its (empty) custom attribute values. */
-  function addItem<T extends FakeItem>(itemType: FakeCustomAttributeType, input: FakeItemInput, extra: Omit<T, keyof FakeEpic>): T {
+  function addItem<T extends FakeItem>(itemType: FakeCustomAttributeType, input: FakeItemInput, extra: Omit<T, Exclude<keyof FakeEpic, 'is_closed'>>): T {
     const project = state.projects.find((p) => p.id === input.project);
     if (!project) throw new Error(`fake taiga: no project ${input.project}`);
     const item = {
@@ -926,7 +928,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       priority: input.priority ?? project.default_priority,
       is_closed: state.issueStatuses.find((s) => s.id === status)?.is_closed ?? false,
       status,
-    } as Omit<FakeIssue, keyof FakeEpic>);
+    } as Omit<FakeIssue, Exclude<keyof FakeEpic, 'is_closed'>>);
   }
 
   /** Tags of the project (`tags_colors`): explicit colors plus tags used by items (null color), like taiga-back. */
@@ -1528,11 +1530,11 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   /**
    * An item as taiga-back serializes it: tags as [name, color] pairs, plus the embedded project and status
    * (`project_extra_info`, `status_extra_info`). Status names follow the default templates: a closed story is `Done`,
-   * a closed task `Closed`, anything open `New`; a story's `status_name` overrides them.
+   * a closed task or epic `Closed`, anything open `New`; a story's `status_name` overrides them.
    */
   function itemJson(item: FakeItem): Json {
     const project = state.projects.find((p) => p.id === item.project)!;
-    const closed = 'is_closed' in item && item.is_closed;
+    const closed = item.is_closed === true;
     const { status_name: statusName, ...fields } = item as typeof item & { status_name?: string | null };
     const defaultName = closed ? ('finish_date' in item ? 'Done' : 'Closed') : 'New';
     return {

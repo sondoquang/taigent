@@ -183,6 +183,7 @@ export function describePlanOperation(op: Operation): string {
   }
 }
 
+
 export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   const remoteItems: Record<ItemType, TaigaItem[]> = { epic: remote.epics, story: remote.stories, task: remote.tasks, issue: remote.issues };
   const bySrcTag = {} as Record<ItemType, Map<string, TaigaItem>>;

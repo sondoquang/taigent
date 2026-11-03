@@ -74,6 +74,7 @@ taiga/<slug>/
   docs.yaml      # wiki pages + attachments (optional)
   review.yaml    # verdicts and comments of the BA/PO review, see Review (optional; commit it)
   state.json     # written by apply: key → Taiga id/ref/version (commit it)
+  snapshot.json  # written by snapshot: the backlog as Taiga holds it (git-ignored, never commit it)
 ```
 
 `backlog.yaml`:
@@ -290,6 +291,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   project; read-only. See [Projects](#projects).
 - `taigent report --project <slug> [--json]`: the project's progress by sprint and by epic, and its stories in no
   sprint; read-only. See [Report](#report).
+- `taigent snapshot --project <slug> [--json]`: writes every epic and every open story, task and issue of the
+  project, hand-made ones too, to `taiga/<slug>/snapshot.json`; read-only on Taiga. See [Snapshot](#snapshot).
 - `taigent login [--application <id>]`, `taigent logout`, `taigent whoami [--json]`, `taigent mcp`: see
   [Login and the MCP server](#login-and-the-mcp-server).
 
@@ -600,6 +603,64 @@ missed. `--json` prints:
 Read-only, with the errors of every command that reads Taiga (exit 2 when not logged in, 5 when Taiga refuses the
 login or cannot be reached).
 
+## Snapshot
+
+`taigent snapshot --project <slug> [--json]` reads the whole backlog of one project the user can see (exit 5 when there
+is none) and writes it to `<manifests root>/<slug>/snapshot.json`, creating the directory when the project has no
+manifests yet. The skills run it before planning and read the file instead of the Taiga MCP lists, which return at
+most 30 stories and no tasks. It holds:
+
+- **every epic**, open and closed;
+- **every open story, task and issue** (a closed one is left out: its status is closed, `status_extra_info.is_closed`);
+- hand-made items (no `src:<key>` tag, `key: null`) and backlog items alike.
+
+It reads `GET /epics`, `/userstories`, `/tasks` and `/issues?project=<id>`, `GET /epics/<id>/related_userstories` for
+each epic, and the issue types, severities and priorities, every list with pagination disabled. It never writes to
+Taiga (it works under `TAIGENT_READ_ONLY` too) and touches no other file. Each run replaces the file atomically. The
+file is git-ignored ([`init`](#using-the-skills-in-another-project) adds `taiga/*/snapshot.json` to `.gitignore`): it
+is a local copy of Taiga at `readAt`, never a manifest.
+
+`snapshot.json`:
+
+```json
+{
+  "project": { "id": 7, "slug": "vigo-auth" },
+  "readAt": "2026-11-03T08:15:00.000Z",
+  "epics": [
+    { "id": 12, "ref": 1, "subject": "Authentication", "status": "New", "closed": false,
+      "tags": ["src:auth", "type:feature"], "key": "AUTH", "description": "…" }
+  ],
+  "stories": [
+    { "id": 40, "ref": 5, "subject": "Login form", "status": "In progress", "closed": false,
+      "tags": ["src:auth-login", "frontend"], "key": "AUTH-LOGIN", "description": "…", "epics": [1] }
+  ],
+  "tasks": [
+    { "id": 51, "ref": 9, "subject": "Build the form", "status": "New", "closed": false,
+      "tags": [], "key": null, "description": "…", "story": 5 }
+  ],
+  "issues": [
+    { "id": 60, "ref": 11, "subject": "Crash on login", "status": "New", "closed": false,
+      "tags": ["src:bug-crash"], "key": "BUG-CRASH", "description": "…",
+      "type": "Bug", "severity": "Normal", "priority": "High" }
+  ]
+}
+```
+
+- `readAt`: when Taiga was read (ISO 8601, UTC).
+- Every item: Taiga `id` and `ref`, `subject`, `status` (its name; `null` when Taiga sends none), `closed`, every tag as
+  Taiga stores it (lowercased; `src:` and hand-made tags alike), `key` (the uppercased key of its first `src:` tag,
+  `null` for a hand-made item) and the full `description`, byte for byte (line endings and trailing spaces kept).
+  Lists keep Taiga's order.
+- A story's `epics`: the refs of every epic it is linked to, hand-made epics too. A task's `story`: its parent
+  story's ref (that story may be closed, so not in `stories`), `null` for a task outside any story.
+- An issue's `type`, `severity` and `priority`: the names of its values, `null` when it has none.
+
+The text output is a short summary: the file, `readAt`, the count of each type and how many items are hand-made.
+`--json` prints it as
+`{ "file": "taiga/vigo-auth/snapshot.json", "readAt", "epics", "stories", "tasks", "issues", "handMade" }` (`file`
+relative to the working directory). Errors are those of every command that reads Taiga (exit 2 when not logged in, 5
+when Taiga refuses the login or cannot be reached).
+
 ## Tickets
 
 `taigent tickets --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--json]` lists the **Period's tickets**
@@ -870,7 +931,7 @@ taken from the running taigent (Taigent Desktop runs the copy it ships):
 | `mcpServers.taiga` of `.mcp.json`, `[mcp_servers.taiga]` of `.codex/config.toml` | The Taiga MCP server, `node node_modules/taigent/bin/taigent.js mcp`: the entries of `taiga-setup`, no secrets |
 | `tools/taiga/allowlist.txt`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules` | The headless kit, where `run-skill` and the Codex shell guard look for it ([docs/headless.md](headless.md)) |
 | `devDependencies.taigent` of `package.json` | `github:sondoquang/taigent#v<version>`, the git tag of the running version (moved out of `dependencies`). A missing `package.json` is created |
-| `.gitignore` | `taiga/*/preview.md` and `taiga/*/.preview/` (the BA preview working copies, never committed), appended under a `# Taigent:` comment when missing. A missing `.gitignore` is created |
+| `.gitignore` | `taiga/*/preview.md` and `taiga/*/.preview/` (the BA preview working copies) and `taiga/*/snapshot.json` (the snapshot of [`snapshot`](#snapshot)), never committed, appended under a `# Taigent:` comment when missing: an older install gets the lines it lacks, never a second copy. A missing `.gitignore` is created |
 
 Running it again is safe. Other skills, MCP servers, keys, ignore lines and dependencies stay as they are: `.mcp.json` and
 `package.json` are merged by key and keep their indentation, and `.codex/config.toml` gets its `[mcp_servers.taiga]`
@@ -937,6 +998,7 @@ skill checks all of it and names each fix.
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command |
+| Snapshot | `src/snapshot.ts` | `readSnapshot(client, slug)` → `Snapshot` (GET only), `writeSnapshot(path, snapshot)`, `summarizeSnapshot`, `formatSnapshotText`: the read-only `snapshot` command; the file is `projectLayout(...).snapshot` (`SNAPSHOT_FILE` in `src/manifest/layout.ts`) |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |

@@ -115,6 +115,10 @@ export interface TaigaItem {
   description: string;
   /** Tag names (Taiga stores them lowercased). */
   tags: string[];
+  /** Name of the item's status (`status_extra_info.name`), null when Taiga sends none. */
+  status: string | null;
+  /** Whether the item's status is closed (`status_extra_info.is_closed`, else the item's own `is_closed`). */
+  isClosed: boolean;
 }
 
 export interface TaigaTask extends TaigaItem {
@@ -181,6 +185,7 @@ function parseItem(raw: unknown, what: string): TaigaItem {
   if (!isRecord(raw)) throw new TaigaError(`unexpected Taiga response: ${what} is not an object`);
   // Taiga returns tags as [name, color|null] pairs.
   const tags = Array.isArray(raw.tags) ? raw.tags.map((tag) => String(Array.isArray(tag) ? tag[0] : tag)) : [];
+  const status = isRecord(raw.status_extra_info) ? raw.status_extra_info : {};
   return {
     id: field(raw, 'id', 'number', what),
     ref: field(raw, 'ref', 'number', what),
@@ -189,6 +194,8 @@ function parseItem(raw: unknown, what: string): TaigaItem {
     subject: field(raw, 'subject', 'string', what),
     description: typeof raw.description === 'string' ? raw.description : '',
     tags,
+    status: typeof status.name === 'string' ? status.name : null,
+    isClosed: typeof status.is_closed === 'boolean' ? status.is_closed : raw.is_closed === true,
   };
 }
 

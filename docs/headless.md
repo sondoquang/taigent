@@ -91,14 +91,15 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
 It holds:
 
 - `Bash(npx taigent <command> *)` and `PowerShell(npx taigent <command> *)` for `validate`, `plan`, `apply`,
-  `bootstrap`, `upload`, `tickets`, `status`, `comment`, `preview`, `projects`, `report`: writes to Taiga go through
-  the CLI only.
+  `bootstrap`, `upload`, `tickets`, `status`, `comment`, `preview`, `projects`, `report`, `snapshot`: writes to Taiga
+  go through the CLI only.
   `apply`/`bootstrap`/`upload` still need `--yes`, which the skills add only after the user's explicit confirmation,
   so a headless run of `taiga-apply-backlog` stops at the plan unless its arguments carry that confirmation.
   `status`/`comment` edit one of the user's own tickets named in the skill arguments (`taiga-update-ticket`); under
   Codex the shell guard below refuses a comment holding `( ) ? *` or the other shell characters it blocks.
-  `projects` only reads (the user's projects, or one project's issue types, severities and priorities); so does
-  `report` (one project's progress by sprint and by epic).
+  `projects` only reads (the user's projects, or one project's issue types, severities and priorities); so do
+  `report` (one project's progress by sprint and by epic) and `snapshot` (the whole backlog, written to the
+  git-ignored `taiga/<slug>/snapshot.json`).
 - The Taiga MCP read tools of `taiga-mcp-server@1.9.20` (`list*`, `get*`, `getMilestoneStats`,
   `getIssuesByMilestone`, `advancedSearch`, `queryHelp`, `validateQuery`) as `mcp__taiga__<tool>`.
 
