@@ -8,16 +8,18 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { OFFLINE, runTaigent } from './support/harness.ts';
 
-// Headless wrapper: tools/taiga/run-skill.ps1 and run-skill.sh build one `claude -p` / `codex exec` command from
-// the shared allowlist (tools/taiga/allowlist.txt). Tests only use `--dry-run`, which prints the command (a JSON
+// Headless wrapper: tools/taiga/run-skill.ps1 and run-skill.sh build one `omp -p` / `claude -p` / `codex exec` command
+// from the shared allowlist (tools/taiga/allowlist.txt). Tests only use `--dry-run`, which prints the command (a JSON
 // array of arguments) instead of launching an agent. Codex's shell parity lives in .codex/rules/taigent.rules
-// (execpolicy) and .codex/hooks/taigent-shell-guard.mjs (PreToolUse hook), both checked here against the allowlist.
+// (execpolicy) and .codex/hooks/taigent-shell-guard.mjs (PreToolUse hook), OMP's in the extension
+// tools/taiga/omp-guard.mjs, all checked here against the allowlist.
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const ALLOWLIST = join(REPO_ROOT, 'tools/taiga/allowlist.txt');
 const CODEX_RULES = join(REPO_ROOT, '.codex/rules/taigent.rules');
 const SHELL_GUARD = '.codex/hooks/taigent-shell-guard.mjs';
 const GUARD_HOOK = `hooks.PreToolUse=[{matcher='^Bash$',hooks=[{type='command',command='node ${SHELL_GUARD}',timeout=30}]}]`;
+const OMP_GUARD = 'tools/taiga/omp-guard.mjs';
 
 /** Taiga MCP tools that only read (taiga-mcp-server@1.9.20). */
 const MCP_READ_TOOLS = [
@@ -138,6 +140,47 @@ test('the Codex shell guard blocks every other command (exit 2 with the reason o
   }
 });
 
+type ToolCallHandler = (event: { toolName: string; input: Record<string, unknown> }) => Promise<{ block: true; reason: string } | undefined>;
+
+/** The `tool_call` handler the OMP guard extension registers, loaded the way OMP loads it: by path, untyped JS. */
+async function ompGuard(): Promise<ToolCallHandler> {
+  const module = (await import(new URL(`../${OMP_GUARD}`, import.meta.url).href)) as { default: (pi: unknown) => void };
+  let handler: ToolCallHandler | undefined;
+  module.default({ on: (event: string, fn: ToolCallHandler) => event === 'tool_call' && (handler = fn) });
+  assert.ok(handler, 'the extension registers a tool_call handler');
+  return handler;
+}
+
+// OMP registers MCP tools lowercased under `mcp__<server>_<tool>`, and may mount them as `xd://` devices written to.
+test('the OMP guard allows workspace file tools, the allowlist taigent commands and the Taiga MCP read tools only', async () => {
+  const guard = await ompGuard();
+  const banned = await bannedTools();
+  const allowed = [
+    { toolName: 'read', input: { path: 'taiga/vigo-auth/backlog.yaml' } },
+    { toolName: 'edit', input: { path: 'taiga/vigo-auth/backlog.yaml' } },
+    { toolName: 'write', input: { path: 'taiga/vigo-auth/review.yaml', content: '' } },
+    { toolName: 'bash', input: { command: 'npx taigent plan --project vigo-auth' } },
+    ...MCP_READ_TOOLS.map((tool) => ({ toolName: `mcp__taiga_${tool.toLowerCase()}`, input: {} })),
+    { toolName: 'write', input: { path: 'xd://mcp__taiga_listprojects', content: '{}' } },
+  ];
+  const blocked = [
+    { toolName: 'bash', input: { command: 'npm test' } },
+    { toolName: 'bash', input: { command: 'npx taigent plan --project vigo-auth && rm -rf ~' } },
+    { toolName: 'bash', input: { command: 'npx taigent plan --project vigo-auth', name: 'svc' } },
+    { toolName: 'bash', input: {} },
+    ...['eval', 'task', 'browser', 'web_search', 'computer'].map((toolName) => ({ toolName, input: {} })),
+    ...[...MCP_WRITE_TOOLS, ...banned].map((tool) => ({ toolName: `mcp__taiga_${tool.toLowerCase()}`, input: {} })),
+    { toolName: 'write', input: { path: 'xd://mcp__taiga_createissue', content: '{}' } },
+    { toolName: 'write', input: { path: 'xd://retain', content: '{}' } },
+  ];
+  for (const call of allowed) assert.equal(await guard(call), undefined, JSON.stringify(call));
+  for (const call of blocked) {
+    const result = await guard(call);
+    assert.equal(result?.block, true, JSON.stringify(call));
+    assert.match(result.reason, /^Blocked: /);
+  }
+});
+
 interface Shell {
   name: string;
   command: string;
@@ -183,6 +226,15 @@ async function dryRun(shell: Shell, args: string[]): Promise<string[]> {
 for (const shell of SHELLS) {
   const skip = available(shell) ? false : `${shell.command} is not installed`;
 
+  // Print mode answers no approval prompt: every call is approved, and the guard extension is what limits the tools.
+  test(`${shell.name}: omp runs the skill as a /skill: command under the guard extension`, { skip }, async () => {
+    const command = await dryRun(shell, ['omp', 'taiga-plan-backlog', 'docs/specs/auth.md', 'for vigo-auth']);
+
+    assert.deepEqual(command, [
+      'omp', '-p', '--mode', 'json', '--approval-mode', 'yolo', '-e', OMP_GUARD, '/skill:taiga-plan-backlog docs/specs/auth.md for vigo-auth',
+    ]);
+  });
+
   // acceptEdits: workspace edits pass, every other tool needs the allowlist (else denied in -p), whatever the
   // user's default mode (e.g. `auto`, which would let unlisted commands run) says.
   test(`${shell.name}: claude runs the skill as a slash command, edits allowed, other tools only from the allowlist`, { skip }, async () => {
@@ -214,9 +266,11 @@ for (const shell of SHELLS) {
   });
 
   test(`${shell.name}: --output-format text drops the JSON output flags`, { skip }, async () => {
+    const omp = await dryRun(shell, ['--output-format', 'text', 'omp', 'taiga-plan-backlog']);
     const claude = await dryRun(shell, ['--output-format', 'text', 'claude', 'taiga-plan-backlog']);
     const codex = await dryRun(shell, ['--output-format', 'text', 'codex', 'taiga-plan-backlog']);
 
+    assert.deepEqual(omp.slice(0, 4), ['omp', '-p', '--mode', 'text']);
     assert.deepEqual(claude.slice(0, 5), ['claude', '-p', '/taiga-plan-backlog', '--output-format', 'text']);
     assert.ok(!codex.includes('--json'), codex.join(' '));
     assert.equal(codex.at(-1), '$taiga-plan-backlog');
@@ -227,7 +281,7 @@ for (const shell of SHELLS) {
 
     assert.equal(result.code, 2, `${result.stdout}${result.stderr}`);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /unknown agent 'gemini'.*claude.*codex/);
+    assert.match(result.stderr, /unknown agent 'gemini'.*omp.*claude.*codex/);
   });
 
   test(`${shell.name}: a skill missing from .agents/skills is a usage error (exit 2)`, { skip }, async () => {
@@ -289,11 +343,26 @@ for (const shell of SHELLS) {
     assert.equal(result.stdout, '');
     assert.match(result.stderr, /allowlist\.txt.*taigent init/);
   });
+
+  test(`${shell.name}: omp in a repository without the OMP guard is a usage error (exit 2) naming taigent init`, { skip }, async (t) => {
+    const repo = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
+    t.after(() => rm(repo, { recursive: true, force: true }));
+    await mkdir(join(repo, '.agents/skills/taiga-plan-backlog'), { recursive: true });
+    await writeFile(join(repo, '.agents/skills/taiga-plan-backlog/SKILL.md'), '---\nname: taiga-plan-backlog\n---\n');
+    await mkdir(join(repo, 'tools/taiga'), { recursive: true });
+    await cp(ALLOWLIST, join(repo, 'tools/taiga/allowlist.txt'));
+
+    const result = await runScript(shell, ['--dry-run', 'omp', 'taiga-plan-backlog'], repo);
+
+    assert.equal(result.code, 2, `${result.stdout}${result.stderr}`);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, /omp-guard\.mjs.*taigent init/);
+  });
 }
 
 test('the PowerShell and sh wrappers build the same command from the same arguments', async (t) => {
   if (!SHELLS.every(available)) return t.skip('needs both PowerShell and sh');
-  for (const args of [['claude', 'taiga-apply-backlog', 'vigo-auth'], ['--output-format', 'text', 'codex', 'taiga-plan-backlog', 'spec.md']]) {
+  for (const args of [['omp', 'taiga-plan-backlog', 'spec.md', 'for vigo-auth'], ['claude', 'taiga-apply-backlog', 'vigo-auth'], ['--output-format', 'text', 'codex', 'taiga-plan-backlog', 'spec.md']]) {
     const [powershell, sh] = await Promise.all(SHELLS.map((shell) => dryRun(shell, args)));
     assert.deepEqual(powershell, sh);
   }

@@ -1,13 +1,13 @@
 #!/bin/sh
-# Runs one skill headless with Claude Code (`claude -p`) or Codex (`codex exec`) and the standard allowlist
-# (tools/taiga/allowlist.txt). Same arguments as run-skill.ps1; see docs/headless.md.
+# Runs one skill headless with OMP (`omp -p`), Claude Code (`claude -p`) or Codex (`codex exec`) and the standard
+# allowlist (tools/taiga/allowlist.txt). Same arguments as run-skill.ps1; see docs/headless.md.
 #
-#   tools/taiga/run-skill.sh [--dry-run] [--output-format json|text] <claude|codex> <skill> [skill arguments...]
+#   tools/taiga/run-skill.sh [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]
 #
 # The repository is the current directory, wherever this script lives (this repository, node_modules/taigent, or the
 # copy bundled in Taigent Desktop): its .agents/skills and the allowlist `taigent init` installed there.
 
-usage="usage: run-skill [--dry-run] [--output-format json|text] <claude|codex> <skill> [skill arguments...]"
+usage="usage: run-skill [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]"
 
 fail() {
   printf 'run-skill: %s\n' "$1" >&2
@@ -47,8 +47,8 @@ skill=$2
 shift 2
 
 case $agent in
-  claude | codex) ;;
-  *) fail "unknown agent '$agent' (expected claude or codex)" ;;
+  omp | claude | codex) ;;
+  *) fail "unknown agent '$agent' (expected omp, claude or codex)" ;;
 esac
 case $skill in
   '' | -* | *- | *--* | *[!a-z0-9-]*) fail "unknown skill '$skill': not a directory of .agents/skills" ;;
@@ -56,6 +56,10 @@ esac
 [ -f "$root/.agents/skills/$skill/SKILL.md" ] || fail "unknown skill '$skill': no .agents/skills/$skill/SKILL.md"
 [ -f "$root/tools/taiga/allowlist.txt" ] ||
   fail "no tools/taiga/allowlist.txt in $root: run run-skill from the repository root (npx taigent init installs the allowlist)"
+omp_guard=tools/taiga/omp-guard.mjs
+if [ "$agent" = omp ] && [ ! -f "$root/$omp_guard" ]; then
+  fail "no $omp_guard in $root: run npx taigent init again to install it"
+fi
 
 # Git Bash/MSYS on Windows rewrites arguments that look like POSIX paths ("/taiga-plan-backlog" becomes
 # "C:/Program Files/Git/taiga-plan-backlog") when it starts a native program. Pass them through unchanged.
@@ -65,7 +69,11 @@ IFS=' '
 request="$skill${1+ $*}"
 cr=$(printf '\r')
 
-if [ "$agent" = claude ]; then
+if [ "$agent" = omp ]; then
+  # Print mode answers no approval prompt, so every call is approved and the guard extension is the limit: it refuses
+  # every tool call but workspace file tools, the allowlist's taigent commands and its Taiga MCP read tools.
+  set -- omp -p --mode "$format" --approval-mode yolo -e "$omp_guard" "/skill:$request"
+elif [ "$agent" = claude ]; then
   set -- claude -p "/$request" --output-format "$format" --permission-mode acceptEdits --allowedTools
 else
   set -- codex exec --sandbox workspace-write --dangerously-bypass-hook-trust
@@ -73,7 +81,7 @@ else
   tools=
 fi
 
-while IFS= read -r rule || [ -n "$rule" ]; do
+[ "$agent" = omp ] || while IFS= read -r rule || [ -n "$rule" ]; do
   rule=${rule%"$cr"}
   case $rule in '' | '#'*) continue ;; esac
   if [ "$agent" = claude ]; then

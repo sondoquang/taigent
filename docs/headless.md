@@ -1,15 +1,15 @@
 # Headless skill runs
 
 `tools/taiga/run-skill.ps1` (PowerShell) and `tools/taiga/run-skill.sh` (POSIX sh, also Git Bash) run one skill
-without interaction through Claude Code (`claude -p`) or Codex (`codex exec`), with the team's standard allowlist.
-Both take the same arguments:
+without interaction through OMP (`omp -p`), Claude Code (`claude -p`) or Codex (`codex exec`), with the team's
+standard allowlist. Both take the same arguments:
 
 ```
-run-skill [--dry-run] [--output-format json|text] <claude|codex> <skill> [skill arguments...]
+run-skill [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]
 ```
 
 ```powershell
-.\tools\taiga\run-skill.ps1 claude taiga-status-report vigo-core-mapping
+.\tools\taiga\run-skill.ps1 omp taiga-status-report vigo-core-mapping
 .\tools\taiga\run-skill.ps1 --dry-run codex taiga-plan-backlog docs/specs/auth.md
 ```
 
@@ -20,11 +20,11 @@ tools/taiga/run-skill.sh --output-format text codex taiga-plan-backlog docs/spec
 
 | Argument | Meaning |
 |---|---|
-| `<claude\|codex>` | The agent CLI to start. Anything else: `unknown agent`, exit 2 |
+| `<omp\|claude\|codex>` | The agent CLI to start. Anything else: `unknown agent`, exit 2 |
 | `<skill>` | A directory of `.agents/skills/` holding a `SKILL.md`, e.g. `taiga-status-report`. Anything else: `unknown skill`, exit 2 |
 | `[skill arguments...]` | Joined with spaces after the skill name into the prompt |
-| `--output-format json` (default) | Claude `--output-format json` (Claude Code 2.1.302 prints a JSON array of the session's messages; the last, `"type": "result"`, holds `result`, `is_error` and `permission_denials`); Codex `--json` (JSON Lines events) |
-| `--output-format text` | Plain text: Claude `--output-format text`; Codex without `--json` |
+| `--output-format json` (default) | OMP `--mode json` (JSON Lines events); Claude `--output-format json` (Claude Code 2.1.302 prints a JSON array of the session's messages; the last, `"type": "result"`, holds `result`, `is_error` and `permission_denials`); Codex `--json` (JSON Lines events) |
+| `--output-format text` | Plain text: OMP `--mode text`; Claude `--output-format text`; Codex without `--json` |
 | `--dry-run` | Print the command as a JSON array of arguments instead of running it (no agent starts) |
 
 Options go before the agent. The **repository is the current directory**: run the wrapper from the repository root,
@@ -32,15 +32,18 @@ wherever the script itself lives (`tools/taiga/` of this repository, `node_modul
 set up by `taigent init`, or the copy bundled in Taigent Desktop). It reads that repository's `.agents/skills/` and
 `tools/taiga/allowlist.txt` (the one `init` installed), the agent starts there (where `.mcp.json`,
 `.codex/config.toml` and the skills live), and the wrapper exits with the agent's exit code. Wrapper errors (unknown
-option, output format, agent or skill; missing arguments; no `tools/taiga/allowlist.txt` in the current directory,
-whose message names `npx taigent init`; agent not on `PATH`) print `run-skill: <reason>` to stderr and exit 2.
+option, output format, agent or skill; missing arguments; no `tools/taiga/allowlist.txt` in the current directory, or
+for `omp` no `tools/taiga/omp-guard.mjs`, whose messages name `npx taigent init`; agent not on `PATH`) print
+`run-skill: <reason>` to stderr and exit 2.
 Log in first with `npx taigent login` in your own terminal, on the machine that runs the wrapper (or, on a machine
 without an OS credential store, set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD`); the `taiga-setup` skill
-checks it. Both agents start the Taiga MCP server through `taigent mcp`, and `taigent` itself, with that login.
+checks it. The agents start the Taiga MCP server through `taigent mcp` (OMP reads the project's `.mcp.json`), and
+`taigent` itself, with that login.
 
 ## Commands built
 
 ```
+omp -p --mode json --approval-mode yolo -e tools/taiga/omp-guard.mjs "/skill:<skill> <args>"
 claude -p "/<skill> <args>" --output-format json --permission-mode acceptEdits --allowedTools <every rule of allowlist.txt>
 codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
   -c "approvals_reviewer='user'"
@@ -51,6 +54,16 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
   "$<skill> <args>"
 ```
 
+- **OMP** runs a skill when the prompt starts with `/skill:<skill>`; the rest of the prompt reaches the skill as its
+  arguments (observed with OMP 18.16.0 on Windows, in print mode). Print mode answers no approval prompt, so
+  `--approval-mode yolo` approves every call and the extension `tools/taiga/omp-guard.mjs` is the limit: its
+  `tool_call` handler blocks every call except the workspace file tools (read, search, edit, write), the shell
+  commands the Codex shell guard below lets through (it runs `.codex/hooks/taigent-shell-guard.mjs`; supervised
+  services are refused too) and the allowlist's Taiga MCP read tools, under OMP's names (`mcp__taiga_listprojects`),
+  called directly or by writing to their `xd://` device. Eval, subagents, the browser, web search and every MCP
+  write tool are refused with the reason, so nothing waits for an answer; a handler error blocks the call (OMP fails
+  closed). Observed with OMP 18.16.0 on Windows: `echo` and eval refused, `npx taigent validate` and
+  `listProjects` ran, a write to `xd://retain` refused.
 - **Claude Code** runs a skill when the prompt starts with `/<skill>`, including skills with
   `disable-model-invocation: true`. `--permission-mode acceptEdits` mirrors Codex's `workspace-write`: file
   edits in the workspace pass, and any other tool call that neither `--allowedTools` nor the skill's
@@ -74,7 +87,8 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
 
 ## The standard allowlist
 
-`tools/taiga/allowlist.txt` is the only list; both scripts read it (one rule per line, `#` comments). It holds:
+`tools/taiga/allowlist.txt` is the only list; both scripts and both guards read it (one rule per line, `#` comments).
+It holds:
 
 - `Bash(npx taigent <command> *)` and `PowerShell(npx taigent <command> *)` for `validate`, `plan`, `apply`,
   `bootstrap`, `upload`, `tickets`, `status`, `comment`, `preview`, `projects`, `report`: writes to Taiga go through
@@ -90,20 +104,21 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
 
 It never holds an MCP write tool (create, update, link, batch, upload, comment, delete, assign, watch,
 `authenticate`) nor a tool banned in `docs/taiga/conventions.md` §10; `test/headless.test.ts` fails if it does
-(it reads the banned tools from §10). Claude gets every rule. Codex gets the MCP tool names as `enabled_tools`;
-for the shell, its PreToolUse hook reads the `Bash(…)`/`PowerShell(…)` rules of the file on every command, and
-`.codex/rules/taigent.rules` repeats the taigent commands in Codex's rule language, which cannot read
-files (`test/headless.test.ts` fails when the two lists differ).
+(it reads the banned tools from §10). Claude gets every rule. OMP's guard extension reads the MCP tool names and runs
+the Codex shell hook. Codex gets the MCP tool names as `enabled_tools`; for the shell, its PreToolUse hook reads the
+`Bash(…)`/`PowerShell(…)` rules of the file on every command, and `.codex/rules/taigent.rules` repeats the taigent
+commands in Codex's rule language, which cannot read files (`test/headless.test.ts` fails when the two lists differ).
 
-`taigent init` installs the allowlist, the hook and the rule into another repository at these same paths, with the
-Taigent skills and the MCP entries (`docs/cli.md` §Using the skills in another project); re-running it after a
-taigent upgrade brings them up to date.
+`taigent init` installs the allowlist, the OMP guard, the hook and the rule into another repository at these same
+paths, with the Taigent skills and the MCP entries (`docs/cli.md` §Using the skills in another project); re-running
+it after a taigent upgrade brings them up to date.
 
 ## Taigent Desktop buttons
 
 The Backlog section of Taigent Desktop has three buttons that run this wrapper (the copy bundled with the app, so its
-version matches the app) in the opened repository, with the agent chosen in **Settings** (`claude` or `codex`) and
-`--output-format text`. Each run opens a `skill` tab of the app's terminal; **Huỷ** kills its process tree
+version matches the app) in the opened repository, with the agent picked in the agent bar beside them or in
+**Settings** (`omp` by default, `claude` or `codex`) and `--output-format text`. Each run opens a `skill` tab of the
+app's terminal; **Huỷ** kills its process tree
 ([docs/desktop.md § Nút chạy skill headless](desktop.md#nút-chạy-skill-headless)).
 
 | Button | Skill | Skill arguments (one line) |
@@ -126,9 +141,10 @@ The prompt is not the guard: the allowlist still allows `npx taigent apply *`. T
 refuses `apply --yes`, `upload --yes`, `bootstrap --yes`, `status` and `comment` with exit 2 before contacting Taiga,
 while `plan`, `validate`, `preview` and `--dry-run` still work (`docs/cli.md` §Read-only runs, tested in
 `test/read-only.test.ts`). Writes to Taiga then go through the app's own confirmation (**Đẩy lên Taiga**). Claude Code
-passes its environment to its shell commands. `[UNVERIFIED]` for Codex: its `shell_environment_policy` inherits the
-environment by default and drops only names with `KEY`, `SECRET` or `TOKEN` in them
-([Config reference](https://learn.chatgpt.com/docs/config-file/config-reference)), so the variable passes; a personal
+and OMP pass their environment to their shell commands (OMP 18.16.0 on Windows: `npx taigent apply --yes` run by the
+agent under the wrapper exited 2 with the read-only refusal). `[UNVERIFIED]` for Codex: its
+`shell_environment_policy` inherits the environment by default and drops only names with `KEY`, `SECRET` or `TOKEN` in
+them ([Config reference](https://learn.chatgpt.com/docs/config-file/config-reference)), so the variable passes; a personal
 policy that inherits nothing (`inherit = "none"`, `include_only`) would drop it. The wrapper outside the app does not
 set it: there the user confirms in their own session.
 

@@ -15,7 +15,7 @@ interface InitReport {
 }
 
 const TAIGENT_SKILLS = ['ask-taigent', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
-const KIT = ['tools/taiga/allowlist.txt', '.codex/hooks/taigent-shell-guard.mjs', '.codex/rules/taigent.rules'];
+const KIT = ['tools/taiga/allowlist.txt', 'tools/taiga/omp-guard.mjs', '.codex/hooks/taigent-shell-guard.mjs', '.codex/rules/taigent.rules'];
 const CONFIGS = ['.mcp.json', '.codex/config.toml', 'package.json'];
 
 /** The `taiga` entries of this repository's own config, as another project runs them: from node_modules. */

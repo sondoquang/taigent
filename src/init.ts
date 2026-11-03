@@ -15,11 +15,12 @@ import { compareSkillDirs, copySkills, type SkillFile, SKILLS_SOURCE, SKILLS_TAR
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /**
- * Files of the headless kit, at the same path in the package and in the repository: `run-skill` reads the allowlist
- * and runs the Codex shell guard from the repository root, the guard reads `../../tools/taiga/allowlist.txt`, and
- * Codex loads execpolicy rules from `.codex/rules/`.
+ * Files of the headless kit, at the same path in the package and in the repository: `run-skill` reads the allowlist,
+ * loads the OMP guard extension and runs the Codex shell guard from the repository root, both guards read
+ * `tools/taiga/allowlist.txt` (the OMP one also runs the Codex shell guard), and Codex loads execpolicy rules from
+ * `.codex/rules/`.
  */
-const HEADLESS_KIT: readonly string[] = ['tools/taiga/allowlist.txt', '.codex/hooks/taigent-shell-guard.mjs', '.codex/rules/taigent.rules'];
+const HEADLESS_KIT: readonly string[] = ['tools/taiga/allowlist.txt', 'tools/taiga/omp-guard.mjs', '.codex/hooks/taigent-shell-guard.mjs', '.codex/rules/taigent.rules'];
 
 /** The `taiga` server of `.mcp.json`: `taigent mcp`, run from the installed package. */
 const MCP_ENTRY = { command: 'node', args: ['node_modules/taigent/bin/taigent.js', 'mcp'] };

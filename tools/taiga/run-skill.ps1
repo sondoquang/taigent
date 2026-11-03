@@ -1,14 +1,14 @@
-# Runs one skill headless with Claude Code (`claude -p`) or Codex (`codex exec`) and the standard allowlist
-# (tools/taiga/allowlist.txt). Same arguments as run-skill.sh; see docs/headless.md.
+# Runs one skill headless with OMP (`omp -p`), Claude Code (`claude -p`) or Codex (`codex exec`) and the standard
+# allowlist (tools/taiga/allowlist.txt). Same arguments as run-skill.sh; see docs/headless.md.
 #
-#   tools/taiga/run-skill.ps1 [--dry-run] [--output-format json|text] <claude|codex> <skill> [skill arguments...]
+#   tools/taiga/run-skill.ps1 [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]
 #
 # The repository is the current directory, wherever this script lives (this repository, node_modules/taigent, or the
 # copy bundled in Taigent Desktop): its .agents/skills and the allowlist `taigent init` installed there.
 # No param() block on purpose: GNU-style options parse identically to the sh version.
 
 $ErrorActionPreference = 'Stop'
-$Usage = 'usage: run-skill [--dry-run] [--output-format json|text] <claude|codex> <skill> [skill arguments...]'
+$Usage = 'usage: run-skill [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]'
 
 function Stop-Run([string]$Message, [switch]$ShowUsage) {
   [Console]::Error.WriteLine("run-skill: $Message")
@@ -41,7 +41,7 @@ $Agent = $Rest[0]
 $Skill = $Rest[1]
 $Request = (@($Skill) + @($Rest | Select-Object -Skip 2)) -join ' '
 
-if ($Agent -cnotin 'claude', 'codex') { Stop-Run "unknown agent '$Agent' (expected claude or codex)" }
+if ($Agent -cnotin 'omp', 'claude', 'codex') { Stop-Run "unknown agent '$Agent' (expected omp, claude or codex)" }
 if ($Skill -cnotmatch '^[a-z0-9]+(-[a-z0-9]+)*$') { Stop-Run "unknown skill '$Skill': not a directory of .agents/skills" }
 if (-not (Test-Path -LiteralPath (Join-Path $Root ".agents/skills/$Skill/SKILL.md") -PathType Leaf)) {
   Stop-Run "unknown skill '$Skill': no .agents/skills/$Skill/SKILL.md"
@@ -50,6 +50,10 @@ $Allowlist = Join-Path $Root 'tools/taiga/allowlist.txt'
 if (-not (Test-Path -LiteralPath $Allowlist -PathType Leaf)) {
   Stop-Run "no tools/taiga/allowlist.txt in $Root`: run run-skill from the repository root (npx taigent init installs the allowlist)"
 }
+$OmpGuard = 'tools/taiga/omp-guard.mjs'
+if ($Agent -ceq 'omp' -and -not (Test-Path -LiteralPath (Join-Path $Root $OmpGuard) -PathType Leaf)) {
+  Stop-Run "no $OmpGuard in $Root`: run npx taigent init again to install it"
+}
 
 $Rules = @(
   Get-Content -LiteralPath $Allowlist -Encoding UTF8 |
@@ -57,7 +61,12 @@ $Rules = @(
     Where-Object { $_ -and -not $_.StartsWith('#') }
 )
 
-if ($Agent -ceq 'claude') {
+if ($Agent -ceq 'omp') {
+  # Print mode answers no approval prompt, so every call is approved and the guard extension is the limit: it refuses
+  # every tool call but workspace file tools, the allowlist's taigent commands and its Taiga MCP read tools.
+  $Command = @('omp', '-p', '--mode', $Format, '--approval-mode', 'yolo', '-e', $OmpGuard, "/skill:$Request")
+}
+elseif ($Agent -ceq 'claude') {
   $Command = @('claude', '-p', "/$Request", '--output-format', $Format, '--permission-mode', 'acceptEdits', '--allowedTools') + $Rules
 }
 else {

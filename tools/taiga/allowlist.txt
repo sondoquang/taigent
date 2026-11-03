@@ -1,8 +1,9 @@
 # Standard allowlist of the headless wrapper (run-skill.ps1, run-skill.sh): one rule per line, `#` starts a comment.
 # Claude Code receives every rule through --allowedTools; Codex receives the mcp__taiga__ tool names as
 # mcp_servers.taiga.enabled_tools, and its shell hook (.codex/hooks/taigent-shell-guard.mjs) reads the Bash/PowerShell
-# rules; .codex/rules/taigent.rules must list the same taigent commands. Never add an MCP write tool or a tool banned
-# in docs/taiga/conventions.md §10: writes to Taiga go through the taigent CLI (test/headless.test.ts enforces this).
+# rules; .codex/rules/taigent.rules must list the same taigent commands. OMP's guard extension (omp-guard.mjs) reads
+# the mcp__taiga__ tool names and runs the Codex shell hook. Never add an MCP write tool or a tool banned in
+# docs/taiga/conventions.md §10: writes to Taiga go through the taigent CLI (test/headless.test.ts enforces this).
 
 # taigent CLI, as Claude Code's Bash and (Windows) PowerShell tools run it. status/comment edit one of the user's own
 # tickets, named in the request (taiga-update-ticket).
