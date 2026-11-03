@@ -1,0 +1,23 @@
+# Fixture of the desktop smoke (desktop/scripts/smoke.mjs). Not a real Taiga project: never bootstrap or apply it.
+name: Smoke - Taigent Desktop
+slug: smoke-taigent-desktop
+description: Backlog mẫu để smoke test Taigent Desktop chạy được trên một bản clone mới.
+template: kanban
+is_private: true
+modules: [epics, backlog, kanban, wiki]
+tags:
+  - name: type:feature
+    color: "#2E7D32"
+  - name: type:bug
+    color: "#C62828"
+  - name: type:chore
+    color: "#757575"
+  - name: area:review
+    color: "#1565C0"
+  - name: area:push
+    color: "#1565C0"
+custom_attributes:
+  epic:
+    - name: Mục tiêu quý
+      description: Quý mà epic cần xong (form epic của desktop nhập theo tên này).
+      type: text

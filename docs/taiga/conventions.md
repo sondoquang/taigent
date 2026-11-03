@@ -1,7 +1,7 @@
 # Quy ước Taiga
 
 Đây là tài liệu quy ước Taiga **duy nhất** của team. `AGENTS.md` trỏ tới đây nên cả Claude Code lẫn Codex CLI
-đều đọc. Mọi project, epic, story, task, wiki và attachment trên `taiga.vidratek.net` đều tạo theo tài liệu này.
+đều đọc. Mọi project, epic, story, task, issue, wiki và attachment trên `taiga.vidratek.net` đều tạo theo tài liệu này.
 
 - Các quy tắc kiểm được offline nằm ở `src/manifest/conventions.ts`, và `taigent validate` kiểm chúng. Mỗi quy tắc
   có một mã `rule` (cột "Rule" bên dưới). Mã này xuất hiện trong lỗi của `validate`/`plan`/`apply`.
@@ -35,14 +35,15 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
    ý tường minh.
 
 `plan` và `apply` từ chối manifest sai quy ước với exit 4 và không ghi gì lên Taiga. Riêng rule `story-format` cho
-story sắp được tạo (§6.2) được kiểm sau khi đọc Taiga, vì chỉ Taiga biết story nào là mới. Chạy lại `apply` luôn an
-toàn: item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
+story sắp được tạo (§6.2) và rule `issue-value` (§6.4) được kiểm sau khi đọc Taiga, vì chỉ Taiga biết story nào là mới
+và project có những giá trị issue nào. Chạy lại `apply` luôn an toàn: item đã có thì bỏ qua (khớp theo tag
+`src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
 
 `taigent validate` kiểm cả `review.yaml` (khi có):
 
 | Rule | Quy tắc |
 |---|---|
-| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá hoặc đổi key item thì chuyển hoặc xoá mục review của nó. |
+| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá item thì xoá mục review của nó; đổi key item thì chuyển comment sang key mới và bỏ verdict (item cần duyệt lại). Taigent Desktop tự làm việc này khi form đổi key hoặc xoá item. |
 | `review-verdict` | `verdict` là `approved` hoặc `changes`, và đi kèm `digest` của item lúc duyệt. |
 | `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 
@@ -110,19 +111,21 @@ Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên
 
 | Rule | Quy tắc |
 |---|---|
-| `key-format` | Mỗi epic, story, task có `key`: chữ hoa, số, gạch ngang giữa các nhóm (`^[A-Z0-9]+(-[A-Z0-9]+)*$`), ví dụ `AUTH`, `AUTH-LOGIN`, `AUTH-LOGIN-API`. |
-| `key-unique` | Key duy nhất trong cả project (epic, story, task dùng chung một không gian key). |
-| `key-reference` | Mọi chỗ tham chiếu key (ví dụ `target` của attachment trong `docs.yaml`) phải trỏ tới key có trong `backlog.yaml`. |
+| `key-format` | Mỗi epic, story, task, issue có `key`: chữ hoa, số, gạch ngang giữa các nhóm (`^[A-Z0-9]+(-[A-Z0-9]+)*$`), ví dụ `AUTH`, `AUTH-LOGIN`, `AUTH-LOGIN-API`. |
+| `key-unique` | Key duy nhất trong cả project (epic, story, task, issue dùng chung một không gian key). |
+| `key-reference` | Mọi chỗ tham chiếu key (ví dụ `target` của attachment trong `docs.yaml`) phải trỏ tới key có trong `backlog.yaml`. Attachment chỉ gắn vào epic, story hoặc task, không gắn vào issue. |
+| `key-locked` | Item đã có trên Taiga (key có trong `state.json`) không đổi key: đổi key = item mới + item cũ thành mồ côi. Form của Taigent Desktop kiểm rule này khi lưu. |
 
-- Key **không đổi** sau khi đã apply: đổi key = item mới + item cũ thành mồ côi.
+- Key **không đổi** sau khi đã apply (rule `key-locked`).
 - Gợi ý đặt key: epic là tên mảng (`AUTH`), story là `<EPIC>-<việc>` (`AUTH-LOGIN`), task là
-  `<STORY>-<bước>` (`AUTH-LOGIN-API`).
+  `<STORY>-<bước>` (`AUTH-LOGIN-API`), issue là `<tiền tố>-<việc>` với tiền tố theo `type`: `Question` → `ASK`,
+  `Enhancement` → `ENH`, type khác (kể cả `Bug`) → `BUG`. Ví dụ `BUG-LONG-PASSWORD`.
 - Item bỏ khỏi manifest không bị xoá trên Taiga. `plan` báo nó là mồ côi để người quyết định.
 - Chuyển task sang story khác (hoặc story sang epic khác) trong manifest: `apply` gắn task vào story mới
   (`user_story`), và gắn story vào epic mới. Liên kết cũ với epic cũ **không bị gỡ**; `plan` báo nó trong
   `staleLinks` để người quyết định gỡ tay trên Taiga.
 
-## 6. Mẫu mô tả story và task
+## 6. Mẫu mô tả story, task và issue
 
 Manifest không có field status, assignee, sprint hay points. Các field đó thuộc về người làm và `apply` không
 ghi đè chúng.
@@ -247,13 +250,62 @@ Done khi: API `POST /login` trả token, có test tích hợp, đã review và m
 
 **Epic** (`epics[]`): `key`, `subject`, `description` (mục tiêu của mảng việc, kèm link spec nếu có), `tags`.
 
-Epic, story và task đều có thể có `custom_attributes`: mapping **tên** custom attribute → giá trị (chuỗi, số hoặc
+Epic, story, task và issue đều có thể có `custom_attributes`: mapping **tên** custom attribute → giá trị (chuỗi, số hoặc
 `true`/`false`), ví dụ `custom_attributes: { "Estimate (h)": 4 }`. Tên phải trùng đúng (kể cả hoa/thường) với
 attribute của loại item đó trên Taiga, tức là attribute khai báo trong `custom_attributes` của `project.yaml` và
 đã tạo bằng `taigent bootstrap`. Tên không có trên project thì `plan`/`apply` báo lỗi và không ghi gì. `apply`
 chỉ ghi các attribute có trong manifest; giá trị người khác đặt cho attribute khác được giữ nguyên.
 
-### 6.4 Nguồn tham khảo
+### 6.4 Issue
+
+**Issue** (`issues[]`, cấp trên cùng của `backlog.yaml`, ngang hàng với `epics`): `key`, `subject`, `description`,
+`type`, `severity`, `priority`, `tags`, `custom_attributes`. Issue là bug, câu hỏi hoặc đề xuất cải tiến; nó nằm
+ngoài cây epic → story → task: không có cha, không gắn vào epic hay story. Không có field status, assignee hay
+sprint: người làm quản lý chúng trên Taiga, `apply` không bao giờ ghi chúng. Issue mới nhận status mặc định của
+project (`New`).
+
+`subject` tả triệu chứng, ngắn và cụ thể (`Login fails with a 100-character password`), không tả cách sửa.
+`description` theo mẫu dưới (nhãn giữ tiếng Anh, nội dung viết bằng ngôn ngữ của nhóm). `apply` ghi description đúng
+như trong manifest; `validate` không kiểm mẫu này. Với type `Question` hay `Enhancement`, bỏ các phần không hợp và
+viết câu hỏi hoặc đề xuất trong một đoạn.
+
+```markdown
+## Steps to reproduce
+
+1. Open the sign-in page
+2. Type a 100-character password and submit
+
+## Expected
+
+I am signed in.
+
+## Actual
+
+The page shows "Server error" (HTTP 500).
+
+Environment: production, Chrome 130
+```
+
+`type`, `severity`, `priority` là **tên** giá trị của chính project trên Taiga, viết đúng từng ký tự (kể cả
+hoa/thường). Template mặc định (`scrum` và `kanban`) có:
+
+| Field | Giá trị (theo thứ tự) | Mặc định | Chọn |
+|---|---|---|---|
+| `type` | `Bug`, `Question`, `Enhancement` | `Bug` | `Bug`: hệ thống chạy sai so với spec hoặc mong đợi; `Question`: cần câu trả lời, chưa chắc là lỗi; `Enhancement`: đề xuất cải tiến nhỏ, không đủ lớn để thành story |
+| `severity` | `Wishlist`, `Minor`, `Normal`, `Important`, `Critical` | `Normal` | Mức ảnh hưởng: `Critical` mất dữ liệu, sập hoặc chặn luồng chính và không có cách vòng; `Important` hỏng một chức năng, có cách vòng; `Normal` lỗi thường; `Minor` lỗi giao diện, câu chữ; `Wishlist` cho đẹp hơn |
+| `priority` | `Low`, `Normal`, `High` | `Normal` | Mức gấp, do BA/PO quyết: `High` cần sửa trong sprint này; `Normal` xếp vào backlog; `Low` khi rảnh |
+
+Project có thể đổi tên hoặc thêm giá trị. Khi không chắc, xem tên type/severity/priority của issue có sẵn bằng tool
+MCP đọc `getIssue`, hoặc chạy `taigent plan`: tên không có trên project bị báo (`issue-value`) kèm danh sách tên đúng.
+
+| Rule | Quy tắc |
+|---|---|
+| `required` / `type` | `type`, `severity`, `priority` là chuỗi không rỗng (kiểm offline, cả trong `validate`). |
+| `issue-value` | `type`, `severity`, `priority` trùng đúng tên một giá trị của project trên Taiga. Kiểm sau khi đọc Taiga: `plan`/`apply` thoát exit 4 và không ghi gì, lỗi trỏ tới `issues[i].<field>`. |
+
+Issue bỏ khỏi manifest không bị xoá trên Taiga; `plan` báo nó là mồ côi như các item khác.
+
+### 6.5 Nguồn tham khảo
 
 - Mike Cohn, *User Stories Applied* (2004): format As a / I want to / so that.
 - Gherkin (Cucumber): Given / When / Then.
@@ -269,8 +321,9 @@ mới tạo luôn ở status đầu tiên. Khi báo cáo hoặc cập nhật sta
 | User story | `New`, `Ready`, `In progress`, `Ready for test`, `Done`, `Archived` | `New` vừa tạo; `Ready` đủ AC, sẵn sàng làm; `In progress` đang làm; `Ready for test` đã merge, chờ kiểm thử; `Done` đạt AC; `Archived` bỏ hoặc lưu trữ |
 | Task | `New`, `In progress`, `Ready for test`, `Closed`, `Needs Info` | `Closed` = đạt định nghĩa done; `Needs Info` = bị chặn, chờ thông tin |
 | Epic | `New`, `Ready`, `In progress`, `Ready for test`, `Done` | Epic `Done` khi mọi story của nó `Done` hoặc `Archived` |
+| Issue | `New`, `In progress`, `Ready for test`, `Closed`, `Needs Info`, `Rejected`, `Postponed` | `Ready for test`, `Closed`, `Rejected` là status đóng; `Needs Info` chờ người báo bổ sung; `Postponed` để sau |
 
-Danh sách status story và task đã đối chiếu với template trên instance. Danh sách status epic lấy từ
+Danh sách status story và task đã đối chiếu với template trên instance. Danh sách status epic và issue lấy từ
 `taiga/projects/fixtures/initial_project_templates.json` của taiga-back (giống nhau cho `scrum` và `kanban`), chưa
 đối chiếu trực tiếp trên instance.
 

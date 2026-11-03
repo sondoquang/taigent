@@ -1,32 +1,55 @@
 // Taigent Desktop main process: one locked-down window (context isolation, sandbox, strict CSP, no navigation),
-// served from the `app://` scheme, and the IPC handlers behind `window.taigent` (src/shared/api.ts).
+// served from the `app://` scheme, and the IPC handlers behind `window.taigent` (src/shared/api.ts), registered
+// through the sender-checked wrapper of ipc.ts.
 
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, protocol, session, shell } from 'electron';
 import {
   type ApplyOutcome,
   type ApplyReport,
   CHANNELS,
   type AppState,
+  type CloneRepoInput,
+  type ItemRef,
   type LoginInput,
   type LoginStatus,
+  type NewRepoInput,
   type Plan,
+  type ProjectSettingsInput,
+  type RemoveItemRequest,
   type RepoInfo,
   type Result,
+  type SaveItemRequest,
+  type TicketCommentRequest,
+  type TicketStatusRequest,
+  type SaveWikiPageRequest,
   type VerdictChoice,
 } from '../shared/api.ts';
-import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, toFailure } from './project.ts';
-import { lastRepo, readRepo, rememberRepo, repoEnv, reviewerName } from './repo.ts';
+import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
+import { handle, handleProject, slugFailure, trustWindow } from './ipc.ts';
+import { killChildren } from './processes.ts';
+import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, setHeadlessAgent } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
+import { registerTerminalIpc, terminals } from './terminal.ts';
+import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
+import { readTaigaReport } from './taiga-report.ts';
+import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
+import { cloneRepo, createRepo, openInstall, openNpmInstall, runInit, setupStatus } from './setup.ts';
+import { checkTools } from './tools.ts';
+import { runSkill } from './headless.ts';
+import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
+import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
 const CSP = [
   "default-src 'none'",
   "script-src 'self'",
-  "style-src 'self'",
+  // xterm.js (terminal panel) styles its rows with <style> elements and style attributes. Scripts stay 'self' only,
+  // and agent-written Markdown cannot use inline styles: DOMPurify drops <style> and style="" (markdown.ts).
+  "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",
   "connect-src 'none'",
@@ -191,10 +214,12 @@ async function apply(slug: string): Promise<Result<ApplyOutcome>> {
 
   const { summary } = view.value.preview;
   const counts = planned.value.summary;
+  const issueOps = planned.value.operations.filter((op) => op.type === 'issue');
   const detail = [
     `Dự án: ${slug}`,
     `Tạo mới: ${counts.create} mục`,
     `Cập nhật: ${counts.update} mục`,
+    `Trong đó issue: tạo mới ${issueOps.filter((op) => op.action === 'create').length}, cập nhật ${issueOps.filter((op) => op.action === 'update').length}`,
     `Gắn story vào epic: ${counts.link}`,
     '',
     `Chưa duyệt: ${summary.unreviewed} mục`,
@@ -222,17 +247,6 @@ async function apply(slug: string): Promise<Result<ApplyOutcome>> {
   });
 }
 
-/** Wraps a handler so an unexpected throw reaches the renderer as a Failure, not as a rejected invoke. */
-function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => Promise<R>): void {
-  ipcMain.handle(channel, async (_event, ...args) => {
-    try {
-      return await fn(...(args as A));
-    } catch (error) {
-      return toFailure(error, 'Lỗi');
-    }
-  });
-}
-
 function registerIpc(): void {
   handle(CHANNELS.getState, async (): Promise<AppState> => {
     const remembered = repoRoot ?? (await lastRepo());
@@ -249,27 +263,76 @@ function registerIpc(): void {
     return openRepoAt(picked.filePaths[0]);
   });
   handle(CHANNELS.refreshRepo, async () => openRepoAt(requireRepo()));
-  handle(CHANNELS.openProject, async (slug: string) => {
+  handleProject(CHANNELS.openProject, async (slug) => {
     const root = requireRepo();
     const view = await buildView(root, slug);
     watcher.watch(root, slug, (next) => window?.webContents.send(CHANNELS.projectChanged, next));
     return view;
   });
-  handle(CHANNELS.setVerdict, async (slug: string, key: string, verdict: VerdictChoice) =>
+  handleProject(CHANNELS.setVerdict, async (slug, key: string, verdict: VerdictChoice) =>
     changeReview(requireRepo(), slug, key, { kind: 'verdict', verdict }),
   );
-  handle(CHANNELS.addComment, async (slug: string, key: string, text: string) => {
+  handleProject(CHANNELS.addComment, async (slug, key: string, text: string) => {
     if (!text.trim()) return failure('Góp ý đang trống.');
     return changeReview(requireRepo(), slug, key, { kind: 'comment', text: text.trim() });
   });
   handle(CHANNELS.whoami, whoami);
   handle(CHANNELS.login, login);
   handle(CHANNELS.logout, logout);
-  handle(CHANNELS.plan, plan);
-  handle(CHANNELS.apply, apply);
+  handleProject(CHANNELS.plan, plan);
+  handleProject(CHANNELS.apply, apply);
   handle(CHANNELS.openExternal, async (url: string) => {
     if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) await shell.openExternal(url);
   });
+  handleProject(CHANNELS.readBacklog, async (slug, item?: ItemRef) => readBacklog(requireRepo(), slug, item));
+  handleProject(CHANNELS.saveItem, async (slug, request: SaveItemRequest) => saveItem(requireRepo(), slug, request));
+  handleProject(CHANNELS.removeItem, async (slug, request: RemoveItemRequest) => removeItem(requireRepo(), slug, request));
+  handleProject(CHANNELS.readWiki, async (slug) => readWiki(requireRepo(), slug));
+  handleProject(CHANNELS.saveWikiPage, async (slug, request: SaveWikiPageRequest) => saveWikiPage(requireRepo(), slug, request));
+  handleProject(CHANNELS.uploadWiki, async (slug) => uploadWiki(requireRepo(), slug, window!));
+  handle(CHANNELS.listTaigaProjects, async () => listTaigaProjects(requireRepo()));
+  handleProject(CHANNELS.readTaigaProject, async (slug) => readTaigaProject(requireRepo(), slug));
+  // A new project has no slug yet: saveProjectSettings derives it from the name.
+  handle(CHANNELS.saveProjectSettings, async (input: ProjectSettingsInput) =>
+    (input.slug === undefined ? undefined : slugFailure(input.slug)) ?? saveProjectFile(requireRepo(), input),
+  );
+  handleProject(CHANNELS.bootstrapProject, async (slug) => bootstrapProject(requireRepo(), slug, window!));
+  handleProject(CHANNELS.readTaigaReport, async (slug) => readTaigaReport(requireRepo(), slug));
+  handle(CHANNELS.gitStatus, async () => gitStatus(requireRepo()));
+  handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
+  handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
+  handle(CHANNELS.gitPush, async () => gitPush(requireRepo()));
+  handle(CHANNELS.pickParentFolder, async () => {
+    const picked = await dialog.showOpenDialog(window!, { title: 'Chọn thư mục chứa repo', properties: ['openDirectory', 'createDirectory'] });
+    return picked.canceled ? undefined : picked.filePaths[0];
+  });
+  handle(CHANNELS.createRepo, async (input: NewRepoInput) => {
+    const created = await createRepo(input);
+    if (!created.ok) return created;
+    const opened = await openRepoAt(created.value);
+    if (!opened.ok) return opened;
+    return { ok: true, value: { repo: opened.value, init: await runInit(created.value) } };
+  });
+  handle(CHANNELS.cloneRepo, async (input: CloneRepoInput) => {
+    const cloned = await cloneRepo(input);
+    return cloned.ok ? openRepoAt(cloned.value) : cloned;
+  });
+  handle(CHANNELS.setupStatus, async () => setupStatus(requireRepo()));
+  handle(CHANNELS.runInit, async () => runInit(requireRepo()));
+  handle(CHANNELS.runNpmInstall, async () => ({ ok: true, value: openNpmInstall(requireRepo()) }));
+  handle(CHANNELS.checkTools, checkTools);
+  handle(CHANNELS.installTool, async (tool: unknown) => openInstall(tool, repoRoot));
+  handle(CHANNELS.headlessAgent, headlessAgent);
+  handle(CHANNELS.setHeadlessAgent, async (agent: unknown) => ({ ok: true, value: await setHeadlessAgent(agent) }));
+  handle(CHANNELS.runSkill, async (request: unknown) =>
+    runSkill(requireRepo(), request, window!, (end) => {
+      if (window && !window.isDestroyed()) window.webContents.send(CHANNELS.skillRunEnded, end);
+    }),
+  );
+  // Tickets need no repository; with one open, its .env (TAIGA_*) applies, as for whoami.
+  handle(CHANNELS.readMyTickets, async (from: string, to: string) => readMyTickets(repoRoot ?? app.getPath('home'), String(from), String(to)));
+  handle(CHANNELS.setTicketStatus, async (request: TicketStatusRequest) => setTicketStatus(repoRoot ?? app.getPath('home'), request, window!));
+  handle(CHANNELS.commentTicket, async (request: TicketCommentRequest) => commentTicket(repoRoot ?? app.getPath('home'), request, window!));
 }
 
 app.enableSandbox();
@@ -277,13 +340,22 @@ app.enableSandbox();
 void app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   protocol.handle('app', serveRenderer);
+  trustWindow(() => window);
   registerIpc();
+  registerTerminalIpc(requireRepo);
   window = createWindow();
 });
 
 app.on('window-all-closed', () => {
   watcher.close();
   app.quit();
+});
+
+// Quitting kills every terminal tab's process tree and every other child still running (taigent, git, `--version`),
+// so no shell, agent or command outlives the app.
+app.on('will-quit', () => {
+  terminals.killAll();
+  killChildren();
 });
 
 app.on('web-contents-created', (_event, contents) => {

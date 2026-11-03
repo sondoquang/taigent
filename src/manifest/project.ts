@@ -111,7 +111,7 @@ export async function loadProject(path: string, dirSlug: string): Promise<Projec
     });
   }
 
-  const customAttributes: ProjectManifest['customAttributes'] = { epic: [], story: [], task: [] };
+  const customAttributes: ProjectManifest['customAttributes'] = { epic: [], story: [], task: [], issue: [] };
   if (!isRecord(attributes)) issue('custom_attributes', 'type', `must be a mapping of ${ITEM_TYPES.join(', ')} to lists`);
   else {
     for (const [itemType, list] of Object.entries(attributes)) {

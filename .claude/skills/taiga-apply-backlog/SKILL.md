@@ -30,7 +30,7 @@ Run `npx taigent plan --project <slug>`.
 
 ## 3. Show the plan and ask
 
-Show the plan output exactly as printed: every `create`, `update` and `link` line, the orphans, the stale links and the summary line. When it has `update` lines, also run `npx taigent plan --project <slug> --json` and show each update's `changes` as `field: from → to`. Orphans are items on Taiga whose key left the manifest; stale links are stories linked on Taiga to an epic other than their manifest epic. `taigent` keeps both on Taiga as they are, so say that.
+Show the plan output exactly as printed: every `create`, `update` and `link` line, the orphans, the stale links and the summary line. When it has `update` lines, also run `npx taigent plan --project <slug> --json` and show each update's `changes` as `field: from → to` (an issue's `type`, `severity` and `priority` hold ids: show their `names`). Orphans are items on Taiga whose key left the manifest; stale links are stories linked on Taiga to an epic other than their manifest epic. `taigent` keeps both on Taiga as they are, so say that.
 
 Then ask: "Apply these changes to Taiga project `<slug>`?" and end your turn. Go on only when the user explicitly confirms this plan; any other reply ends the skill with Taiga untouched.
 

@@ -12,13 +12,17 @@ from your project's root folder.
 ### 1. Install
 
 ```sh
-npx skills add sondoquang/taigent
 npm install -D github:sondoquang/taigent
+npx taigent init
+npm install
 ```
 
-The first command adds the ten Taigent skills to `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code);
-pick your agents when it asks. The second installs the `taigent` CLI and the Taiga MCP server into `node_modules`
-(nothing system-wide) and creates `package.json` if the project has none.
+The first command installs the `taigent` CLI and the Taiga MCP server into `node_modules` (nothing system-wide) and
+creates `package.json` if the project has none. `taigent init` then adds the ten Taigent skills to `.agents/skills/`
+(Codex) and `.claude/skills/` (Claude Code), the `taiga` MCP server to `.mcp.json` and `.codex/config.toml`, the
+headless kit (`tools/taiga/allowlist.txt`, `.codex/hooks/`, `.codex/rules/`), and pins `taigent` in `package.json` to
+its release tag, which `npm install` installs. It keeps your other skills, servers and dependencies, and lists every
+file it wrote (`--dry-run` shows them first).
 
 ### 2. Log in to Taiga
 
@@ -48,26 +52,15 @@ Credentials: stored login (refresh-token, in Windows Credential Manager)
 
 ### 3. Connect your agent to Taiga
 
-**Claude Code.** Create `.mcp.json` in the project root (or add the `taiga` entry to the one you have):
+`taigent init` (step 1) wrote the `taiga` server into `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex).
 
-```json
-{ "mcpServers": { "taiga": { "command": "node", "args": ["node_modules/taigent/bin/taigent.js", "mcp"] } } }
-```
+**Claude Code.** Start `claude` in the project and answer **yes** when it asks to use the `taiga` server. `/mcp` then
+shows `taiga` as connected.
 
-Start `claude` in the project and answer **yes** when it asks to use the `taiga` server. `/mcp` then shows `taiga`
-as connected.
+**Codex.** Codex reads `.codex/config.toml` once you trust the project.
 
-**Codex.** Create `.codex/config.toml` in the project root; Codex reads it once you trust the project:
-
-```toml
-[mcp_servers.taiga]
-command = "node"
-args = ["node_modules/taigent/bin/taigent.js", "mcp"]
-env_vars = ["TAIGA_API_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD", "TAIGA_TOKEN", "TAIGENT_CONFIG_DIR", "TAIGENT_CREDENTIAL_STORE", "XDG_CONFIG_HOME", "DBUS_SESSION_BUS_ADDRESS"]
-required = true
-```
-
-Neither file holds a password, so commit them: teammates then skip this step.
+None of the files `init` wrote holds a password, so commit them: teammates then only run `npm install` in step 1 and
+skip this step.
 
 ### 4. Check everything
 
@@ -200,8 +193,8 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
 - No credential store (CI, headless Linux)? Set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` (or
   `TAIGA_TOKEN`) in the environment or a git-ignored `.env` (see `.env.example`). They take precedence over the stored
   login.
-- Update later with `npx skills update` and `npm install -D github:sondoquang/taigent` (append `#<tag>` to pin a
-  release).
+- Update later with `npm install -D github:sondoquang/taigent`, then `npx taigent init` (it updates the skills and
+  the pin) and `npm install`.
 - Details: [docs/cli.md](docs/cli.md) (commands, credentials, manifests, exit codes) and
   [§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).
 
@@ -210,7 +203,12 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
 `desktop/` holds **Taigent Desktop**, an Electron app for Business Analysts and Product Owners: open the repository
 folder, read the backlog the agent wrote exactly as `apply` would write it, comment and mark each item **Đạt**
 (approved) or **Cần sửa** (changes) in `taiga/<slug>/review.yaml`, log in, see the Taiga plan and push after an
-explicit confirmation. It runs the taigent CLI and core bundled inside it (no Node needed for the installed app).
+explicit confirmation, and pull, commit and push `taiga/` plus the files `docs.yaml` references with git (never
+merging, rebasing or force-pushing). A terminal panel (`` Ctrl+` ``) runs shells and `claude`, `codex` or `omp` in
+the repository, in tabs. It runs the taigent CLI and core bundled inside it (no Node needed for the installed app).
+Its **Setup repo** wizard creates a repository (`git init` + `taiga/`), clones one or opens one, installs Taigent there
+with its bundled `taigent init`, runs `npm install` in a terminal tab, and checks `git`, `claude`, `codex`, `omp` and the
+Taiga login (it never installs an agent CLI itself).
 
 ```sh
 npm run build && cd desktop && npm install && npm start   # from source

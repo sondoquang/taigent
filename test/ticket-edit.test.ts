@@ -101,6 +101,21 @@ test('comment adds the words after the ref as one comment to your ticket', async
   assert.equal(mine.status_name, 'In progress');
 });
 
+test('comment takes a text after -- as is, even one that starts with a dash or spans lines (what Taigent Desktop sends)', async (t) => {
+  const h = await startHarness(t);
+  const { mine } = seed(h.fake);
+  const text = '--yes là tôi đã test\n- bước 2 xong';
+
+  const result = await h.taigent(['comment', '--project', 'alpha', '--json', String(mine.ref), '--', text]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(result.json<{ ticket: { ref: number }; comment: string }>(), {
+    ticket: { id: mine.id, ref: mine.ref, subject: 'Login form', project: { id: mine.project, slug: 'alpha', name: 'Alpha' } },
+    comment: text,
+  });
+  assert.deepEqual(h.fake.state.comments, [{ itemType: 'userstory', item: mine.id, user: h.fake.user.id, comment: text }]);
+});
+
 test('status and comment need --project, a ref and what to write (exit 2 before Taiga is contacted)', async (t) => {
   const h = await startHarness(t);
 

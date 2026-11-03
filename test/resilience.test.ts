@@ -22,8 +22,9 @@ test('an access token that expires mid-apply is refreshed via /auth/refresh and 
   const h = await startHarness(t);
   h.fake.addProject({ slug: 'demo' });
   await h.writeManifest('demo', 'backlog.yaml', BACKLOG);
-  // by_slug, list epics and the first create go through; the token expires before the second create.
-  h.fake.expireTokens({ after: 3 });
+  // by_slug, the four item lists (epics, stories, tasks, issues) and the first create go through; the token expires
+  // before the second create.
+  h.fake.expireTokens({ after: 6 });
 
   const result = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
 
@@ -38,7 +39,7 @@ test('when the refresh token is revoked too, the CLI logs in again and completes
   const h = await startHarness(t);
   h.fake.addProject({ slug: 'demo' });
   await h.writeManifest('demo', 'backlog.yaml', BACKLOG);
-  h.fake.expireTokens({ after: 3, refresh: true });
+  h.fake.expireTokens({ after: 6, refresh: true });
 
   const result = await h.taigent(['apply', '--project', 'demo', '--yes']);
 

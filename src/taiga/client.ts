@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { openAsBlob } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
-import { ITEM_TYPES, type ItemType } from '../items.ts';
+import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from '../items.ts';
 import { Secrets } from '../secrets.ts';
 
 /** Thrown for any Taiga/network failure. Maps to ExitCode.Taiga. Never contains credentials. */
@@ -89,15 +89,15 @@ export interface TaigaConnectOptions {
   secrets?: Secrets;
 }
 
-export interface TaigaProject {
+/** One project of a list (`GET /projects`): its identity and whether the caller is its admin. */
+export interface TaigaProjectSummary {
   id: number;
   slug: string;
   name: string;
-  /** Custom attributes defined on the project, per item type. */
-  customAttributes: Record<ItemType, TaigaCustomAttribute[]>;
+  iAmAdmin: boolean;
 }
 
-/** Custom attribute values of one item (`/{epics,userstories,tasks}/custom-attributes-values/{id}`). */
+/** Custom attribute values of one item (`/{epics,userstories,tasks,issues}/custom-attributes-values/{id}`). */
 export interface TaigaAttributeValues {
   /** Attribute id (as a string, like Taiga's JSON keys) → value. */
   values: Record<string, unknown>;
@@ -105,7 +105,7 @@ export interface TaigaAttributeValues {
   version: number;
 }
 
-/** Common shape of epics, user stories and tasks. */
+/** Common shape of epics, user stories, tasks and issues. */
 export interface TaigaItem {
   id: number;
   ref: number;
@@ -122,6 +122,15 @@ export interface TaigaTask extends TaigaItem {
   userStory: number | null;
 }
 
+/** An issue: an item plus the ids of its type, severity and priority (null when the project has none set). */
+export interface TaigaIssue extends TaigaItem, Record<IssueValueField, number | null> {}
+
+/** One issue type, severity or priority of a project (`GET /issue-types`, `/severities`, `/priorities`). */
+export interface TaigaIssueValue {
+  id: number;
+  name: string;
+}
+
 export interface NewItem {
   project: number;
   subject: string;
@@ -129,10 +138,17 @@ export interface NewItem {
   tags: string[];
   /** Tasks only: the parent user story. */
   user_story?: number;
+  /** Issues only: ids of the project's issue type, severity and priority. */
+  type?: number;
+  severity?: number;
+  priority?: number;
 }
 
-/** Manifest-managed fields an update may change (`user_story`: a task's parent); everything else is left alone. */
-export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'>> & { user_story?: number };
+/**
+ * Manifest-managed fields an update may change (`user_story`: a task's parent; `type`, `severity`, `priority`: an
+ * issue's value ids); everything else is left alone.
+ */
+export type ItemPatch = Partial<Pick<TaigaItem, 'subject' | 'description' | 'tags'> & Record<IssueValueField, number>> & { user_story?: number };
 
 interface RequestOptions {
   query?: Record<string, string | number>;
@@ -182,6 +198,13 @@ function parseTask(raw: unknown): TaigaTask {
   return { ...task, userStory };
 }
 
+function parseIssue(raw: unknown): TaigaIssue {
+  const issue = parseItem(raw, 'issue');
+  const r = isRecord(raw) ? raw : {};
+  const ids = Object.fromEntries(ISSUE_VALUE_FIELDS.map((name) => [name, typeof r[name] === 'number' ? r[name] : null]));
+  return { ...issue, ...(ids as Record<IssueValueField, number | null>) };
+}
+
 /**
  * Taiga's names for each item type: its REST collection (`/userstories`, also used under attachments and custom
  * attribute values), its custom attribute prefix (`/userstory-custom-attributes`, `userstory_custom_attributes`
@@ -191,10 +214,20 @@ const TAIGA_ITEM: Record<ItemType, { collection: string; attributes: string; wha
   epic: { collection: 'epics', attributes: 'epic', what: 'epic' },
   story: { collection: 'userstories', attributes: 'userstory', what: 'user story' },
   task: { collection: 'tasks', attributes: 'task', what: 'task' },
+  issue: { collection: 'issues', attributes: 'issue', what: 'issue' },
+};
+
+/** Taiga's collection of each issue value field's project values (`GET /issue-types?project=`). */
+const TAIGA_ISSUE_VALUES: Record<IssueValueField, { collection: string; what: string }> = {
+  type: { collection: 'issue-types', what: 'issue type' },
+  severity: { collection: 'severities', what: 'severity' },
+  priority: { collection: 'priorities', what: 'priority' },
 };
 
 function parseItemOf(type: ItemType, raw: unknown): TaigaItem {
-  return type === 'task' ? parseTask(raw) : parseItem(raw, TAIGA_ITEM[type].what);
+  if (type === 'task') return parseTask(raw);
+  if (type === 'issue') return parseIssue(raw);
+  return parseItem(raw, TAIGA_ITEM[type].what);
 }
 
 function parseList<T>(raw: unknown, what: string, parse: (item: unknown) => T): T[] {
@@ -332,6 +365,40 @@ export interface TaigaAssignedStory {
   totalPoints: number | null;
 }
 
+/** A user story of a project as `report` reads it (`GET /userstories?project=`). */
+export interface TaigaStory {
+  id: number;
+  ref: number;
+  subject: string;
+  status: string;
+  isClosed: boolean;
+  isBlocked: boolean;
+  /** The sprint (milestone) id, null for a story in no sprint. */
+  milestone: number | null;
+  totalPoints: number | null;
+}
+
+/** A sprint (`GET /milestones?project=`): its days, whether it is closed, and its stories' points. */
+export interface TaigaMilestone {
+  id: number;
+  name: string;
+  /** First and last day, YYYY-MM-DD. */
+  start: string;
+  finish: string;
+  closed: boolean;
+  /** Points of its stories (`total_points`) and of its closed ones (`closed_points`). */
+  totalPoints: number;
+  closedPoints: number;
+}
+
+/** A sprint's counts (`GET /milestones/{id}/stats`): stories closed and tasks whose status is closed. */
+export interface TaigaMilestoneStats {
+  totalStories: number;
+  doneStories: number;
+  totalTasks: number;
+  doneTasks: number;
+}
+
 /** A user story status of one project (`GET /userstory-statuses?project=`), e.g. `Done` with `is_closed`. */
 export interface TaigaStoryStatus {
   id: number;
@@ -368,6 +435,35 @@ function parseAssignedStory(raw: unknown): TaigaAssignedStory {
     dueDate: typeof r.due_date === 'string' ? r.due_date : null,
     closedAt: typeof r.finish_date === 'string' ? r.finish_date : null,
     totalPoints: typeof r.total_points === 'number' ? r.total_points : null,
+  };
+}
+
+function parseStory(raw: unknown): TaigaStory {
+  const what = 'user story';
+  const r = record(raw, what);
+  return {
+    id: field(r, 'id', 'number', what),
+    ref: field(r, 'ref', 'number', what),
+    subject: field(r, 'subject', 'string', what),
+    status: field(record(r.status_extra_info, `${what}.status_extra_info`), 'name', 'string', `${what} status`),
+    isClosed: field(r, 'is_closed', 'boolean', what),
+    isBlocked: r.is_blocked === true,
+    milestone: typeof r.milestone === 'number' ? r.milestone : null,
+    totalPoints: typeof r.total_points === 'number' ? r.total_points : null,
+  };
+}
+
+function parseMilestone(raw: unknown): TaigaMilestone {
+  const what = 'milestone';
+  const r = record(raw, what);
+  return {
+    id: field(r, 'id', 'number', what),
+    name: field(r, 'name', 'string', what),
+    start: field(r, 'estimated_start', 'string', what),
+    finish: field(r, 'estimated_finish', 'string', what),
+    closed: r.closed === true,
+    totalPoints: typeof r.total_points === 'number' ? r.total_points : 0,
+    closedPoints: typeof r.closed_points === 'number' ? r.closed_points : 0,
   };
 }
 
@@ -573,31 +669,39 @@ export class TaigaClient {
     return true;
   }
 
-  async getProjectBySlug(slug: string): Promise<TaigaProject> {
-    let raw: unknown;
-    try {
-      raw = await this.#request('GET', '/projects/by_slug', { query: { slug } });
-    } catch (error) {
-      if (error instanceof TaigaError && error.status === 404) {
-        throw new TaigaError(`project "${slug}" not found on ${this.apiUrl} (or not visible to this user)`, 404);
-      }
-      throw error;
-    }
-    if (!isRecord(raw)) throw new TaigaError('unexpected Taiga response: project is not an object');
-    return {
-      id: field(raw, 'id', 'number', 'project'),
-      slug: field(raw, 'slug', 'string', 'project'),
-      name: field(raw, 'name', 'string', 'project'),
-      customAttributes: parseCustomAttributes(raw),
-    };
+  /** Project detail by slug; TaigaError 404 when no project with that slug is visible to the user. */
+  async getProjectBySlug(slug: string): Promise<TaigaProjectDetail> {
+    const project = await this.findProjectBySlug(slug);
+    if (!project) throw new TaigaError(`project "${slug}" not found on ${this.apiUrl} (or not visible to this user)`, 404);
+    return project;
+  }
+
+  /** The projects `userId` is a member of (`GET /projects?member=`), in Taiga's order, with the caller's admin right. */
+  async listMemberProjects(userId: number): Promise<TaigaProjectSummary[]> {
+    const raw = await this.#request('GET', '/projects', { query: { member: userId } });
+    return parseList(raw, 'project', (project) => {
+      const r = record(project, 'project');
+      return { id: field<number>(r, 'id', 'number', 'project'), slug: field<string>(r, 'slug', 'string', 'project'), name: field<string>(r, 'name', 'string', 'project'), iAmAdmin: r.i_am_admin === true };
+    });
   }
 
   /** All items of one type in a project, unfiltered: every `src:` tag is needed to find orphans. */
   listItems(type: 'task', projectId: number): Promise<TaigaTask[]>;
+  listItems(type: 'issue', projectId: number): Promise<TaigaIssue[]>;
   listItems(type: ItemType, projectId: number): Promise<TaigaItem[]>;
   async listItems(type: ItemType, projectId: number): Promise<TaigaItem[]> {
     const raw = await this.#request('GET', `/${TAIGA_ITEM[type].collection}`, { query: { project: projectId } });
     return parseList(raw, TAIGA_ITEM[type].what, (item) => parseItemOf(type, item));
+  }
+
+  /** The issue types, severities or priorities a project defines, in Taiga's order. */
+  async listIssueValues(valueField: IssueValueField, projectId: number): Promise<TaigaIssueValue[]> {
+    const { collection, what } = TAIGA_ISSUE_VALUES[valueField];
+    const raw = await this.#request('GET', `/${collection}`, { query: { project: projectId } });
+    return parseList(raw, what, (value) => {
+      const r = record(value, what);
+      return { id: field<number>(r, 'id', 'number', what), name: field<string>(r, 'name', 'string', what) };
+    });
   }
 
   async createItem(type: ItemType, item: NewItem): Promise<TaigaItem> {
@@ -706,6 +810,28 @@ export class TaigaClient {
         isClosed: field(r, 'is_closed', 'boolean', 'user story status'),
       };
     });
+  }
+
+  /** Every user story of a project, open and closed, with its sprint, block flag and points. */
+  async listStories(projectId: number): Promise<TaigaStory[]> {
+    const { collection, what } = TAIGA_ITEM.story;
+    return parseList(await this.#request('GET', `/${collection}`, { query: { project: projectId } }), what, parseStory);
+  }
+
+  /** Every sprint of a project, open and closed, in Taiga's order. */
+  async listMilestones(projectId: number): Promise<TaigaMilestone[]> {
+    return parseList(await this.#request('GET', '/milestones', { query: { project: projectId } }), 'milestone', parseMilestone);
+  }
+
+  async getMilestoneStats(milestoneId: number): Promise<TaigaMilestoneStats> {
+    const what = 'milestone stats';
+    const r = record(await this.#request('GET', `/milestones/${milestoneId}/stats`), what);
+    return {
+      totalStories: field(r, 'total_userstories', 'number', what),
+      doneStories: field(r, 'completed_userstories', 'number', what),
+      totalTasks: field(r, 'total_tasks', 'number', what),
+      doneTasks: field(r, 'completed_tasks', 'number', what),
+    };
   }
 
   /** Changes a story's status and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */

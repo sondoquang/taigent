@@ -4,10 +4,11 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>Taigent Desktop</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="xterm.css" />
   </head>
   <body>
     <header class="topbar">
@@ -20,39 +21,260 @@
           <option value="">—</option>
         </select>
       </label>
+      <div id="setup-banner" class="setup-banner" role="status" hidden>
+        <span id="setup-banner-text"></span>
+        <button id="setup-banner-action" class="btn small" type="button"></button>
+      </div>
       <div class="spacer"></div>
-      <button id="plan-btn" class="btn" type="button" disabled>Xem thay đổi trên Taiga</button>
-      <button id="apply-btn" class="btn primary" type="button" disabled>Đẩy lên Taiga</button>
+      <button id="terminal-toggle" class="btn ghost" type="button" title="Terminal (Ctrl+`)" aria-controls="terminal-dock" aria-expanded="false">Terminal</button>
       <button id="login-btn" class="btn ghost" type="button">Đăng nhập</button>
     </header>
 
-    <section class="summary" id="summary" aria-label="Tổng quan"></section>
+    <div class="shell">
+      <nav id="nav" class="nav-rail" aria-label="Điều hướng">
+        <button type="button" class="nav-item" data-section="backlog">Backlog</button>
+        <button type="button" class="nav-item" data-section="wiki">Wiki</button>
+        <button type="button" class="nav-item" data-section="taiga">Taiga</button>
+        <button type="button" class="nav-item" data-section="changes">Thay đổi</button>
+        <button type="button" class="nav-item" data-section="git">Git</button>
+        <div class="spacer"></div>
+        <button type="button" class="nav-item" data-section="setup">Setup repo</button>
+        <button type="button" class="nav-item" data-section="settings">Settings</button>
+      </nav>
 
-    <main class="layout">
-      <aside class="sidebar">
-        <div class="filters" role="tablist" aria-label="Lọc">
-          <button type="button" class="filter active" data-filter="all">Tất cả</button>
-          <button type="button" class="filter" data-filter="unreviewed">Chưa duyệt</button>
-          <button type="button" class="filter" data-filter="changes">Cần sửa</button>
-          <button type="button" class="filter" data-filter="stale">Đã đổi</button>
+      <section class="screen screen-backlog" id="screen-backlog" aria-label="Backlog">
+        <!-- Headless skill runs (src/renderer/headless.ts): each opens a tab of the terminal panel. -->
+        <div class="agent-bar" id="agent-bar" role="toolbar" aria-label="Nhờ agent">
+          <span class="agent-bar-label">Nhờ agent <b id="agent-name">claude</b></span>
+          <button id="agent-plan-spec" class="btn small" type="button" disabled title="Chọn file spec, agent viết hoặc cập nhật backlog.yaml (taiga-plan-backlog)">Plan backlog từ spec…</button>
+          <button id="agent-review" class="btn small" type="button" disabled title="Agent sửa manifest theo các góp ý còn mở và trả lời từng góp ý (taiga-plan-backlog)">Nhờ agent xử lý góp ý</button>
+          <button id="agent-story" class="btn small" type="button" disabled title="Tả nhu cầu trong một câu, agent soạn story vào backlog.yaml (taiga-create-user-story)">Tạo user story…</button>
+          <span id="agent-status" class="agent-status" aria-live="polite"></span>
         </div>
-        <nav class="tree" id="tree" aria-label="Backlog" tabindex="0"></nav>
-      </aside>
+        <section class="summary" id="summary" aria-label="Tổng quan"></section>
 
-      <section class="detail" id="detail">
-        <div id="detail-content" class="detail-content">
-          <div class="empty">Mở thư mục repo có <code>taiga/&lt;slug&gt;/backlog.yaml</code>, rồi chọn dự án.</div>
-        </div>
-        <form id="composer" class="composer" hidden>
-          <label for="comment-text">Góp ý cho mục này</label>
-          <textarea id="comment-text" rows="3" placeholder="Viết góp ý cho agent… (Ctrl+Enter để gửi)"></textarea>
-          <div class="composer-actions">
-            <span class="hint">j/k hoặc ↑/↓ để chuyển mục</span>
-            <button type="submit" class="btn primary">Gửi góp ý</button>
-          </div>
-        </form>
+        <main class="layout">
+          <aside class="sidebar">
+            <div class="filters" role="tablist" aria-label="Lọc">
+              <button type="button" class="filter active" data-filter="all">Tất cả</button>
+              <button type="button" class="filter" data-filter="unreviewed">Chưa duyệt</button>
+              <button type="button" class="filter" data-filter="changes">Cần sửa</button>
+              <button type="button" class="filter" data-filter="stale">Đã đổi</button>
+            </div>
+            <nav class="tree" id="tree" aria-label="Backlog" tabindex="0"></nav>
+          </aside>
+
+          <section class="detail" id="detail">
+            <div id="detail-content" class="detail-content">
+              <div class="empty">Mở thư mục repo có <code>taiga/&lt;slug&gt;/backlog.yaml</code>, rồi chọn dự án.</div>
+            </div>
+            <form id="composer" class="composer" hidden>
+              <label for="comment-text">Góp ý cho mục này</label>
+              <textarea id="comment-text" rows="3" placeholder="Viết góp ý cho agent… (Ctrl+Enter để gửi)"></textarea>
+              <div class="composer-actions">
+                <span class="hint">j/k hoặc ↑/↓ để chuyển mục</span>
+                <button type="submit" class="btn primary">Gửi góp ý</button>
+              </div>
+            </form>
+          </section>
+        </main>
       </section>
-    </main>
+
+      <section class="screen" id="screen-wiki" aria-label="Wiki" hidden>
+        <div class="screen-body">
+          <h1>Wiki</h1>
+          <p class="muted">
+            Các trang wiki khai báo trong <code>taiga/&lt;slug&gt;/docs.yaml</code>; trang mới được lưu ở
+            <code>taiga/&lt;slug&gt;/pages/&lt;slug trang&gt;.md</code>. Wiki không qua review: "Đẩy wiki lên Taiga" cho
+            xem trước những gì sẽ tạo, cập nhật và bỏ qua, rồi chỉ ghi khi bạn xác nhận.
+          </p>
+          <div class="changes-actions">
+            <button id="wiki-add" class="btn" type="button" disabled>+ Trang wiki</button>
+            <button id="wiki-upload" class="btn primary" type="button" disabled>Đẩy wiki lên Taiga</button>
+          </div>
+          <div id="wiki-pages" class="wiki-pages"></div>
+          <div id="wiki-result" class="changes-result" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-taiga" aria-label="Taiga" hidden>
+        <div class="screen-body">
+          <h1>Taiga</h1>
+          <div class="taiga-project" id="taiga-project">
+            <div class="taiga-project-head">
+              <h2>Project</h2>
+              <div class="spacer"></div>
+              <button id="taiga-projects-refresh" class="btn ghost" type="button">Làm mới</button>
+              <button id="taiga-project-new" class="btn" type="button">Tạo project mới…</button>
+            </div>
+            <p class="muted" id="taiga-projects-status"></p>
+            <div id="taiga-projects-list"></div>
+            <div id="taiga-project-detail"></div>
+          </div>
+          <div class="taiga-tickets" id="taiga-tickets">
+            <div class="taiga-project-head">
+              <h2>Ticket của tôi</h2>
+              <div class="spacer"></div>
+              <button id="tickets-prev" class="btn ghost" type="button">‹ Tuần trước</button>
+              <button id="tickets-this-week" class="btn ghost" type="button">Tuần này</button>
+              <button id="tickets-next" class="btn ghost" type="button">Tuần sau ›</button>
+              <label class="inline">Từ <input id="tickets-from" type="date" /></label>
+              <label class="inline">đến <input id="tickets-to" type="date" /></label>
+              <button id="tickets-refresh" class="btn ghost" type="button">Làm mới</button>
+            </div>
+            <p class="muted" id="tickets-status"></p>
+            <div id="tickets-result" aria-live="polite"></div>
+            <div id="tickets-list"></div>
+          </div>
+          <div class="taiga-report" id="taiga-report">
+            <div class="taiga-project-head">
+              <h2>Báo cáo</h2>
+              <div class="spacer"></div>
+              <select id="taiga-report-project" aria-label="Project của báo cáo"></select>
+              <button id="taiga-report-run" class="btn" type="button" disabled>Xem báo cáo</button>
+            </div>
+            <p class="muted" id="taiga-report-status">Chọn project khi mục Project ở trên đã đọc xong danh sách.</p>
+            <div id="taiga-report-body"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-changes" aria-label="Thay đổi" hidden>
+        <div class="screen-body">
+          <h1>Thay đổi trên Taiga</h1>
+          <p class="muted">
+            So sánh backlog của dự án đang mở với Taiga (chỉ đọc), rồi đẩy lên sau khi bạn xác nhận. Các mục trên Taiga
+            không còn trong backlog chỉ được báo, taigent không bao giờ xoá chúng.
+          </p>
+          <div id="changes-overview" class="changes-overview"></div>
+          <div class="changes-actions">
+            <button id="plan-btn" class="btn" type="button" disabled>Xem thay đổi trên Taiga</button>
+            <button id="apply-btn" class="btn primary" type="button" disabled>Đẩy lên Taiga</button>
+          </div>
+          <div id="changes-result" class="changes-result" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-git" aria-label="Git" hidden>
+        <div class="screen-body">
+          <h1>Git</h1>
+          <p class="muted">
+            Chỉ thao tác trên thư mục manifest (<code>taiga/</code>) và các file mà <code>docs.yaml</code> tham chiếu.
+            Ứng dụng không bao giờ merge, rebase hay force push: khi cần, nó dừng lại, giải thích và mở một tab terminal
+            ở repo để bạn xử lý.
+          </p>
+          <div id="git-overview" class="git-overview"></div>
+          <div class="changes-actions">
+            <button id="git-refresh" class="btn" type="button" disabled>Làm mới</button>
+            <button id="git-pull" class="btn" type="button" disabled>Pull</button>
+            <button id="git-push" class="btn" type="button" disabled>Push</button>
+          </div>
+          <h3>File đã đổi trong phạm vi</h3>
+          <ul id="git-files" class="git-files"></ul>
+          <p id="git-files-empty" class="muted" hidden>Không có file nào trong phạm vi đã đổi.</p>
+          <p id="git-outside" class="muted"></p>
+          <form id="git-commit-form" class="git-commit">
+            <input id="git-message" type="text" placeholder="Message của commit" aria-label="Message của commit" />
+            <button id="git-commit-push" class="btn primary" type="submit" disabled>Commit + Push</button>
+          </form>
+          <div id="git-result" class="changes-result" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <!-- The setup wizard (src/renderer/setup.ts): repository, taigent init, npm install, checklist. -->
+      <section class="screen" id="screen-setup" aria-label="Setup repo" hidden>
+        <div class="screen-body setup">
+          <h1>Setup repo</h1>
+          <p class="muted">
+            Tạo repo mới, clone repo của team hoặc mở repo có sẵn, rồi cài Taigent vào repo: các skill Taigent, MCP
+            server <code>taiga</code>, bộ chạy headless và devDependency <code>taigent</code>, cùng version với ứng
+            dụng. Ứng dụng không cài agent CLI giúp bạn: nó chỉ cho biết công cụ nào còn thiếu và lệnh cài.
+          </p>
+
+          <h2>1. Repo</h2>
+          <div class="setup-row">
+            <span class="setup-label">Thư mục chứa repo</span>
+            <code id="setup-parent-path" class="setup-path">Chưa chọn</code>
+            <button id="setup-parent" class="btn" type="button">Chọn…</button>
+          </div>
+          <form id="setup-new-form" class="setup-row">
+            <label class="setup-label" for="setup-new-name">Tạo repo mới</label>
+            <input id="setup-new-name" type="text" placeholder="Tên thư mục, ví dụ du-an-abc" />
+            <button id="setup-new-create" class="btn primary" type="submit">Tạo repo</button>
+          </form>
+          <form id="setup-clone-form" class="setup-row">
+            <label class="setup-label" for="setup-clone-url">Clone từ URL</label>
+            <input id="setup-clone-url" type="text" placeholder="https://github.com/&lt;tổ chức&gt;/&lt;repo&gt;.git" />
+            <input id="setup-clone-name" class="setup-name" type="text" placeholder="Tên thư mục" aria-label="Tên thư mục của bản clone" />
+            <button id="setup-clone-go" class="btn" type="submit">Clone</button>
+          </form>
+          <div class="setup-row">
+            <span class="setup-label">Repo có sẵn</span>
+            <button id="setup-open" class="btn" type="button">Mở repo có sẵn…</button>
+          </div>
+          <div id="setup-repo-result" class="setup-result" aria-live="polite"></div>
+
+          <h2>2. Cài Taigent vào repo</h2>
+          <div id="setup-status" class="setup-status"></div>
+          <div class="changes-actions">
+            <button id="setup-init" class="btn primary" type="button" disabled>Cài Taigent vào repo</button>
+          </div>
+          <div id="setup-init-result" class="setup-result" aria-live="polite"></div>
+
+          <h2>3. npm install</h2>
+          <p class="muted">
+            Cài <code>taigent</code> (devDependency mà bước 2 ghim theo version của ứng dụng) vào <code>node_modules/</code>,
+            nơi agent chạy MCP server <code>taiga</code>. Cần Node.js 24+ trên máy.
+          </p>
+          <div class="changes-actions">
+            <button id="setup-npm" class="btn" type="button" disabled>Chạy npm install trong terminal</button>
+          </div>
+          <p id="setup-npm-result" class="muted" aria-live="polite"></p>
+
+          <h2>4. Kiểm tra</h2>
+          <ul id="setup-checklist" class="setup-checklist"></ul>
+          <div class="changes-actions">
+            <button id="setup-recheck" class="btn" type="button">Kiểm tra lại</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-settings" aria-label="Settings" hidden>
+        <div class="screen-body">
+          <h1>Settings</h1>
+          <h3>Agent cho nút chạy skill</h3>
+          <p class="muted">
+            Agent mà các nút <b>Plan backlog từ spec</b>, <b>Nhờ agent xử lý góp ý</b> và <b>Tạo user story</b> dùng
+            (<code>run-skill</code> headless). Ứng dụng không cài hay đăng nhập agent giúp bạn.
+          </p>
+          <div class="settings-agent" id="settings-agent" role="radiogroup" aria-label="Agent cho nút chạy skill">
+            <label><input type="radio" name="headless-agent" value="claude" checked /> claude (Claude Code)</label>
+            <label><input type="radio" name="headless-agent" value="codex" /> codex (Codex CLI)</label>
+          </div>
+          <p class="muted">Đăng nhập hoặc đăng xuất Taiga bằng nút ở góc trên bên phải.</p>
+          <h3>Phiên bản</h3>
+          <table class="attributes" id="settings-versions"></table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Bottom panel: the terminal (src/renderer/terminal.ts), hidden until toggled with the top-bar button or Ctrl+`. -->
+    <section id="terminal-dock" class="terminal-dock" aria-label="Terminal" hidden>
+      <div id="terminal-resizer" class="terminal-resizer" role="separator" aria-orientation="horizontal" aria-label="Đổi cỡ terminal" title="Kéo để đổi cỡ"></div>
+      <div class="terminal-bar">
+        <div id="terminal-tabs" class="terminal-tabs" role="tablist" aria-label="Tab terminal"></div>
+        <button id="terminal-new" class="btn small" type="button" title="Tab shell mới ở thư mục repo">+ Shell</button>
+        <span class="terminal-launch-label">Mở nhanh</span>
+        <button class="btn small" type="button" data-launch="claude" title="Tab mới chạy claude ở thư mục repo">claude</button>
+        <button class="btn small" type="button" data-launch="codex" title="Tab mới chạy codex ở thư mục repo">codex</button>
+        <button class="btn small" type="button" data-launch="omp" title="Tab mới chạy omp ở thư mục repo">omp</button>
+        <div class="spacer"></div>
+        <button id="terminal-hide" class="btn small ghost" type="button" title="Ẩn terminal (Ctrl+`)">Ẩn</button>
+      </div>
+      <div id="terminal-views" class="terminal-views">
+        <p id="terminal-empty" class="terminal-empty">Chưa có tab nào. Bấm <b>+ Shell</b> hoặc mở nhanh <code>claude</code>, <code>codex</code>, <code>omp</code>. Tab chạy ở thư mục repo đang mở.</p>
+      </div>
+    </section>
 
     <footer class="statusbar" id="statusbar"></footer>
 
@@ -79,6 +301,22 @@
       <div class="modal-actions">
         <button type="button" class="btn" id="result-close">Đóng</button>
       </div>
+    </dialog>
+
+    <dialog id="story-dialog" class="modal">
+      <form id="story-dialog-form" method="dialog">
+        <h2>Tạo user story</h2>
+        <p class="muted">
+          Tả nhu cầu trong một câu. Agent soạn story theo user story format vào <code>backlog.yaml</code> rồi dừng ở bước
+          hỏi xác nhận: story ở lại trong manifest để bạn review rồi đẩy lên Taiga trong ứng dụng.
+        </p>
+        <label>Nhu cầu <input id="story-description" type="text" required maxlength="1000" placeholder="Ví dụ: người duyệt muốn lọc các mục đã đổi sau khi duyệt" /></label>
+        <p class="error" id="story-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" id="story-cancel">Huỷ</button>
+          <button type="submit" class="btn primary" id="story-submit">Chạy</button>
+        </div>
+      </form>
     </dialog>
 
     <div id="toast" class="toast" role="status" hidden></div>

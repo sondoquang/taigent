@@ -3,6 +3,9 @@
 # (tools/taiga/allowlist.txt). Same arguments as run-skill.ps1; see docs/headless.md.
 #
 #   tools/taiga/run-skill.sh [--dry-run] [--output-format json|text] <claude|codex> <skill> [skill arguments...]
+#
+# The repository is the current directory, wherever this script lives (this repository, node_modules/taigent, or the
+# copy bundled in Taigent Desktop): its .agents/skills and the allowlist `taigent init` installed there.
 
 usage="usage: run-skill [--dry-run] [--output-format json|text] <claude|codex> <skill> [skill arguments...]"
 
@@ -16,7 +19,7 @@ fail_usage() {
   exit 2
 }
 
-root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd) || exit 2
+root=$(pwd) || exit 2
 dry_run=false
 format=json
 
@@ -51,6 +54,8 @@ case $skill in
   '' | -* | *- | *--* | *[!a-z0-9-]*) fail "unknown skill '$skill': not a directory of .agents/skills" ;;
 esac
 [ -f "$root/.agents/skills/$skill/SKILL.md" ] || fail "unknown skill '$skill': no .agents/skills/$skill/SKILL.md"
+[ -f "$root/tools/taiga/allowlist.txt" ] ||
+  fail "no tools/taiga/allowlist.txt in $root: run run-skill from the repository root (npx taigent init installs the allowlist)"
 
 # Git Bash/MSYS on Windows rewrites arguments that look like POSIX paths ("/taiga-plan-backlog" becomes
 # "C:/Program Files/Git/taiga-plan-backlog") when it starts a native program. Pass them through unchanged.

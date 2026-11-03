@@ -41,6 +41,12 @@ export function checkProjectName(name: unknown, at: string, issue: IssueSink): n
   return valid;
 }
 
+/**
+ * A project slug as taigent accepts it: `--project`, a directory under `taiga/`, a slug Taigent Desktop sends over IPC.
+ * One pattern everywhere, so a slug never reaches a path or a command with `..`, a separator or anything else.
+ */
+export const PROJECT_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
 /** Rule `project-slug`: the slug is the one Taiga derives from the name (see `projectSlug`). */
 export function checkProjectSlug(slug: unknown, name: unknown, at: string, issue: IssueSink): void {
   if (typeof name !== 'string') {
@@ -175,6 +181,42 @@ export function checkKey(key: unknown, at: string, issue: IssueSink, seen: Map<s
 /** Rule `key-reference`: `ref` names an item declared in the backlog. */
 export function checkKeyReference(ref: string, at: string, issue: IssueSink, keys: ReadonlySet<string>): void {
   if (!keys.has(ref)) issue(at, 'key-reference', `no epic, story or task with key ${ref} in backlog.yaml`);
+}
+
+/**
+ * Rule `key-locked`: an item already on Taiga (its key in `applied`, the keys state.json records for its type) keeps
+ * its key: a new one would make apply create a new item and orphan the old one.
+ */
+export function checkKeyLocked(from: string, to: string, at: string, issue: IssueSink, applied: ReadonlySet<string>): void {
+  if (from !== to && applied.has(from)) issue(at, 'key-locked', `${from} is already on Taiga: changing its key would create a new item and orphan the old one`);
+}
+
+/** How many words of the subject a suggested key keeps. */
+const KEY_SUGGESTION_WORDS = 2;
+
+/** Issue key prefixes by issue type (conventions §5); any other type, or none yet, is a bug. */
+const ISSUE_KEY_PREFIXES: Record<string, string> = { question: 'ASK', enhancement: 'ENH' };
+const DEFAULT_ISSUE_KEY_PREFIX = 'BUG';
+
+/** The key prefix of an issue of type `type` (conventions §5): `ASK` for Question, `ENH` for Enhancement, else `BUG`. */
+export function issueKeyPrefix(type: string): string {
+  const name = type.trim().toLowerCase();
+  return Object.hasOwn(ISSUE_KEY_PREFIXES, name) ? ISSUE_KEY_PREFIXES[name]! : DEFAULT_ISSUE_KEY_PREFIX;
+}
+
+/**
+ * A key for a new item, after the naming advice of conventions §5: the first words of its subject (transliterated
+ * like a project slug) under `parent`, its parent's key (`<EPIC>-<việc>`, `<STORY>-<bước>`) or, for an issue, the
+ * prefix of its type (`issueKeyPrefix`: `BUG-<việc>`), with `-2`, `-3`… while `taken` has it. Empty when there is
+ * neither a parent nor a letter or digit in the subject. Pure: Taigent Desktop's forms use it.
+ */
+export function suggestKey(subject: string, parent: string | undefined, taken: ReadonlySet<string>): string {
+  const words = projectSlug(subject).split(/[-_]+/).filter(Boolean).slice(0, KEY_SUGGESTION_WORDS);
+  const base = [parent, ...words].filter(Boolean).join('-').toUpperCase();
+  if (base === '' || !taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
 }
 
 // ---- Wiki and attachments -----------------------------------------------------------------------

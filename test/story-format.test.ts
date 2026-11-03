@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ManifestIssue } from '../src/manifest/errors.ts';
 import type { Plan } from '../src/planner.ts';
-import { OFFLINE, startHarness, writes, type Harness } from './support/harness.ts';
-import type { FakeUserStory } from './support/fake-taiga.ts';
+import { OFFLINE, startHarness, writes } from './support/harness.ts';
+import { LEGACY, LEGACY_DESCRIPTION, seedLegacy } from './support/legacy-story.ts';
 
 interface ErrorOutput {
   error: { kind: string; issues?: ManifestIssue[] };
@@ -249,41 +249,6 @@ test('a complete use case + scenarios story validates offline', async (t) => {
 
   assert.equal(result.code, 0, result.stderr);
 });
-
-/** A legacy story (description + acceptance_criteria + spec) under epic AUTH. */
-const LEGACY = `epics:
-  - key: AUTH
-    subject: Authentication
-    stories:
-      - key: AUTH-LOGIN
-        subject: User can log in
-        description: As a user I want to log in so that I see my projects.
-        acceptance_criteria:
-          - Wrong password shows an error
-          - Session survives a reload
-        spec: docs/specs/auth.md
-`;
-
-/** The legacy template of LEGACY's story, byte for byte as taigent rendered it on Taiga. */
-const LEGACY_DESCRIPTION = [
-  'As a user I want to log in so that I see my projects.',
-  '',
-  '## Acceptance criteria',
-  '',
-  '- [ ] Wrong password shows an error',
-  '- [ ] Session survives a reload',
-  '',
-  'Spec: docs/specs/auth.md',
-].join('\n');
-
-/** Seeds LEGACY on the fake as taigent created it: epic and story tagged `src:<key>`, linked, legacy description. */
-function seedLegacy(h: Harness): FakeUserStory {
-  const project = h.fake.addProject({ slug: 'demo' });
-  const epic = h.fake.addEpic({ project: project.id, subject: 'Authentication', tags: ['src:auth'] });
-  const story = h.fake.addUserStory({ project: project.id, subject: 'User can log in', description: LEGACY_DESCRIPTION, tags: ['src:auth-login'] });
-  h.fake.addEpicRelatedUserStory(epic.id, story.id);
-  return story;
-}
 
 test('plan and apply refuse to create stories without use_case/scenarios: exit 4, every story-format issue, nothing written', async (t) => {
   const h = await startHarness(t);

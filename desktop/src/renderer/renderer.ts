@@ -1,12 +1,15 @@
-// Taigent Desktop UI: the backlog tree, the item detail with its review, and the Taiga actions. Everything it
-// knows comes through `window.taigent` (preload); it never reaches the file system or the network itself.
+// Taigent Desktop UI: the navigation shell (navigation.ts) with the Backlog section (tree, item detail and its
+// review), the Wiki section (wiki.ts), the Thay đổi section (plan and push to Taiga) and the Git section (git.ts).
+// Everything it knows comes through `window.taigent` (preload); it never reaches the file system or the network itself.
 
 import type {
+  AppState,
   ApplyOutcome,
   Failure,
   LoginStatus,
   Plan,
   PreviewEpic,
+  PreviewIssue,
   PreviewItem,
   PreviewStory,
   ProjectView,
@@ -15,7 +18,18 @@ import type {
   TaigentApi,
   VerdictChoice,
 } from '../shared/api.ts';
+import { byId, h } from './dom.ts';
+import { addIssueButton, itemActions, mountForms } from './forms.ts';
 import { renderMarkdown } from './markdown.ts';
+import { currentSection, onSectionChange, showSection, wireNavigation } from './navigation.ts';
+import { mountTaigaProjects } from './taiga-projects.ts';
+import { mountTaigaReport } from './taiga-report.ts';
+import { gitRepoChanged, wireGit } from './git.ts';
+import { mountMyTickets } from './my-tickets.ts';
+import { wireTerminal } from './terminal.ts';
+import { mountSetup, setupLoginChanged, setupRepoChanged } from './setup.ts';
+import { mountHeadless, renderHeadless } from './headless.ts';
+import { mountWiki, refreshWiki } from './wiki.ts';
 
 declare global {
   interface Window {
@@ -25,10 +39,11 @@ declare global {
 
 type Filter = 'all' | 'unreviewed' | 'changes' | 'stale';
 
+/** A row of the Backlog tree: an epic-tree item with its parents, or an issue (no parent). */
 interface TreeNode {
   item: PreviewItem;
   depth: number;
-  epic: PreviewEpic;
+  epic?: PreviewEpic;
   story?: PreviewStory;
 }
 
@@ -43,36 +58,9 @@ const state: {
 } = { filter: 'all', busy: false };
 const drafts = new Map<string, string>();
 
-function byId<T extends HTMLElement>(id: string): T {
-  const element = document.getElementById(id);
-  if (!element) throw new Error(`missing #${id}`);
-  // index.html declares every id this file asks for, with the element type the caller names.
-  const typed = element as T;
-  return typed;
-}
-
-/** Builds an element; text children are text nodes, never HTML. */
-function h<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Record<string, string | boolean | ((event: Event) => void)> = {},
-  ...children: (string | false | undefined | null | Node)[]
-): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tag);
-  for (const [name, value] of Object.entries(props)) {
-    if (typeof value === 'function') element.addEventListener(name.replace(/^on/, ''), value);
-    else if (value === true) element.setAttribute(name, '');
-    else if (value !== false) element.setAttribute(name, value);
-  }
-  for (const child of children) {
-    if (child === false || child === undefined || child === null) continue;
-    element.append(typeof child === 'string' ? document.createTextNode(child) : child);
-  }
-  return element;
-}
-
 // ---- status vocabulary ----------------------------------------------------------------------------------------
 
-const TYPE_LABEL: Record<PreviewItem['type'], string> = { epic: 'Epic', story: 'Story', task: 'Task' };
+const TYPE_LABEL: Record<PreviewItem['type'], string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
 
 function reviewStatus(item: PreviewItem): { label: string; css: string } {
   if (item.review.stale) return { label: 'Đã đổi sau khi duyệt', css: 'stale' };
@@ -102,7 +90,7 @@ function matches(item: PreviewItem, filter: Filter): boolean {
   return true;
 }
 
-/** The tree in display order; with a filter, an item shows when it or one of its children matches. */
+/** The tree in display order, epics then issues; with a filter, an item shows when it or one of its children matches. */
 function visibleNodes(view: ProjectView, filter: Filter): TreeNode[] {
   const nodes: TreeNode[] = [];
   for (const epic of view.preview.epics) {
@@ -113,6 +101,7 @@ function visibleNodes(view: ProjectView, filter: Filter): TreeNode[] {
     }
     if (matches(epic, filter) || storyNodes.length > 0) nodes.push({ item: epic, depth: 0, epic }, ...storyNodes);
   }
+  for (const issue of view.preview.issues) if (matches(issue, filter)) nodes.push({ item: issue, depth: 0 });
   return nodes;
 }
 
@@ -156,6 +145,15 @@ function showResult(title: string, ...content: HTMLElement[]): void {
   byId<HTMLDialogElement>('result-dialog').showModal();
 }
 
+/** Shows the outcome of a plan or a push for `slug` in the Thay đổi section. */
+function showChangesResult(slug: string, title: string, ...content: HTMLElement[]): void {
+  byId('changes-result').replaceChildren(
+    h('h2', {}, title),
+    h('p', { class: 'muted' }, `Dự án ${slug} · ${new Date().toLocaleTimeString('vi-VN')}`),
+    ...content,
+  );
+}
+
 // ---- rendering ------------------------------------------------------------------------------------------------
 
 function renderRepo(): void {
@@ -188,6 +186,7 @@ function renderSummary(): void {
     cell('Epic', s.epics),
     cell('Story', s.stories),
     cell('Task', s.tasks),
+    cell('Issue', s.issues),
     h('div', { class: 'sep' }),
     cell('Mới', s.new, 'new'),
     cell('Đã đẩy', s.applied, 'applied'),
@@ -227,26 +226,29 @@ function renderTree(): void {
     return;
   }
   const nodes = visibleNodes(view, state.filter);
+  // The Issues group follows the epic tree, with its "+ Issue" button even when the project has no issue yet.
+  const group = h('div', { class: 'tree-group' }, h('span', {}, `Issues (${view.preview.issues.length})`), addIssueButton());
   if (nodes.length === 0) {
-    tree.replaceChildren(h('div', { class: 'empty small' }, 'Không có mục nào khớp bộ lọc.'));
+    tree.replaceChildren(h('div', { class: 'empty small' }, state.filter === 'all' ? 'Backlog chưa có mục nào.' : 'Không có mục nào khớp bộ lọc.'), group);
     return;
   }
-  tree.replaceChildren(
-    ...nodes.map((node) =>
-      h(
-        'button',
-        {
-          type: 'button',
-          class: `node depth-${node.depth} ${node.item.key === state.selected ? 'selected' : ''} ${matches(node.item, state.filter) ? '' : 'context'}`,
-          'data-key': node.item.key,
-          onclick: () => select(node.item.key),
-        },
-        h('span', { class: `type type-${node.item.type}` }, TYPE_LABEL[node.item.type]),
-        h('span', { class: 'subject' }, node.item.subject),
-        badges(node.item, true),
-      ),
+  const firstIssue = nodes.findIndex((node) => node.item.type === 'issue');
+  const rows: HTMLElement[] = nodes.map((node) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        class: `node depth-${node.depth} ${node.item.key === state.selected ? 'selected' : ''} ${matches(node.item, state.filter) ? '' : 'context'}`,
+        'data-key': node.item.key,
+        onclick: () => select(node.item.key),
+      },
+      h('span', { class: `type type-${node.item.type}` }, TYPE_LABEL[node.item.type]),
+      h('span', { class: 'subject' }, node.item.subject),
+      badges(node.item, true),
     ),
   );
+  rows.splice(firstIssue === -1 ? rows.length : firstIssue, 0, group);
+  tree.replaceChildren(...rows);
   tree.querySelector('.node.selected')?.scrollIntoView({ block: 'nearest' });
 }
 
@@ -351,10 +353,9 @@ function renderDetail(): void {
   const item = node.item;
   const story = item.type === 'story' ? node.story : undefined;
   const epic = item.type === 'epic' ? node.epic : undefined;
-  const trail: PreviewItem[] = [];
-  if (node.depth > 0) trail.push(node.epic);
-  if (node.depth > 1 && node.story) trail.push(node.story);
+  const trail = [node.epic, node.story].filter((parent): parent is PreviewEpic | PreviewStory => parent !== undefined && parent !== item);
   const attributes = Object.entries(item.customAttributes);
+  const values = item.type === 'issue' ? (item as PreviewIssue).values : undefined;
 
   const blocks: (HTMLElement | false | undefined | '')[] = [
     h(
@@ -369,8 +370,20 @@ function renderDetail(): void {
       h('div', { class: 'detail-meta' }, h('span', { class: `type type-${item.type}` }, TYPE_LABEL[item.type]), h('code', {}, item.key), badges(item, false)),
       h('h1', {}, item.subject),
       verdictBar(item),
+      itemActions(item),
     ),
     section('Mô tả (đúng nội dung ghi lên Taiga)', markdownBlock(item.description)),
+    values &&
+      section(
+        'Phân loại',
+        h(
+          'table',
+          { class: 'attributes issue-values' },
+          h('tr', {}, h('th', {}, 'Loại'), h('td', {}, values.type)),
+          h('tr', {}, h('th', {}, 'Mức độ'), h('td', {}, values.severity)),
+          h('tr', {}, h('th', {}, 'Ưu tiên'), h('td', {}, values.priority)),
+        ),
+      ),
     story && section(`Task (${story.tasks.length})`, story.tasks.length ? h('ul', { class: 'children' }, ...story.tasks.map(itemLink)) : h('p', { class: 'muted' }, 'Không có task.')),
     epic && section(`Story (${epic.stories.length})`, h('ul', { class: 'children' }, ...epic.stories.map(itemLink))),
     (item.tags.length > 0 || attributes.length > 0) &&
@@ -408,12 +421,48 @@ function renderButtons(): void {
     .join('   ·   ');
 }
 
+/** The Thay đổi section's overview of the open project: what a push would carry and its review state. */
+function renderChanges(): void {
+  const overview = byId('changes-overview');
+  const view = state.view;
+  if (!view) {
+    overview.replaceChildren(h('div', { class: 'empty-state' }, 'Mở thư mục repo và chọn dự án để xem thay đổi.'));
+    return;
+  }
+  const s = view.preview.summary;
+  overview.replaceChildren(
+    h(
+      'p',
+      {},
+      h('strong', {}, view.slug),
+      ` · ${s.epics} epic, ${s.stories} story, ${s.tasks} task, ${s.issues} issue · Mới ${s.new} · Đã đẩy ${s.applied}`,
+    ),
+    h(
+      'p',
+      { class: 'muted' },
+      `Đạt ${s.approved} · Cần sửa ${s.changes} · Chưa duyệt ${s.unreviewed} · Đã đổi sau khi duyệt ${s.stale} · Góp ý mở ${s.openComments} · `,
+      view.validation.valid ? 'Manifest hợp lệ' : h('strong', { class: 'error' }, 'Manifest lỗi'),
+    ),
+  );
+}
+
+function renderVersions(versions: AppState['versions']): void {
+  byId('settings-versions').replaceChildren(
+    ...Object.entries({ 'Taigent Desktop': versions.app, taigent: versions.taigent, Electron: versions.electron, Node: versions.node }).map(
+      ([name, value]) => h('tr', {}, h('th', {}, name), h('td', {}, value)),
+    ),
+  );
+}
+
 function render(): void {
   renderRepo();
   renderSummary();
   renderTree();
   renderDetail();
+  renderChanges();
   renderButtons();
+  renderHeadless();
+  refreshWiki();
 }
 
 // ---- actions --------------------------------------------------------------------------------------------------
@@ -441,11 +490,17 @@ function applyView(result: Result<ProjectView>): void {
     return;
   }
   state.view = result.value;
-  if (!findNode(result.value, state.selected)) state.selected = result.value.preview.epics[0]?.key;
+  if (!findNode(result.value, state.selected)) state.selected = visibleNodes(result.value, 'all')[0]?.item.key;
   render();
 }
 
+/** Forgets the plan or push result shown in Thay đổi: it belongs to the project that was open, or to a run before. */
+function clearChangesResult(note?: string): void {
+  byId('changes-result').replaceChildren(...(note ? [h('p', { class: 'muted' }, note)] : []));
+}
+
 async function openProject(slug: string): Promise<void> {
+  clearChangesResult();
   if (!slug) {
     state.view = undefined;
     state.selected = undefined;
@@ -500,6 +555,7 @@ function planTable(plan: Plan): HTMLElement {
       {},
       `Tạo mới ${plan.summary.create} · Cập nhật ${plan.summary.update} · Gắn epic ${plan.summary.link} · Không đổi ${plan.summary.skip}`,
     ),
+    operations.length === 0 && h('p', {}, 'Không có thay đổi nào cần đẩy.'),
     operations.length > 0 &&
       h(
         'table',
@@ -531,7 +587,25 @@ function planTable(plan: Plan): HTMLElement {
         'div',
         { class: 'warn-box' },
         h('strong', {}, `${plan.orphans.length} mục trên Taiga không còn trong backlog (taigent không xoá):`),
-        h('ul', {}, ...plan.orphans.map((orphan) => h('li', {}, `#${orphan.ref} ${orphan.key} – ${orphan.subject}`))),
+        h(
+          'ul',
+          {},
+          ...plan.orphans.map((orphan) => h('li', {}, `${TYPE_LABEL[orphan.type as PreviewItem['type']] ?? orphan.type} #${orphan.ref} ${orphan.key} – ${orphan.subject}`)),
+        ),
+      ),
+    plan.staleLinks.length > 0 &&
+      h(
+        'div',
+        { class: 'warn-box', id: 'plan-stale-links' },
+        h('strong', {}, `${plan.staleLinks.length} liên kết cũ (stale link): story trên Taiga còn gắn với epic mà backlog không còn đặt nó vào.`),
+        h('p', {}, 'Apply không bao giờ gỡ liên kết này. Nếu không cần nữa, gỡ tay trên Taiga.'),
+        h(
+          'ul',
+          {},
+          ...plan.staleLinks.map((link) =>
+            h('li', {}, 'Story #', String(link.ref), ' ', h('code', {}, link.key), ' → epic #', String(link.epicRef), ' ', h('code', {}, link.epic)),
+          ),
+        ),
       ),
   );
 }
@@ -539,27 +613,34 @@ function planTable(plan: Plan): HTMLElement {
 async function showPlan(): Promise<void> {
   if (!state.view) return;
   const slug = state.view.slug;
+  clearChangesResult('Đang chạy taigent plan…');
   const result = await withBusy(() => api.plan(slug));
-  if (!result.ok) return showResult('Xem thay đổi trên Taiga', failureBlock(result));
-  showResult(
+  if (!result.ok) return showChangesResult(slug, 'Xem thay đổi trên Taiga', failureBlock(result));
+  showChangesResult(
+    slug,
     result.value.changes ? 'Thay đổi sẽ ghi lên Taiga' : 'Taiga đã khớp với backlog',
-    result.value.changes ? planTable(result.value) : h('p', {}, 'Không có thay đổi nào cần đẩy.'),
+    planTable(result.value),
   );
 }
 
-function applyOutcome(outcome: ApplyOutcome): void {
-  if (outcome.status === 'cancelled') return toast('Đã huỷ, chưa ghi gì lên Taiga.');
+function applyOutcome(slug: string, outcome: ApplyOutcome): void {
+  if (outcome.status === 'cancelled') {
+    toast('Đã huỷ, chưa ghi gì lên Taiga.');
+    return showChangesResult(slug, 'Đã huỷ đẩy lên Taiga', h('p', {}, 'Chưa ghi gì lên Taiga.'));
+  }
   if (outcome.status === 'blocked') {
-    return showResult(
+    return showChangesResult(
+      slug,
       'Chưa thể đẩy lên Taiga',
       h('ul', { class: 'issues' }, ...outcome.reasons.map((reason) => h('li', {}, reason))),
-      h('p', { class: 'muted' }, 'Nhờ agent xử lý góp ý (skill taiga-plan-backlog), rồi duyệt lại.'),
+      h('p', { class: 'muted' }, 'Nhờ agent xử lý góp ý (skill taiga-plan-backlog), rồi duyệt lại trong mục Backlog.'),
     );
   }
-  if (outcome.status === 'no-changes') return showResult('Taiga đã khớp với backlog', h('p', {}, 'Không có thay đổi nào cần đẩy.'));
+  if (outcome.status === 'no-changes') return showChangesResult(slug, 'Taiga đã khớp với backlog', h('p', {}, 'Không có thay đổi nào cần đẩy.'));
   const { report } = outcome;
   const RESULT: Record<string, string> = { created: 'Đã tạo', updated: 'Đã cập nhật', linked: 'Đã gắn', unchanged: 'Không đổi' };
-  showResult(
+  showChangesResult(
+    slug,
     'Đã đẩy lên Taiga',
     h(
       'p',
@@ -589,14 +670,16 @@ function applyOutcome(outcome: ApplyOutcome): void {
 async function pushToTaiga(): Promise<void> {
   if (!state.view) return;
   const slug = state.view.slug;
+  clearChangesResult('Đang kiểm tra trước khi đẩy…');
   const result = await withBusy(() => api.apply(slug));
-  if (!result.ok) return showResult('Đẩy lên Taiga', failureBlock(result));
-  applyOutcome(result.value);
+  if (!result.ok) return showChangesResult(slug, 'Đẩy lên Taiga', failureBlock(result));
+  applyOutcome(slug, result.value);
 }
 
 async function refreshLogin(): Promise<void> {
   state.login = await api.whoami();
   renderButtons();
+  setupLoginChanged();
 }
 
 async function onLoginButton(): Promise<void> {
@@ -644,7 +727,10 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
   state.repo = result.value;
   state.view = undefined;
   state.selected = undefined;
+  clearChangesResult();
   render();
+  gitRepoChanged();
+  setupRepoChanged();
   const only = result.value.projects.length === 1 ? result.value.projects[0] : undefined;
   if (only) void openProject(only.slug);
 }
@@ -652,6 +738,12 @@ function useRepo(result: Result<RepoInfo> | undefined): void {
 // ---- wiring ---------------------------------------------------------------------------------------------------
 
 function wire(): void {
+  wireNavigation();
+  wireTerminal(api.terminal, (message) => toast(message, 'error'));
+  onSectionChange((section) => {
+    // A hidden tree cannot scroll: bring the selected item back into view when Backlog shows again.
+    if (section === 'backlog') byId('tree').querySelector('.node.selected')?.scrollIntoView({ block: 'nearest' });
+  });
   byId('open-repo').addEventListener('click', async () => useRepo(await api.openRepo()));
   byId<HTMLSelectElement>('project-select').addEventListener('change', (event) => {
     const target = event.currentTarget;
@@ -696,6 +788,7 @@ function wire(): void {
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
     if (document.querySelector('dialog[open]') || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (currentSection() !== 'backlog') return;
     if (event.key === 'j' || event.key === 'ArrowDown') {
       event.preventDefault();
       move(1);
@@ -708,6 +801,57 @@ function wire(): void {
     if (result.ok && result.value.slug !== state.view?.slug) return;
     applyView(result);
   });
+  mountForms({
+    api,
+    view: () => state.view,
+    showView(result, key) {
+      if (key !== undefined) state.selected = key;
+      applyView(result);
+    },
+    toast,
+    failureBlock,
+  });
+  mountTaigaProjects({
+    api,
+    repoRoot: () => state.repo?.root,
+    async openBacklog(slug) {
+      // A project.yaml or backlog.yaml written since the repository was read: list it in the picker first.
+      const repo = await api.refreshRepo();
+      if (repo.ok) state.repo = repo.value;
+      await openProject(slug);
+      showSection('backlog');
+    },
+    toast,
+    failureBlock,
+  });
+  mountTaigaReport({ api, failureBlock });
+  wireGit({ api, failureBlock, toast, hasRepo: () => Boolean(state.repo) });
+  mountSetup({
+    api,
+    failureBlock,
+    repoRoot: () => state.repo?.root,
+    useRepo,
+    login: () => void onLoginButton(),
+    refreshLogin,
+    loginStatus: () => state.login,
+  });
+  mountHeadless({
+    api,
+    repo: () => state.repo,
+    view: () => state.view,
+    toast,
+    async refresh() {
+      // The watcher already showed the agent's edits; a project the run created joins the picker here.
+      const repo = await api.refreshRepo();
+      if (repo.ok) state.repo = repo.value;
+      const only = state.repo?.projects.length === 1 ? state.repo.projects[0] : undefined;
+      if (state.view) applyView(await api.openProject(state.view.slug));
+      else if (only) await openProject(only.slug);
+      else render();
+    },
+  });
+  mountMyTickets({ api, loginKey: () => `${state.login?.loggedIn}:${state.login?.apiUrl}:${state.login?.username}`, toast, failureBlock });
+  mountWiki({ api, view: () => state.view, toast, failureBlock });
 }
 
 async function start(): Promise<void> {
@@ -715,7 +859,9 @@ async function start(): Promise<void> {
   const initial = await api.getState();
   state.repo = initial.repo;
   document.title = `Taigent Desktop ${initial.versions.app}`;
+  renderVersions(initial.versions);
   render();
+  setupRepoChanged();
   if (initial.repo?.projects.length === 1 && initial.repo.projects[0]) await openProject(initial.repo.projects[0].slug);
   await refreshLogin();
 }

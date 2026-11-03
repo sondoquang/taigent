@@ -1,6 +1,7 @@
 // Skills: the Taigent skills (every `taiga-*` skill plus `ask-taigent`) have one source, `.agents/skills/` (read by
-// Codex). `.claude/skills/` holds byte-identical copies for Claude Code. Only Taigent skill directories are compared
-// or written; other skills (e.g. the vendored mattpocock ones) are never touched.
+// Codex). `.claude/skills/` holds byte-identical copies for Claude Code; `taigent init` copies both from the running
+// package into another repository. Only Taigent skill directories are compared or written; other skills (e.g. the
+// vendored mattpocock ones) are never touched.
 
 import { cp, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -21,6 +22,21 @@ export interface SkillDifference {
   file: string;
   /** `missing`: only in the source; `changed`: contents differ; `extra`: only in the Claude copy. */
   status: 'missing' | 'changed' | 'extra';
+}
+
+/** One file of a Taigent skill, compared; `same`: identical in both directories. */
+export interface SkillFile {
+  skill: string;
+  /** Path inside the skill directory, `/`-separated. */
+  file: string;
+  status: SkillDifference['status'] | 'same';
+}
+
+export interface SkillDirsComparison {
+  /** Taigent skills of the source directory, sorted. */
+  skills: string[];
+  /** Every file of every Taigent skill of either directory. */
+  files: SkillFile[];
 }
 
 export interface SkillsComparison {
@@ -69,36 +85,60 @@ async function listFiles(dir: string): Promise<string[]> {
   }
 }
 
-async function compareSkill(skill: string, sourceDir: string, targetDir: string): Promise<SkillDifference[]> {
+/** Every file of `skill` in `sourceDir` or `targetDir`, compared. */
+async function compareSkill(skill: string, sourceDir: string, targetDir: string): Promise<SkillFile[]> {
   const [sourceFiles, targetFiles] = await Promise.all([listFiles(join(sourceDir, skill)), listFiles(join(targetDir, skill))]);
-  const differences: SkillDifference[] = [];
+  const files: SkillFile[] = [];
   for (const file of sourceFiles) {
     if (!targetFiles.includes(file)) {
-      differences.push({ skill, file, status: 'missing' });
+      files.push({ skill, file, status: 'missing' });
       continue;
     }
     const [source, target] = await Promise.all([readFile(join(sourceDir, skill, file)), readFile(join(targetDir, skill, file))]);
-    if (!source.equals(target)) differences.push({ skill, file, status: 'changed' });
+    files.push({ skill, file, status: source.equals(target) ? 'same' : 'changed' });
   }
   for (const file of targetFiles) {
-    if (!sourceFiles.includes(file)) differences.push({ skill, file, status: 'extra' });
+    if (!sourceFiles.includes(file)) files.push({ skill, file, status: 'extra' });
   }
-  return differences;
+  return files;
 }
 
-/** Compares every Taigent skill of `<root>/.agents/skills` with its copy in `<root>/.claude/skills`. */
-export async function compareSkills(root: string): Promise<SkillsComparison> {
-  const sourceDir = join(root, SKILLS_SOURCE);
-  const targetDir = join(root, SKILLS_TARGET);
+/** Compares every Taigent skill of `sourceDir` with its copy in `targetDir`, file by file (either may be absent). */
+export async function compareSkillDirs(sourceDir: string, targetDir: string): Promise<SkillDirsComparison> {
+  const [skills, targetSkills] = await Promise.all([listSkills(sourceDir), listSkills(targetDir)]);
+  const names = [...new Set([...skills, ...targetSkills])].sort();
+  const files = (await Promise.all(names.map((skill) => compareSkill(skill, sourceDir, targetDir)))).flat();
+  return { skills, files };
+}
+
+/**
+ * Makes every Taigent skill of `targetDir` identical to `sourceDir`, from their comparison: skills with a difference
+ * are replaced, skills gone from the source are removed. Other skills are never touched.
+ */
+export async function copySkills(sourceDir: string, targetDir: string, comparison: SkillDirsComparison): Promise<Omit<SkillsSyncReport, 'skills'>> {
+  const outOfSync = [...new Set(comparison.files.filter(({ status }) => status !== 'same').map(({ skill }) => skill))];
+  const synced = outOfSync.filter((skill) => comparison.skills.includes(skill));
+  const removed = outOfSync.filter((skill) => !comparison.skills.includes(skill));
+  for (const skill of outOfSync) await rm(join(targetDir, skill), { recursive: true, force: true });
+  for (const skill of synced) await cp(join(sourceDir, skill), join(targetDir, skill), { recursive: true });
+  return { synced, removed };
+}
+
+/** `compareSkillDirs` of `<root>/.agents/skills` and `<root>/.claude/skills`; the source must exist. */
+async function compareRoot(root: string): Promise<SkillDirsComparison> {
   try {
-    await readdir(sourceDir);
+    await readdir(join(root, SKILLS_SOURCE));
   } catch (error) {
     if (isFileNotFound(error)) throw new SkillsSourceMissingError(`no ${SKILLS_SOURCE} directory in ${root}; run from the repository root`);
     throw error;
   }
-  const [skills, targetSkills] = await Promise.all([listSkills(sourceDir), listSkills(targetDir)]);
-  const names = [...new Set([...skills, ...targetSkills])].sort();
-  const differences = (await Promise.all(names.map((skill) => compareSkill(skill, sourceDir, targetDir)))).flat();
+  return compareSkillDirs(join(root, SKILLS_SOURCE), join(root, SKILLS_TARGET));
+}
+
+/** Compares every Taigent skill of `<root>/.agents/skills` with its copy in `<root>/.claude/skills`. */
+export async function compareSkills(root: string): Promise<SkillsComparison> {
+  const { skills, files } = await compareRoot(root);
+  const differences = files.filter((file): file is SkillDifference => file.status !== 'same');
   return { inSync: differences.length === 0, skills, differences };
 }
 
@@ -107,11 +147,6 @@ export async function compareSkills(root: string): Promise<SkillsComparison> {
  * replaced, copies of skills gone from the source are removed.
  */
 export async function syncSkills(root: string): Promise<SkillsSyncReport> {
-  const comparison = await compareSkills(root);
-  const outOfSync = [...new Set(comparison.differences.map((difference) => difference.skill))];
-  const synced = outOfSync.filter((skill) => comparison.skills.includes(skill));
-  const removed = outOfSync.filter((skill) => !comparison.skills.includes(skill));
-  for (const skill of outOfSync) await rm(join(root, SKILLS_TARGET, skill), { recursive: true, force: true });
-  for (const skill of synced) await cp(join(root, SKILLS_SOURCE, skill), join(root, SKILLS_TARGET, skill), { recursive: true });
-  return { skills: comparison.skills, synced, removed };
+  const comparison = await compareRoot(root);
+  return { skills: comparison.skills, ...(await copySkills(join(root, SKILLS_SOURCE), join(root, SKILLS_TARGET), comparison)) };
 }

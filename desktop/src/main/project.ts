@@ -3,7 +3,22 @@
 
 import { type FSWatcher, watch } from 'node:fs';
 import { join } from 'node:path';
-import type { Failure, ManifestIssue, Preview, PreviewItem, ProjectView, Result, Validation, VerdictChoice } from '../shared/api.ts';
+import type {
+  BacklogSnapshot,
+  Failure,
+  ItemRef,
+  ManifestIssue,
+  Preview,
+  PreviewItem,
+  ProjectView,
+  RemoveItemRequest,
+  RemoveOutcome,
+  Result,
+  SaveItemRequest,
+  SaveOutcome,
+  Validation,
+  VerdictChoice,
+} from '../shared/api.ts';
 import { projectDir, reviewerName } from './repo.ts';
 import { loadCore, parseCliJson, runCli } from './taigent.ts';
 
@@ -48,13 +63,13 @@ export async function buildView(root: string, slug: string): Promise<Result<Proj
 }
 
 export function allItems(preview: Preview): PreviewItem[] {
-  return preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]);
+  return [...preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]), ...preview.issues];
 }
 
-// review.yaml writes run one at a time, so two quick clicks never read the same old file.
+// Manifest and review.yaml writes run one at a time, so two quick clicks never read the same old file.
 let writes: Promise<unknown> = Promise.resolve();
 
-function serialized<T>(fn: () => Promise<T>): Promise<T> {
+export function serialized<T>(fn: () => Promise<T>): Promise<T> {
   const next = writes.then(fn, fn);
   writes = next.catch(() => undefined);
   return next;
@@ -86,7 +101,53 @@ export function changeReview(root: string, slug: string, key: string, change: Ch
   });
 }
 
-/** Watches one project folder; every change (an agent editing backlog.yaml, review.yaml…) rebuilds the view. */
+// ---- Forms: the manifest edit API (src/edit.ts) ---------------------------------------------------
+
+export async function readBacklog(root: string, slug: string, item?: ItemRef): Promise<Result<BacklogSnapshot>> {
+  const { edit, project } = await loadCore();
+  const dir = projectDir(root, slug);
+  try {
+    const file = await edit.readManifestFile(dir, 'backlog');
+    const manifest = await project.loadProject(join(dir, project.PROJECT_FILE), slug).catch(() => undefined);
+    const found = item && edit.readItem(file.text, item.type, item.key);
+    return { ok: true, value: { file, attributes: manifest?.customAttributes ?? { epic: [], story: [], task: [], issue: [] }, ...(found && { item: found }) } };
+  } catch (error) {
+    return toFailure(error);
+  }
+}
+
+export function saveItem(root: string, slug: string, request: SaveItemRequest): Promise<Result<SaveOutcome>> {
+  return serialized(async () => {
+    const { edit, review } = await loadCore();
+    const dir = projectDir(root, slug);
+    try {
+      const result = await edit.saveItem(dir, request);
+      if (result.status !== 'saved') return { ok: true, value: result };
+      // review.yaml follows the new key (`rekeyReviewFile`); the edit API never touches it.
+      if (request.original !== undefined && request.original !== request.item.key) await review.rekeyReviewFile(dir, { [request.original]: request.item.key });
+      return { ok: true, value: { ...result, view: await buildView(root, slug) } };
+    } catch (error) {
+      return toFailure(error, 'Không lưu được backlog.yaml');
+    }
+  });
+}
+
+export function removeItem(root: string, slug: string, request: RemoveItemRequest): Promise<Result<RemoveOutcome>> {
+  return serialized(async () => {
+    const { edit, review } = await loadCore();
+    const dir = projectDir(root, slug);
+    try {
+      const result = await edit.removeItem(dir, request);
+      if (result.status !== 'saved') return { ok: true, value: result };
+      await review.rekeyReviewFile(dir, Object.fromEntries(result.removed.map((key) => [key, undefined])));
+      return { ok: true, value: { ...result, view: await buildView(root, slug) } };
+    } catch (error) {
+      return toFailure(error, 'Không xoá được mục khỏi backlog.yaml');
+    }
+  });
+}
+
+/** Watches one project folder and below (`pages/`); every change (an agent editing backlog.yaml…) rebuilds the view. */
 export class ProjectWatcher {
   #watcher: FSWatcher | undefined;
   #timer: NodeJS.Timeout | undefined;
@@ -94,7 +155,7 @@ export class ProjectWatcher {
   watch(root: string, slug: string, onChange: (view: Result<ProjectView>) => void): void {
     this.close();
     try {
-      this.#watcher = watch(projectDir(root, slug), () => {
+      this.#watcher = watch(projectDir(root, slug), { recursive: true }, () => {
         clearTimeout(this.#timer);
         this.#timer = setTimeout(() => void buildView(root, slug).then(onChange), WATCH_DEBOUNCE_MS);
       });
