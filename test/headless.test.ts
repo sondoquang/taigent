@@ -37,7 +37,7 @@ const MCP_WRITE_TOOLS = [
   'updateWikiPage', 'uploadAttachment', 'watchWikiPage',
 ];
 
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'preview', 'projects', 'report', 'snapshot', 'adopt'];
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'preview', 'projects', 'report', 'snapshot', 'adopt', 'pull'];
 
 function parseAllowlist(text: string): string[] {
   return text
