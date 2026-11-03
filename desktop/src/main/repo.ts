@@ -1,6 +1,6 @@
 // The opened repository: the remembered folder, its environment (`.env` completes process.env, as the CLI does),
 // where its manifests live and which projects they hold. Also the app settings file (userData `settings.json`): the
-// remembered folder and the agent of the headless buttons.
+// remembered folder, the agent of the headless buttons and the theme.
 
 import { readFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -8,7 +8,7 @@ import { userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { app } from 'electron';
-import { HEADLESS_AGENTS, type HeadlessAgent, type ProjectEntry, type RepoInfo } from '../shared/api.ts';
+import { HEADLESS_AGENTS, type HeadlessAgent, type ProjectEntry, type RepoInfo, THEMES, type Theme } from '../shared/api.ts';
 import { loadCore } from './taigent.ts';
 
 const SETTINGS_FILE = 'settings.json';
@@ -16,6 +16,7 @@ const SETTINGS_FILE = 'settings.json';
 interface Settings {
   lastRepo?: string;
   headlessAgent?: HeadlessAgent;
+  theme?: Theme;
 }
 
 async function readSettings(): Promise<Settings> {
@@ -26,6 +27,8 @@ async function readSettings(): Promise<Settings> {
       if ('lastRepo' in parsed && typeof parsed.lastRepo === 'string') settings.lastRepo = parsed.lastRepo;
       const agent = 'headlessAgent' in parsed ? HEADLESS_AGENTS.find((known) => known === parsed.headlessAgent) : undefined;
       if (agent) settings.headlessAgent = agent;
+      const theme = 'theme' in parsed ? THEMES.find((known) => known === parsed.theme) : undefined;
+      if (theme) settings.theme = theme;
     }
   } catch {
     // no settings yet
@@ -45,15 +48,27 @@ export async function rememberRepo(root: string): Promise<void> {
   await updateSettings({ lastRepo: root });
 }
 
-/** The agent of the headless buttons; claude until Settings picks another. */
+/** The agent of the headless buttons; omp until the user picks another. */
 export async function headlessAgent(): Promise<HeadlessAgent> {
-  return (await readSettings()).headlessAgent ?? 'claude';
+  return (await readSettings()).headlessAgent ?? 'omp';
 }
 
 export async function setHeadlessAgent(agent: unknown): Promise<HeadlessAgent> {
   const known = HEADLESS_AGENTS.find((candidate) => candidate === agent);
-  if (!known) throw new Error(`Agent không hợp lệ: ${String(agent)} (chỉ claude hoặc codex).`);
+  if (!known) throw new Error(`Agent không hợp lệ: ${String(agent)} (chỉ ${HEADLESS_AGENTS.join(', ')}).`);
   await updateSettings({ headlessAgent: known });
+  return known;
+}
+
+/** The app's colours; the OS's until the user picks light or dark. */
+export async function theme(): Promise<Theme> {
+  return (await readSettings()).theme ?? 'system';
+}
+
+export async function setTheme(choice: unknown): Promise<Theme> {
+  const known = THEMES.find((candidate) => candidate === choice);
+  if (!known) throw new Error(`Giao diện không hợp lệ: ${String(choice)} (chỉ ${THEMES.join(', ')}).`);
+  await updateSettings({ theme: known });
   return known;
 }
 

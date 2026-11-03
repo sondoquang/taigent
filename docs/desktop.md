@@ -125,10 +125,14 @@ Bố cục gồm bốn phần, từ trên xuống:
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
   - **Setup repo**: tạo, clone hoặc mở repo, cài Taigent vào repo, `npm install` và checklist công cụ (xem
     [Setup repo](#setup-repo-wizard)).
-  - **Settings**: agent cho các nút chạy skill headless (`claude` hoặc `codex`, lưu trong thiết lập của ứng dụng) và
-    phiên bản của ứng dụng, taigent, Electron và Node.
+  - **Settings**: **Giao diện** (*Theo hệ thống*, mặc định, đổi theo chế độ sáng/tối của Windows hoặc macOS; *Sáng*;
+    *Tối*), agent cho các nút chạy skill headless (`omp`, `claude` hoặc `codex`), cả hai lưu trong `settings.json` của
+    ứng dụng, và phiên bản của ứng dụng, taigent, Electron và Node. Giao diện đổi ngay khi chọn, cả thanh tiêu đề của
+    cửa sổ (main process đặt `nativeTheme.themeSource`, trang đổi theo `prefers-color-scheme`); terminal giữ nền tối ở
+    cả hai giao diện.
 
-  Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở.
+  Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở. Khi cửa
+  sổ hẹp hơn 1180px, thanh điều hướng thu lại chỉ còn biểu tượng (rê chuột để xem tên mục).
 - **Panel dưới đáy**: terminal (xem [Terminal](#terminal)), ẩn mặc định.
 - **Thanh trạng thái**: người duyệt và kết quả `taigent whoami`.
 
@@ -136,16 +140,29 @@ Mục **Backlog** gồm:
 
 - **Thanh Nhờ agent**: ba nút chạy skill headless và kết quả của lần chạy gần nhất (xem
   [Nút chạy skill headless](#nút-chạy-skill-headless)).
-- **Thanh tổng quan**: số epic/story/task/issue; *Mới* (chưa có trên Taiga) và *Đã đẩy*; *Đạt*, *Cần sửa*, *Chưa duyệt*,
-  *Đã đổi sau khi duyệt*; số góp ý chưa xử lý; kết quả `taigent validate` (bấm *Manifest lỗi* để xem từng lỗi).
+- **Thanh tổng quan**: số epic/story/task/issue; *Mới* (chưa có trên Taiga) và *Đã đẩy*; thanh tiến độ duyệt (số mục
+  *Đạt* trên tổng số mục, chia màu theo *Đạt*, *Cần sửa*, *Đã đổi sau khi duyệt*, *Chưa duyệt*) cùng số của từng trạng
+  thái; số góp ý chưa xử lý; kết quả `taigent validate` (bấm *Manifest lỗi* để xem từng lỗi).
 - **Cây bên trái**: epic → story → task, rồi nhóm **Issues** (các issue của `backlog.yaml`, không thuộc epic nào).
-  Mỗi mục có nhãn *Mới* hoặc *Đã đẩy #ref*, trạng thái duyệt và số góp ý mở. Bộ lọc: *Tất cả*, *Chưa duyệt*,
-  *Cần sửa*, *Đã đổi*. Khi lọc, epic/story cha vẫn hiện (mờ) để bạn biết mục nằm ở đâu.
+  Mỗi mục có nhãn *Mới* hoặc *Đã đẩy #ref*, trạng thái duyệt và số góp ý mở; *Mới* và *Chưa duyệt* (trạng thái mặc
+  định) hiện dạng chữ nhạt, các trạng thái còn lại dạng nhãn màu. Bộ lọc: *Tất cả*, *Chưa duyệt*, *Cần sửa*, *Đã đổi*.
+  Khi lọc, epic/story cha vẫn hiện (mờ) để bạn biết mục nằm ở đâu.
 - **Chi tiết bên phải**: tiêu đề, mô tả hiển thị dạng Markdown, đúng nội dung ghi lên Taiga (với story, mô tả đã gồm
   tiêu chí chấp nhận dạng checklist `- [ ]` và link spec, nên không lặp lại thành mục riêng), task/story con, với
   issue thì mục **Phân loại** (loại, mức độ, ưu tiên), tag, custom attribute và chuỗi góp ý. Issue được duyệt và góp
   ý như mọi mục khác; đổi loại, mức độ hay ưu tiên của một issue đã *Đạt* cũng làm nó thành *Đã đổi sau khi duyệt*.
 - **Phím tắt**: `j`/`k` hoặc `↓`/`↑` để chuyển mục (chỉ khi đang ở mục Backlog); `Ctrl+Enter` trong ô góp ý để gửi.
+
+Giao diện dùng một design system duy nhất, khai báo bằng biến CSS ở đầu `desktop/src/renderer/styles.css`: ba màu gốc
+trắng `#ffffff` (nền), than `#333333` (chữ, cấu trúc) và đỏ `#e32d17` (chỉ dùng cho chỗ cần người dùng: mục đang chọn,
+nút hành động chính, *Cần sửa*, góp ý chưa xử lý, viền focus); mọi màu khác pha từ ba màu này. Font là Geist (chữ) và
+Geist Mono (key, đường dẫn, code, terminal), đóng gói sẵn trong `desktop/src/renderer/fonts/` (giấy phép SIL OFL 1.1,
+`OFL.txt`) nên không tải gì từ mạng.
+
+Các mục Wiki, Taiga, Thay đổi, Git, Setup repo và Settings dùng hết bề ngang cửa sổ: đầu trang có tiêu đề và mô tả ở
+bên trái, các nút của mục ở bên phải; danh sách, bảng và dải số liệu trải hết chiều rộng. Git (nhánh và ô commit),
+Setup repo (bước 4 Kiểm tra) và Settings đặt nội dung phụ thành cột bên phải; khi cửa sổ hẹp hơn 1180px, cột này xuống
+dưới nội dung chính.
 
 ## Duyệt và góp ý
 
@@ -427,39 +444,54 @@ Việt, liệt kê lệnh gợi ý và mở một tab shell ở repo trong [pane
 ## Terminal
 
 Panel terminal nằm dưới đáy cửa sổ, **ẩn mặc định**. Bật hoặc tắt bằng nút **Terminal** trên thanh trên cùng hoặc
-`` Ctrl+` `` (phím tắt vẫn chạy khi con trỏ đang ở trong terminal). Nút **Ẩn** cũng tắt panel. Ẩn panel không dừng
-process nào: các tab vẫn chạy và hiện lại nguyên vẹn khi bật panel. Kéo mép trên của panel để đổi chiều cao, terminal
-tự đổi số cột và số dòng theo panel và báo cho process.
+`` Ctrl+` `` (phím tắt vẫn chạy khi con trỏ đang ở trong terminal). Nút mũi tên xuống ở cuối thanh tab cũng tắt
+panel. Ẩn panel không dừng process nào: các tab vẫn chạy và hiện lại nguyên vẹn khi bật panel. Kéo mép trên của panel
+để đổi chiều cao, terminal tự đổi số cột và số dòng theo panel và báo cho process.
 
-- **+ Shell** mở một tab shell mới: `pwsh` nếu có trên `PATH`, nếu không thì Windows PowerShell (`powershell.exe`).
-  Trên macOS là `$SHELL`. Trên Windows, shell chuyển console sang UTF-8 trước khi chạy, nên output tiếng Việt của
-  các chương trình khác (git, agent) cũng hiện đúng.
-- **Mở nhanh** `claude`, `codex`, `omp` mở một tab mới chạy agent đó trong shell. Agent chưa cài thì tab hiện lỗi
-  của shell và vẫn giữ shell để bạn gõ tiếp. Ứng dụng không cài, không đăng nhập agent giúp bạn.
+Thanh tab giống thanh tab của editor: mỗi tab có biểu tượng theo loại (shell, agent, skill), tên và nút **×**. Bấm tên
+tab để chuyển, bấm chuột giữa để đóng, lăn chuột trên thanh để cuộn ngang khi có nhiều tab.
+
+- Nút **+** ngay sau tab cuối mở menu tab mới, có ô tìm (gõ không dấu cũng được, ví dụ `cai dat`), phím mũi tên để
+  chọn, `Enter` để mở, `Esc` để đóng:
+  - **Terminal: …** mở một tab shell mới. Trên Windows có **PowerShell** (`pwsh` nếu có trên `PATH`, nếu không thì
+    Windows PowerShell `powershell.exe`, là shell mặc định), **Command Prompt** (`cmd.exe`) và **Git Bash** (khi máy
+    đã cài Git for Windows: `bin\bash.exe` cạnh `git.exe` trên `PATH`, hoặc trong `Program Files\Git`). Trên macOS chỉ
+    có `$SHELL`. PowerShell chuyển console sang UTF-8, Command Prompt chuyển code page sang 65001 trước khi chạy, nên
+    output tiếng Việt của các chương trình khác (git, agent) cũng hiện đúng. Git Bash mở ở thư mục repo, không về
+    thư mục home.
+  - **Claude Code**, **Codex**, **OMP** mở một tab mới chạy `claude`, `codex`, `omp` trong shell mặc định. Agent
+    chưa cài thì tab hiện lỗi của shell và vẫn giữ shell để bạn gõ tiếp. Ứng dụng không cài, không đăng nhập agent
+    giúp bạn.
+  - **Cài đặt agent…** chuyển sang mục **Setup repo**, nơi kiểm tra và chạy lệnh cài `claude`, `codex`, `omp`.
+- Bấm đúp vào chỗ trống của thanh tab mở một tab shell mặc định.
 - Mọi tab chạy ở **thư mục repo đang mở**. Chưa mở repo thì không mở được tab. Môi trường của tab kế thừa từ ứng
-  dụng; ứng dụng chỉ thêm `COLORTERM=truecolor` (và `TERM=xterm-256color` ngoài Windows), không thêm thông tin đăng
-  nhập hay bí mật nào.
-- Có nhiều tab cùng lúc. Bấm tên tab để chuyển. Khi process trong tab kết thúc, tab ghi mã thoát và giữ nguyên nội
-  dung cho tới khi bạn đóng.
+  dụng; ứng dụng chỉ thêm `COLORTERM=truecolor` (và `TERM=xterm-256color` ngoài Windows; `CHERE_INVOKING=1` cho Git
+  Bash), không thêm thông tin đăng nhập hay bí mật nào.
+- Có nhiều tab cùng lúc. Khi process trong tab kết thúc, tab mờ đi, có chấm trạng thái (xanh: mã thoát 0, đỏ: mã
+  khác, xám: đã dừng) và giữ nguyên nội dung cho tới khi bạn đóng.
 - **Đóng tab (×) thì kill cả cây process** của tab: shell, agent và mọi process con của chúng (`taskkill /T /F` trên
   Windows, cả process group trên macOS). **Thoát ứng dụng thì kill mọi cây process** của mọi tab trước khi thoát.
-- Tab **skill** do ứng dụng mở (chạy một lệnh cho trước, ví dụ một lần chạy skill headless) có thêm nút **Huỷ**: kill
-  cả cây process nhưng giữ tab để bạn đọc output; tab ghi *Đã huỷ lần chạy*.
+- Tab **skill** do ứng dụng mở (chạy một lệnh cho trước, ví dụ một lần chạy skill headless) có chấm nhấp nháy khi
+  đang chạy và thêm nút **Huỷ** (ô vuông): kill cả cây process nhưng giữ tab để bạn đọc output; tab ghi *Đã huỷ lần
+  chạy*.
 
 Đăng nhập Taiga trong ứng dụng bằng hộp thoại **Đăng nhập**, không gõ mật khẩu vào tab terminal. Lần đăng nhập đó
 dùng chung với `npx taigent` và agent chạy trong terminal.
 
 Cho các phần khác của ứng dụng (mục Git, nút skill headless, wizard Setup repo): main process mở tab qua
-`terminals.open(...)` trong `desktop/src/main/terminal.ts`. `{ kind: 'shell', cwd }` mở một shell; `{ kind: 'skill',
-cwd, title, command: { file, args, env? } }` chạy thẳng lệnh đó trong pty (không qua shell). Kết quả có `tab`,
-`cancel()` (kill cả cây process), `exited` (Promise `{ exitCode, signal?, cancelled }`) và `onData(listener)`.
-Renderer tự hiện panel và chọn tab mới. Lệnh cần shell (ví dụ `irm … | iex` khi cài công cụ) dùng
-`command: shellRun('<lệnh>')`: shell của tab chạy lệnh đó rồi vẫn mở để bạn gõ tiếp.
+`terminals.open(...)` trong `desktop/src/main/terminal.ts`. `{ kind: 'shell', cwd, shell? }` mở một shell (`shell`
+là id trong menu **+**: `powershell`, `cmd`, `git-bash`; bỏ trống là shell mặc định); `{ kind: 'skill', cwd, title,
+command: { file, args, env? } }` chạy thẳng lệnh đó trong pty (không qua shell). Kết quả có `tab`, `cancel()` (kill cả
+cây process), `exited` (Promise `{ exitCode, signal?, cancelled }`) và `onData(listener)`. Renderer tự hiện panel và
+chọn tab mới. Lệnh cần shell (ví dụ `irm … | iex` khi cài công cụ) dùng `command: shellRun('<lệnh>')`: shell mặc định
+chạy lệnh đó rồi vẫn mở để bạn gõ tiếp.
 
 ## Nút chạy skill headless
 
-Thanh **Nhờ agent** ở đầu mục Backlog có ba nút. Mỗi nút chạy một skill Taigent không tương tác, bằng agent chọn trong
-**Settings** (`claude` hoặc `codex`, mặc định `claude`; `omp` chỉ dùng được trong terminal):
+Thanh **Nhờ agent** ở đầu mục Backlog có ba nút. Mỗi nút chạy một skill Taigent không tương tác, bằng agent chọn ở ô
+**Agent** đầu thanh (tô màu để thấy ngay agent nào sẽ chạy) hoặc trong **Settings**: **OMP** (`omp`, mặc định),
+**Claude Code** (`claude`) hay **Codex** (`codex`). Hai chỗ chọn là một: đổi ở chỗ này thì chỗ kia đổi theo, lưu vào
+`settings.json` của ứng dụng. Trong lúc một lần chạy chưa xong, ô Agent bị khoá như các nút.
 
 | Nút | Skill | Agent làm gì |
 |---|---|---|
@@ -471,7 +503,8 @@ Thanh **Nhờ agent** ở đầu mục Backlog có ba nút. Mỗi nút chạy m�
   (cùng version với ứng dụng) với thư mục làm việc là repo đang mở. `run-skill` dùng `.agents/skills/` và allowlist
   `tools/taiga/allowlist.txt` của chính repo đó (do `taigent init` cài), nên lần chạy chỉ được dùng đúng các lệnh trong
   allowlist, như khi chạy `run-skill` ngoài ứng dụng ([docs/headless.md](headless.md#taigent-desktop-buttons)).
-  Repo chưa có allowlist thì `run-skill` dừng với mã thoát 2 và nhắc chạy `npx taigent init`.
+  Repo chưa có allowlist (hoặc, với `omp`, chưa có `tools/taiga/omp-guard.mjs`) thì `run-skill` dừng với mã thoát 2
+  và nhắc chạy `npx taigent init`.
 - **Huỷ** trên tab kill cả cây process (agent và mọi process con); tab ghi *Đã huỷ lần chạy*.
 - Chạy xong, thanh Nhờ agent báo **xong** (mã thoát 0), **lỗi** kèm mã thoát và dòng lỗi cuối của output, hoặc **đã
   huỷ**. Cây, form đang mở và màn hình review tự cập nhật theo file agent sửa (ứng dụng theo dõi `taiga/<slug>/`);
@@ -644,7 +677,9 @@ và kiểm tra token không có trong thông báo nào; clone một repo bare t�
   script inline, không tải tài nguyên mạng) và chặn mọi điều hướng hay cửa sổ mới. Link trong mô tả mở bằng trình
   duyệt hệ thống (chỉ http/https).
 - CSP cho phép style inline (`style-src 'self' 'unsafe-inline'`) vì xterm.js tô màu và đặt kích thước dòng bằng thẻ
-  `<style>` và thuộc tính `style`. Nội dung do agent viết không dùng được quyền này: DOMPurify bỏ mọi thẻ `<style>` và
+  `<style>` và thuộc tính `style` (thanh tiến độ duyệt cũng đặt độ dài từng đoạn bằng thuộc tính `style`). Font chỉ nạp
+  từ ứng dụng (`font-src 'self'`).
+  Nội dung do agent viết không dùng được quyền này: DOMPurify bỏ mọi thẻ `<style>` và
   thuộc tính `style` trong Markdown, và script vẫn chỉ được nạp từ ứng dụng.
 - Markdown trong mô tả do agent viết được làm sạch bằng DOMPurify trước khi hiển thị.
 - Renderer chỉ dùng được API có kiểu trong `desktop/src/shared/api.ts`, qua preload. Nó không đọc file và không gọi

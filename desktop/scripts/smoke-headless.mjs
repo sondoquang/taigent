@@ -1,9 +1,9 @@
-// Headless steps of the desktop smoke (scripts/smoke.mjs): the Settings choice of the agent (saved in the app
-// settings), then each button of the Backlog section run through the bundled run-skill in `--dry-run` mode (the app is
-// launched with TAIGENT_RUN_SKILL_DRY_RUN=1): its `skill` tab shows exactly the command run-skill builds for that agent,
-// skill and request in this repository. Then, without --dry-run and with a fake `codex` first on PATH, the agent runs
-// with TAIGENT_READ_ONLY=1, Huỷ kills the run's process tree and the tab says it was cancelled, and a failing run shows
-// its exit code and last error line.
+// Headless steps of the desktop smoke (scripts/smoke.mjs): the choice of the agent (in the agent bar and in Settings,
+// saved in the app settings), then each button of the Backlog section run through the bundled run-skill in `--dry-run`
+// mode (the app is launched with TAIGENT_RUN_SKILL_DRY_RUN=1): its `skill` tab shows exactly the command run-skill
+// builds for that agent, skill and request in this repository. Then, without --dry-run and with a fake `codex` first on
+// PATH, the agent runs with TAIGENT_READ_ONLY=1, Huỷ kills the run's process tree and the tab says it was cancelled,
+// and a failing run shows its exit code and last error line.
 
 import { spawnSync } from 'node:child_process';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -110,7 +110,7 @@ const ended = (page, id) => page.waitForSelector(`.terminal-tab[data-id="${id}"]
 export async function smokeHeadless(page, { app, repo, project, work, shots, log, check, goTo }) {
   const settingsFile = join(work, 'user-data', 'settings.json');
   await goTo(page, 'settings');
-  check((await page.isChecked('input[name="headless-agent"][value="claude"]')) && (await page.textContent('#agent-name')) === 'claude', 'Settings: the headless buttons use claude by default');
+  check((await page.isChecked('input[name="headless-agent"][value="omp"]')) && (await page.inputValue('#agent-select')) === 'omp', 'Settings and the agent bar: the headless buttons use omp by default');
   await goTo(page, 'backlog');
   // A taller panel shows a whole command (the claude one carries the allowlist).
   await page.evaluate(() => document.getElementById('terminal-dock')?.style.setProperty('--terminal-height', '520px'));
@@ -121,17 +121,31 @@ export async function smokeHeadless(page, { app, repo, project, work, shots, log
   }, join(repo, 'docs', 'headless.md'));
 
   const runs = [
-    { selector: '#agent-plan-spec', agent: 'claude', skill: 'taiga-plan-backlog', mentions: ['Spec: docs/headless.md.', `Project: ${project}.`] },
+    { selector: '#agent-plan-spec', agent: 'omp', skill: 'taiga-plan-backlog', mentions: ['Spec: docs/headless.md.', `Project: ${project}.`] },
     { selector: '#agent-review', agent: 'claude', skill: 'taiga-plan-backlog', mentions: ['review.yaml', project] },
     { selector: '#agent-story', agent: 'codex', skill: 'taiga-create-user-story', mentions: ['Người duyệt muốn lọc các story đã đổi sau khi duyệt', `Project: ${project}.`] },
   ];
+  /** Where each agent's command carries the request, and what precedes it there. */
+  const PROMPTS = {
+    omp: (skill, shown) => [shown.at(-1), `/skill:${skill} `],
+    claude: (skill, shown) => [shown[2], `/${skill} `],
+    codex: (skill, shown) => [shown.at(-1), `$${skill} `],
+  };
   for (const run of runs) {
+    if (run.agent === 'claude') {
+      // The agent bar's picker switches the agent and Settings follows.
+      await page.selectOption('#agent-select', 'claude');
+      await goTo(page, 'settings');
+      await page.waitForFunction(() => document.querySelector('input[name="headless-agent"][value="claude"]')?.checked === true);
+      check(JSON.parse(await readFile(settingsFile, 'utf8')).headlessAgent === 'claude', 'agent bar: claude picked there is saved in settings.json and checked in Settings');
+      await goTo(page, 'backlog');
+    }
     if (run.agent === 'codex') {
       await goTo(page, 'settings');
       await page.check('input[name="headless-agent"][value="codex"]');
-      await page.waitForFunction(() => document.getElementById('agent-name')?.textContent === 'codex');
+      await page.waitForFunction(() => document.getElementById('agent-select')?.value === 'codex');
       const saved = JSON.parse(await readFile(settingsFile, 'utf8'));
-      check(saved.headlessAgent === 'codex' && typeof saved.lastRepo === 'string', `Settings: codex saved in settings.json, next to lastRepo (${JSON.stringify(saved)})`);
+      check(saved.headlessAgent === 'codex' && typeof saved.lastRepo === 'string', `Settings: codex saved in settings.json, next to lastRepo, and shown in the agent bar (${JSON.stringify(saved)})`);
       await goTo(page, 'backlog');
     }
     const fill = run.selector === '#agent-story'
@@ -144,8 +158,7 @@ export async function smokeHeadless(page, { app, repo, project, work, shots, log
     await ended(page, tab.id);
     await page.waitForSelector('#agent-status[data-state="ok"]');
     const shown = await printedCommand(page, tab.id);
-    const prompt = run.agent === 'claude' ? shown[2] : shown.at(-1);
-    const marker = run.agent === 'claude' ? `/${run.skill} ` : `$${run.skill} `;
+    const [prompt, marker] = PROMPTS[run.agent](run.skill, shown);
     check(typeof prompt === 'string' && prompt.startsWith(marker), `${run.selector}: ${run.agent} runs ${run.skill} (${tab.title})`);
     const request = prompt.slice(marker.length);
     check(run.mentions.every((text) => request.includes(text)) && request.includes('không chạy apply, upload hay bootstrap'), `${run.selector}: the request names ${run.mentions.join(', ')} and forbids apply/upload/bootstrap`);

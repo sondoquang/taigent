@@ -124,11 +124,17 @@ export type ApplyOutcome =
 
 export type VerdictChoice = Verdict | 'clear';
 
-/** The agents the terminal can start in a new tab (quick launch). */
+/** The agents the terminal can start in a new tab (the `+` menu). */
 export const TERMINAL_AGENTS = ['claude', 'codex', 'omp'] as const;
 export type TerminalAgent = (typeof TERMINAL_AGENTS)[number];
 /** `skill` tabs run a given command and are opened by the main process only. */
 export type TerminalKind = 'shell' | TerminalAgent | 'skill';
+
+/** A shell this machine offers: on Windows PowerShell, Command Prompt and, when installed, Git Bash. */
+export interface TerminalShell {
+  id: string;
+  label: string;
+}
 
 export interface TerminalTab {
   id: number;
@@ -136,6 +142,8 @@ export interface TerminalTab {
   title: string;
   cwd: string;
   pid: number;
+  /** For a `shell` tab: the id of its TerminalShell. */
+  shell?: string;
 }
 
 export interface TerminalExit {
@@ -147,8 +155,10 @@ export interface TerminalExit {
 
 /** The embedded terminal; every tab runs in the open repository. */
 export interface TerminalApi {
-  /** Opens a shell (pwsh, else powershell.exe; $SHELL elsewhere) or an agent in it; `onOpened` delivers the tab. */
-  open(kind: 'shell' | TerminalAgent): Promise<Result<TerminalTab>>;
+  /** The shells this machine offers, the default first (pwsh, else powershell.exe; $SHELL elsewhere). */
+  shells(): Promise<TerminalShell[]>;
+  /** Opens shell `shell` (default: the default shell) or an agent in the default shell; `onOpened` delivers the tab. */
+  open(kind: 'shell' | TerminalAgent, shell?: string): Promise<Result<TerminalTab>>;
   write(id: number, data: string): void;
   resize(id: number, cols: number, rows: number): void;
   /** Kills the tab's process tree; the tab stays. */
@@ -161,9 +171,13 @@ export interface TerminalApi {
   onExit(listener: (id: number, exit: TerminalExit) => void): () => void;
 }
 
-/** The agents a headless skill run can use (Settings); `omp` only runs in the terminal. */
-export const HEADLESS_AGENTS = ['claude', 'codex'] as const;
+/** The agents a headless skill run can use (the agent bar and Settings), the default first. */
+export const HEADLESS_AGENTS = ['omp', 'claude', 'codex'] as const;
 export type HeadlessAgent = (typeof HEADLESS_AGENTS)[number];
+
+/** The app's colours (Settings): follow the OS, or light or dark whatever it says. */
+export const THEMES = ['system', 'light', 'dark'] as const;
+export type Theme = (typeof THEMES)[number];
 
 /**
  * The headless buttons, each a `run-skill` of one skill: plan the backlog from a spec file (`taiga-plan-backlog`),
@@ -442,9 +456,12 @@ export interface TaigentApi {
   checkTools(): Promise<ToolCheck[]>;
   /** Opens a terminal tab running `tool`'s install command (`ToolCheck.install`). */
   installTool(tool: SetupTool): Promise<Result<TerminalTab>>;
-  /** The agent of the headless buttons, from the app settings (default claude). */
+  /** The agent of the headless buttons, from the app settings (default omp). */
   headlessAgent(): Promise<HeadlessAgent>;
   setHeadlessAgent(agent: HeadlessAgent): Promise<Result<HeadlessAgent>>;
+  /** The app's colours, from the app settings (default system); the window and the CSS follow at once. */
+  theme(): Promise<Theme>;
+  setTheme(theme: Theme): Promise<Result<Theme>>;
   /**
    * Opens a `skill` tab running the bundled `run-skill` in the opened repository; `plan-spec` first asks for the spec
    * file (undefined when that dialog is cancelled). One run at a time.
@@ -474,6 +491,7 @@ export const CHANNELS = {
   apply: 'taigent:apply',
   openExternal: 'taigent:open-external',
   projectChanged: 'taigent:project-changed',
+  terminalShells: 'taigent:terminal-shells',
   terminalOpen: 'taigent:terminal-open',
   terminalWrite: 'taigent:terminal-write',
   terminalResize: 'taigent:terminal-resize',
@@ -507,6 +525,8 @@ export const CHANNELS = {
   installTool: 'taigent:install-tool',
   headlessAgent: 'taigent:headless-agent',
   setHeadlessAgent: 'taigent:set-headless-agent',
+  theme: 'taigent:theme',
+  setTheme: 'taigent:set-theme',
   runSkill: 'taigent:run-skill',
   skillRunEnded: 'taigent:skill-run-ended',
   readMyTickets: 'taigent:read-my-tickets',

@@ -1,8 +1,8 @@
 // The headless buttons of the Backlog section (Plan backlog từ spec, Nhờ agent xử lý góp ý, Tạo user story) and the
-// Settings choice of their agent. A run opens a `skill` tab in the terminal panel (main process: src/main/headless.ts,
-// the bundled run-skill); its end shows here with the exit code and, on failure, the last error line. The tree, the
-// forms and the review follow the agent's edits through the project watcher; `refresh` re-reads the repository too,
-// for a project the run created.
+// choice of their agent, in the bar beside the buttons and in Settings. A run opens a `skill` tab in the terminal panel
+// (main process: src/main/headless.ts, the bundled run-skill); its end shows here with the exit code and, on failure,
+// the last error line. The tree, the forms and the review follow the agent's edits through the project watcher;
+// `refresh` re-reads the repository too, for a project the run created.
 
 import { HEADLESS_AGENTS, type HeadlessAgent, type ProjectView, type RepoInfo, type SkillRunAction, type SkillRunEnd, type SkillRunRequest, type TaigentApi } from '../shared/api.ts';
 import { byId } from './dom.ts';
@@ -23,7 +23,7 @@ const LABELS: Record<SkillRunAction, string> = {
 };
 
 let host: HeadlessHost | undefined;
-let agent: HeadlessAgent = 'claude';
+let agent: HeadlessAgent = 'omp';
 let running: SkillRunAction | undefined;
 
 function setStatus(state: 'running' | 'ok' | 'error' | 'cancelled', text: string): void {
@@ -40,7 +40,9 @@ export function renderHeadless(): void {
   byId<HTMLButtonElement>('agent-plan-spec').disabled = !idle || !host.repo();
   byId<HTMLButtonElement>('agent-review').disabled = !idle || !host.view();
   byId<HTMLButtonElement>('agent-story').disabled = !idle || !host.view();
-  byId('agent-name').textContent = agent;
+  const picker = byId<HTMLSelectElement>('agent-select');
+  picker.value = agent;
+  picker.disabled = !idle;
 }
 
 async function start(request: SkillRunRequest): Promise<void> {
@@ -138,6 +140,8 @@ export function mountHeadless(headlessHost: HeadlessHost): void {
   for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="headless-agent"]')) {
     radio.addEventListener('change', () => void chooseAgent(radio.value));
   }
+  const picker = byId<HTMLSelectElement>('agent-select');
+  picker.addEventListener('change', () => void chooseAgent(picker.value));
   api.onSkillRunEnded(ended);
   void api.headlessAgent().then((stored) => {
     agent = stored;

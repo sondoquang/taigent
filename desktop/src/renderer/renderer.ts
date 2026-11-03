@@ -29,6 +29,7 @@ import { mountMyTickets } from './my-tickets.ts';
 import { wireTerminal } from './terminal.ts';
 import { mountSetup, setupLoginChanged, setupRepoChanged } from './setup.ts';
 import { mountHeadless, renderHeadless } from './headless.ts';
+import { mountTheme } from './theme.ts';
 import { mountWiki, refreshWiki } from './wiki.ts';
 
 declare global {
@@ -172,6 +173,11 @@ function renderRepo(): void {
   select.value = state.view?.slug ?? '';
 }
 
+/** One number with its label, as in the Backlog summary and the Thay đổi overview. */
+function statCell(label: string, value: number | string, css = ''): HTMLElement {
+  return h('div', { class: `stat ${css}` }, h('strong', {}, String(value)), h('span', {}, label));
+}
+
 function renderSummary(): void {
   const summary = byId('summary');
   const view = state.view;
@@ -180,22 +186,37 @@ function renderSummary(): void {
     return;
   }
   const s = view.preview.summary;
-  const cell = (label: string, value: number | string, css = '') =>
-    h('div', { class: `stat ${css}` }, h('strong', {}, String(value)), h('span', {}, label));
+  // Review progress: one bar split by verdict, so how much of the backlog still needs a look reads at a glance.
+  const reviewable = s.approved + s.changes + s.unreviewed + s.stale;
+  const segment = (count: number, css: string) => count > 0 && h('span', { class: `meter-${css}`, style: `flex-grow: ${count}` });
+  const meter = h(
+    'div',
+    { class: 'review-meter', role: 'img', 'aria-label': `${s.approved} trên ${reviewable} mục đạt` },
+    h('span', { class: 'review-meter-label' }, h('strong', {}, String(s.approved)), ` / ${reviewable} đạt`),
+    h(
+      'span',
+      { class: 'review-meter-bar' },
+      segment(s.approved, 'approved'),
+      segment(s.changes, 'changes'),
+      segment(s.stale, 'stale'),
+      segment(s.unreviewed, 'unreviewed'),
+    ),
+  );
   summary.replaceChildren(
-    cell('Epic', s.epics),
-    cell('Story', s.stories),
-    cell('Task', s.tasks),
-    cell('Issue', s.issues),
+    statCell('Epic', s.epics),
+    statCell('Story', s.stories),
+    statCell('Task', s.tasks),
+    statCell('Issue', s.issues),
     h('div', { class: 'sep' }),
-    cell('Mới', s.new, 'new'),
-    cell('Đã đẩy', s.applied, 'applied'),
+    statCell('Mới', s.new, 'new'),
+    statCell('Đã đẩy', s.applied, 'applied'),
     h('div', { class: 'sep' }),
-    cell('Đạt', s.approved, 'approved'),
-    cell('Cần sửa', s.changes, 'changes'),
-    cell('Chưa duyệt', s.unreviewed, 'unreviewed'),
-    cell('Đã đổi sau khi duyệt', s.stale, 'stale'),
-    cell('Góp ý mở', s.openComments, 'comments'),
+    meter,
+    statCell('Đạt', s.approved, 'approved'),
+    statCell('Cần sửa', s.changes, 'changes'),
+    statCell('Chưa duyệt', s.unreviewed, 'unreviewed'),
+    statCell('Đã đổi sau khi duyệt', s.stale, 'stale'),
+    statCell('Góp ý mở', s.openComments, s.openComments > 0 ? 'comments' : ''),
     h('div', { class: 'spacer' }),
     view.validation.valid
       ? h('div', { class: 'validity ok' }, 'Manifest hợp lệ')
@@ -431,18 +452,23 @@ function renderChanges(): void {
   }
   const s = view.preview.summary;
   overview.replaceChildren(
-    h(
-      'p',
-      {},
-      h('strong', {}, view.slug),
-      ` · ${s.epics} epic, ${s.stories} story, ${s.tasks} task, ${s.issues} issue · Mới ${s.new} · Đã đẩy ${s.applied}`,
-    ),
-    h(
-      'p',
-      { class: 'muted' },
-      `Đạt ${s.approved} · Cần sửa ${s.changes} · Chưa duyệt ${s.unreviewed} · Đã đổi sau khi duyệt ${s.stale} · Góp ý mở ${s.openComments} · `,
-      view.validation.valid ? 'Manifest hợp lệ' : h('strong', { class: 'error' }, 'Manifest lỗi'),
-    ),
+    h('div', { class: 'stat overview-project' }, h('strong', {}, view.slug), h('span', {}, 'Dự án đang mở')),
+    h('div', { class: 'sep' }),
+    statCell('Epic', s.epics),
+    statCell('Story', s.stories),
+    statCell('Task', s.tasks),
+    statCell('Issue', s.issues),
+    h('div', { class: 'sep' }),
+    statCell('Mới', s.new, 'new'),
+    statCell('Đã đẩy', s.applied, 'applied'),
+    h('div', { class: 'sep' }),
+    statCell('Đạt', s.approved, 'approved'),
+    statCell('Cần sửa', s.changes, 'changes'),
+    statCell('Chưa duyệt', s.unreviewed, 'unreviewed'),
+    statCell('Đã đổi sau khi duyệt', s.stale, 'stale'),
+    statCell('Góp ý mở', s.openComments, s.openComments > 0 ? 'comments' : ''),
+    h('div', { class: 'spacer' }),
+    view.validation.valid ? h('div', { class: 'validity ok' }, 'Manifest hợp lệ') : h('div', { class: 'validity bad' }, 'Manifest lỗi'),
   );
 }
 
@@ -852,6 +878,7 @@ function wire(): void {
   });
   mountMyTickets({ api, loginKey: () => `${state.login?.loggedIn}:${state.login?.apiUrl}:${state.login?.username}`, toast, failureBlock });
   mountWiki({ api, view: () => state.view, toast, failureBlock });
+  mountTheme(api, toast);
 }
 
 async function start(): Promise<void> {

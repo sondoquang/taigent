@@ -1,7 +1,9 @@
 // Terminal steps of the desktop smoke (scripts/smoke.mjs): the panel toggles, a shell tab runs commands in the
 // repository (output, Vietnamese, colours, size after resizing the panel), closing a tab kills its process tree, the
-// quick-launch buttons start the agent in the repository (a fake `claude` put first on PATH) or show the shell's
-// error when it is missing (`omp` taken off PATH), and quitting leaves no process of the app behind.
+// + menu filters by its search box and opens each shell of the machine (on Windows also Command Prompt and, when
+// installed, Git Bash, both in the repository) and starts the agent in the repository (a fake `claude` put first on
+// PATH) or shows the shell's error when it is missing (`omp` taken off PATH), and quitting leaves no process of the
+// app behind.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -116,16 +118,28 @@ async function run(page, id, command) {
   await page.keyboard.press('Enter');
 }
 
-/** Clicks `selector`, then returns the new tab that becomes active: its id, process id and kind. */
-async function openTab(page, selector, kind) {
+/** Picks `item` in the + menu, then returns the new tab that becomes active: its id, process id and kind. */
+async function openTab(page, item, kind) {
   const before = await page.locator('.terminal-tab').count();
-  await page.click(selector);
+  await page.click('#terminal-new');
+  await page.click(`#terminal-menu ${item}`);
+  if (await page.isVisible('#terminal-menu')) throw new Error('FAILED: the + menu stays open after picking an entry');
   await page.waitForFunction((count) => document.querySelectorAll('.terminal-tab').length === count + 1, before);
   const tab = page.locator('.terminal-tab.active');
   const opened = { id: await tab.getAttribute('data-id'), pid: Number(await tab.getAttribute('data-pid')), kind: await tab.getAttribute('data-kind') };
-  if (opened.kind !== kind) throw new Error(`FAILED: ${selector} opened a ${opened.kind} tab, not ${kind}`);
+  if (opened.kind !== kind) throw new Error(`FAILED: ${item} opened a ${opened.kind} tab, not ${kind}`);
   await page.waitForFunction((tabId) => (document.querySelector(`.terminal-view[data-id="${tabId}"] .xterm-rows`)?.textContent ?? '').trim() !== '', opened.id, { timeout: 30_000 });
   return opened;
+}
+
+/** Opens shell `shell` from the + menu, runs `command` and waits for `pattern`; closes the tab. */
+async function tryShell(page, shell, command, pattern) {
+  const tab = await openTab(page, `[data-launch="shell"][data-shell="${shell}"]`, 'shell');
+  await run(page, tab.id, command);
+  const match = await waitForText(page, tab.id, pattern);
+  await page.click(`.terminal-tab[data-id="${tab.id}"] .terminal-close`);
+  await page.waitForSelector(`.terminal-tab[data-id="${tab.id}"]`, { state: 'detached' });
+  return match;
 }
 
 export async function smokeTerminal(page, { repo, shots, log, check }) {
@@ -138,7 +152,7 @@ export async function smokeTerminal(page, { repo, shots, log, check }) {
   await page.click('#terminal-toggle');
   check(await dockShown(), 'the Terminal button shows it');
 
-  const shell = await openTab(page, '#terminal-new', 'shell');
+  const shell = await openTab(page, '[data-launch="shell"]', 'shell');
   log('shell tab', JSON.stringify(shell));
   await run(page, shell.id, COMMANDS.echo);
   await waitForText(page, shell.id, 'smoke-42');
@@ -187,6 +201,28 @@ export async function smokeTerminal(page, { repo, shots, log, check }) {
   const left = await waitGone([shell.pid, ...tree.keys()]);
   check(left.length === 0, `closing the tab stopped the shell and its children (${[shell.pid, ...tree.keys()].join(', ')})`);
 
+  await page.click('#terminal-new');
+  const menuEntries = () => page.$$eval('#terminal-menu [role="menuitem"]', (items) => items.map((item) => item.dataset.shell ?? item.dataset.launch ?? item.textContent));
+  const all = await menuEntries();
+  log('+ menu', JSON.stringify(all));
+  check(['claude', 'codex', 'omp'].every((agent) => all.includes(agent)) && all.length >= 5, 'the + menu lists the shells, the agents and Cài đặt agent');
+  await page.screenshot({ path: join(shots, 'terminal-2-menu.png') });
+  await page.fill('#terminal-menu-search', 'codex');
+  check((await menuEntries()).join() === 'codex', 'the + menu search keeps only the matching entries');
+  await page.fill('#terminal-menu-search', 'cai dat');
+  check((await menuEntries()).length === 1, 'the search ignores Vietnamese diacritics (cai dat → Cài đặt agent…)');
+  await page.keyboard.press('Escape');
+  check(!(await page.isVisible('#terminal-menu')), 'Escape closes the + menu');
+  if (windows) {
+    check(all.includes('cmd'), 'Windows offers Command Prompt');
+    await tryShell(page, 'cmd', 'set /a 6*7+1000', /^1042$/m);
+    log('ok - a Command Prompt tab runs commands');
+    if (all.includes('git-bash')) {
+      const [, at] = await tryShell(page, 'git-bash', 'echo "bash-$((6*7)) in $(pwd -W)"', /bash-42 in (.+)/);
+      check(at.trim().replaceAll('/', '\\').toLowerCase() === repo.toLowerCase(), `a Git Bash tab starts in the repository (${at.trim()})`);
+    } else log('skip - Git Bash is not installed');
+  }
+
   const claude = await openTab(page, '[data-launch="claude"]', 'claude');
   const [, cwd] = await waitForText(page, claude.id, /fake-claude in (.+)/);
   check(cwd.trim().toLowerCase() === repo.toLowerCase(), `quick launch runs claude in the repository (${cwd.trim()})`);
@@ -199,7 +235,7 @@ export async function smokeTerminal(page, { repo, shots, log, check }) {
   await page.screenshot({ path: join(shots, 'terminal-2-agents.png') });
 
   // Left running for the quit check: a shell with a child process.
-  const busy = await openTab(page, '#terminal-new', 'shell');
+  const busy = await openTab(page, '[data-launch="shell"]', 'shell');
   await run(page, busy.id, COMMANDS.longRunning);
   await page.click('#terminal-hide');
   check(!(await dockShown()), 'the Ẩn button hides the panel; its tabs keep running');

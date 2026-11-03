@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, nativeTheme, protocol, session, shell } from 'electron';
 import {
   type ApplyOutcome,
   type ApplyReport,
@@ -30,7 +30,7 @@ import {
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
 import { handle, handleProject, slugFailure, trustWindow } from './ipc.ts';
 import { killChildren } from './processes.ts';
-import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, setHeadlessAgent } from './repo.ts';
+import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, setHeadlessAgent, setTheme, theme } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
@@ -109,7 +109,8 @@ function createWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     title: 'Taigent Desktop',
-    backgroundColor: '#f6f7f9',
+    // The page's paper (styles.css), so the window shows no flash of the other theme while it loads.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1f' : '#ffffff',
     show: false,
     webPreferences: {
       preload: PRELOAD,
@@ -324,6 +325,13 @@ function registerIpc(): void {
   handle(CHANNELS.installTool, async (tool: unknown) => openInstall(tool, repoRoot));
   handle(CHANNELS.headlessAgent, headlessAgent);
   handle(CHANNELS.setHeadlessAgent, async (agent: unknown) => ({ ok: true, value: await setHeadlessAgent(agent) }));
+  // nativeTheme.themeSource drives `prefers-color-scheme` in the page and the title bar, so both follow at once.
+  handle(CHANNELS.theme, theme);
+  handle(CHANNELS.setTheme, async (choice: unknown) => {
+    const value = await setTheme(choice);
+    nativeTheme.themeSource = value;
+    return { ok: true, value };
+  });
   handle(CHANNELS.runSkill, async (request: unknown) =>
     runSkill(requireRepo(), request, window!, (end) => {
       if (window && !window.isDestroyed()) window.webContents.send(CHANNELS.skillRunEnded, end);
@@ -337,12 +345,13 @@ function registerIpc(): void {
 
 app.enableSandbox();
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   protocol.handle('app', serveRenderer);
   trustWindow(() => window);
   registerIpc();
   registerTerminalIpc(requireRepo);
+  nativeTheme.themeSource = await theme();
   window = createWindow();
 });
 

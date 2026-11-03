@@ -48,6 +48,8 @@ const backlogFile = join(manifests, project, 'backlog.yaml');
 const executablePath = values.exe ? resolve(values.exe) : createRequire(import.meta.url)('electron');
 const app = await electron.launch({
   executablePath,
+  // Playwright emulates a light `prefers-color-scheme` by default; the app's theme setting must drive it instead.
+  colorScheme: null,
   args: [...(values.exe ? [] : [desktop]), `--user-data-dir=${join(work, 'user-data')}`],
   env: { ...process.env, TAIGENT_MANIFESTS_DIR: manifests, TAIGENT_RUN_SKILL_DRY_RUN: '1', PATH: await headlessPath(work, await agentPath(work)) },
   cwd: repo,
@@ -137,6 +139,27 @@ try {
   check((await page.inputValue('#project-select')) === project, 'project still open after switching sections');
   check((await page.getAttribute('#tree .node.selected', 'data-key')) === story, `${story} still selected after switching sections (j ignored outside Backlog)`);
   check((await page.textContent('.breadcrumb'))?.includes(story), `detail still shows ${story}`);
+
+  // Settings > Giao diện: Tối and Sáng switch the page (prefers-color-scheme through nativeTheme) and are saved.
+  const paperOf = () => page.evaluate(() => ({ dark: matchMedia('(prefers-color-scheme: dark)').matches, paper: getComputedStyle(document.documentElement).backgroundColor }));
+  const themeFile = join(work, 'user-data', 'settings.json');
+  await goTo(page, 'settings');
+  check(await page.isChecked('input[name="theme"][value="system"]'), 'Settings: the theme follows the system by default');
+  await page.check('input[name="theme"][value="dark"]');
+  await page.waitForFunction(() => matchMedia('(prefers-color-scheme: dark)').matches);
+  const dark = await paperOf();
+  check(dark.paper === 'rgb(30, 30, 31)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'dark', `Tối: the page turns dark and settings.json keeps it (${JSON.stringify(dark)})`);
+  await goTo(page, 'backlog');
+  await page.screenshot({ path: join(shots, 'theme-dark-backlog.png') });
+  await goTo(page, 'settings');
+  await page.screenshot({ path: join(shots, 'theme-dark-settings.png') });
+  await page.check('input[name="theme"][value="light"]');
+  await page.waitForFunction(() => !matchMedia('(prefers-color-scheme: dark)').matches);
+  const light = await paperOf();
+  check(light.paper === 'rgb(255, 255, 255)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'light', `Sáng: the page turns light and settings.json keeps it (${JSON.stringify(light)})`);
+  await page.check('input[name="theme"][value="system"]');
+  await page.waitForFunction(() => document.querySelector('input[name="theme"][value="system"]')?.checked === true);
+  await goTo(page, 'backlog');
 
   // Approve, then change the story's description as an agent would: the approval turns stale.
   await page.click('.verdict-bar [data-verdict="approved"]');

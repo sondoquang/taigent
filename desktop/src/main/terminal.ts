@@ -1,17 +1,17 @@
 // The embedded terminal's main side: one node-pty process per tab, its output forwarded to the renderer (xterm.js)
 // and its input taken from it, both over the typed channels of src/shared/api.ts. The renderer can only open a shell
-// or an agent (claude, codex, omp) in the open repository; a tab that runs a given command (kind `skill`) is opened
-// from the main process only, through `terminals.open`. Closing or cancelling a tab kills its whole process tree
-// (node-pty starts each tab's process in its own session, so outside Windows its pid leads the process group), and
-// quitting the app kills every tree (`terminals.killAll`).
+// of this machine (`shells`) or an agent (claude, codex, omp) in the open repository; a tab that runs a given command
+// (kind `skill`) is opened from the main process only, through `terminals.open`. Closing or cancelling a tab kills
+// its whole process tree (node-pty starts each tab's process in its own session, so outside Windows its pid leads the
+// process group), and quitting the app kills every tree (`terminals.killAll`).
 
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, delimiter, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { app } from 'electron';
 import type * as NodePty from 'node-pty';
 import type { IPty } from 'node-pty';
-import { CHANNELS, type Result, type TerminalAgent, type TerminalExit, type TerminalTab, TERMINAL_AGENTS } from '../shared/api.ts';
+import { CHANNELS, type Result, type TerminalAgent, type TerminalExit, type TerminalShell, type TerminalTab, TERMINAL_AGENTS } from '../shared/api.ts';
 import { appContents, handle, listen } from './ipc.ts';
 import { killTree, killTreeSync } from './processes.ts';
 
@@ -24,7 +24,8 @@ export interface TerminalCommand {
 }
 
 export type TerminalSpec =
-  | { kind: 'shell' | TerminalAgent; cwd: string }
+  | { kind: 'shell'; cwd: string; /** A TerminalShell id; the default shell when absent. */ shell?: string }
+  | { kind: TerminalAgent; cwd: string }
   | { kind: 'skill'; cwd: string; title: string; command: TerminalCommand };
 
 export interface TerminalHandle {
@@ -55,32 +56,67 @@ const loadPty = (): typeof NodePty =>
     app.isPackaged ? join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'node-pty') : 'node-pty',
   ) as typeof NodePty;
 
-/** `pwsh` on PATH, else Windows PowerShell; `$SHELL` elsewhere. */
-function resolveShell(): string {
-  if (process.platform !== 'win32') return process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh');
+// PowerShell switches its console to UTF-8 first, so native programs' output (git, the agents) shows Vietnamese.
+const POWERSHELL_UTF8 = '[Console]::InputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()';
+
+function onPath(name: string): string | undefined {
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
-    if (dir && existsSync(join(dir, 'pwsh.exe'))) return join(dir, 'pwsh.exe');
+    if (dir && existsSync(join(dir, name))) return join(dir, name);
   }
-  return join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return undefined;
+}
+
+/** `pwsh` on PATH, else Windows PowerShell; `$SHELL` elsewhere. Agents and `shellRun` commands run in it. */
+function defaultShell(): string {
+  if (process.platform !== 'win32') return process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/sh');
+  return onPath('pwsh.exe') ?? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
 
 /**
- * The shell's arguments: interactive, and with `command` (an agent, an install command) that command run first, then
- * the shell stays open (so a missing agent shows the shell's own error). PowerShell switches its console to UTF-8
- * first, so native programs' output (git, the agents) shows Vietnamese correctly.
+ * Git for Windows' `bin\bash.exe` (the launcher that sets up its environment, not `usr\bin\bash.exe` nor WSL's
+ * `System32\bash.exe`): next to the git.exe on PATH, else in its default install folders.
  */
-function shellArgs(shell: string, command: string | undefined): string[] {
-  if (process.platform === 'win32') {
-    const utf8 = '[Console]::InputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()';
-    return ['-NoLogo', '-NoExit', '-Command', command ? `${utf8}; ${command}` : utf8];
-  }
-  return command ? ['-l', '-i', '-c', `${command}; exec "$0" -l`, shell] : ['-l'];
+function gitBash(): string | undefined {
+  const git = onPath('git.exe');
+  const roots = [git && join(dirname(git), '..'), process.env.ProgramFiles && join(process.env.ProgramFiles, 'Git'), process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, 'Programs', 'Git')];
+  return roots.filter((root): root is string => !!root).map((root) => join(root, 'bin', 'bash.exe')).find((bash) => existsSync(bash));
 }
 
-/** For a `skill` tab: the shell runs `command`, then stays open for the user. */
+/** A shell a `shell` tab can run: interactive, with nothing run first. */
+interface Shell extends TerminalShell {
+  command: TerminalCommand;
+}
+
+/** The shells of this machine, the default first. Command Prompt switches its code page to UTF-8 first. */
+function shells(): Shell[] {
+  const file = defaultShell();
+  if (process.platform !== 'win32') return [{ id: 'default', label: basename(file), command: { file, args: ['-l'] } }];
+  const found: Shell[] = [
+    {
+      id: 'powershell',
+      label: basename(file).toLowerCase() === 'pwsh.exe' ? 'PowerShell 7' : 'Windows PowerShell',
+      command: { file, args: ['-NoLogo', '-NoExit', '-Command', POWERSHELL_UTF8] },
+    },
+    {
+      id: 'cmd',
+      label: 'Command Prompt',
+      command: { file: process.env.ComSpec || join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe'), args: ['/K', 'chcp 65001>nul'] },
+    },
+  ];
+  const bash = gitBash();
+  // CHERE_INVOKING keeps the login shell in the tab's folder instead of going to the home folder.
+  if (bash) found.push({ id: 'git-bash', label: 'Git Bash', command: { file: bash, args: ['--login', '-i'], env: { CHERE_INVOKING: '1' } } });
+  return found;
+}
+
+/**
+ * The default shell running `command` (an agent, an install command) first, then staying open (so a missing agent
+ * shows the shell's own error).
+ */
 export function shellRun(command: string): TerminalCommand {
-  const shell = resolveShell();
-  return { file: shell, args: shellArgs(shell, command) };
+  const file = defaultShell();
+  if (process.platform === 'win32') return { file, args: ['-NoLogo', '-NoExit', '-Command', `${POWERSHELL_UTF8}; ${command}`] };
+  return { file, args: ['-l', '-i', '-c', `${command}; exec "$0" -l`, file] };
 }
 
 /** Where the main process sends tab events: the app window. */
@@ -99,19 +135,27 @@ export class TerminalManager {
     this.sink = sink;
   }
 
-  /** Opens a tab; the renderer shows the terminal panel and selects the tab. */
+  /** Opens a tab; the renderer shows the terminal panel and selects the tab. Throws for a shell this machine lacks. */
   open(spec: TerminalSpec): TerminalHandle {
-    const agent = spec.kind === 'shell' || spec.kind === 'skill' ? undefined : spec.kind;
-    const shell = spec.kind === 'skill' ? undefined : resolveShell();
-    const file = spec.kind === 'skill' ? spec.command.file : shell!;
-    const args = spec.kind === 'skill' ? spec.command.args : shellArgs(shell!, agent);
-    const env: Record<string, string | undefined> = { ...process.env, COLORTERM: 'truecolor' };
+    let command: TerminalCommand;
+    let title: string;
+    let shell: string | undefined;
+    if (spec.kind === 'skill') ({ command, title } = spec);
+    else if (spec.kind === 'shell') {
+      const offered = shells();
+      const picked = spec.shell === undefined ? offered[0] : offered.find((candidate) => candidate.id === spec.shell);
+      if (!picked) throw new Error(`Máy này không có shell ${spec.shell}.`);
+      ({ command, id: shell } = picked);
+      title = basename(command.file).replace(/\.exe$/i, '');
+    } else {
+      command = shellRun(spec.kind);
+      title = spec.kind;
+    }
+    const env: Record<string, string | undefined> = { ...process.env, COLORTERM: 'truecolor', ...command.env };
     if (process.platform !== 'win32') env.TERM = 'xterm-256color';
-    if (spec.kind === 'skill') Object.assign(env, spec.command.env);
-    const pty = loadPty().spawn(file, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: spec.cwd, env });
+    const pty = loadPty().spawn(command.file, command.args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: spec.cwd, env });
     const id = this.nextId++;
-    const title = spec.kind === 'skill' ? spec.title : (agent ?? basename(shell!).replace(/\.exe$/i, ''));
-    const tab: TerminalTab = { id, kind: spec.kind, title, cwd: spec.cwd, pid: pty.pid };
+    const tab: TerminalTab = { id, kind: spec.kind, title, cwd: spec.cwd, pid: pty.pid, ...(shell ? { shell } : {}) };
     const exited = Promise.withResolvers<TerminalExit>();
     const session: Session = { tab, pty, cancelled: false, pending: '', flushing: false, listeners: new Set(), exited: exited.promise };
     this.sessions.set(id, session);
@@ -207,8 +251,9 @@ export class TerminalManager {
 export const terminals = new TerminalManager();
 
 /**
- * The renderer side of the terminal (through the sender-checked channels of ipc.ts): only shells and agents, always in
- * the open repository. Output and exits go to the window, while it exists (a tab may exit during quit).
+ * The renderer side of the terminal (through the sender-checked channels of ipc.ts): only this machine's shells and
+ * the agents, always in the open repository. Output and exits go to the window, while it exists (a tab may exit
+ * during quit).
  */
 export function registerTerminalIpc(repo: () => string): void {
   terminals.attach({
@@ -216,11 +261,17 @@ export function registerTerminalIpc(repo: () => string): void {
     data: (id, data) => appContents()?.send(CHANNELS.terminalData, id, data),
     exit: (id, exit) => appContents()?.send(CHANNELS.terminalExit, id, exit),
   });
+  handle(CHANNELS.terminalShells, async (): Promise<TerminalShell[]> => shells().map(({ id, label }) => ({ id, label })));
   handle(
     CHANNELS.terminalOpen,
-    async (kind: unknown): Promise<Result<TerminalTab>> => {
-      if (kind !== 'shell' && !TERMINAL_AGENTS.some((agent) => agent === kind)) throw new Error(`Loại tab không hợp lệ: ${String(kind)}`);
-      return { ok: true, value: terminals.open({ kind: kind as 'shell' | TerminalAgent, cwd: repo() }).tab };
+    async (kind: unknown, shell: unknown): Promise<Result<TerminalTab>> => {
+      if (kind === 'shell') {
+        if (shell !== undefined && typeof shell !== 'string') throw new Error(`Shell không hợp lệ: ${String(shell)}`);
+        return { ok: true, value: terminals.open({ kind, cwd: repo(), ...(shell === undefined ? {} : { shell }) }).tab };
+      }
+      const agent = TERMINAL_AGENTS.find((candidate) => candidate === kind);
+      if (!agent) throw new Error(`Loại tab không hợp lệ: ${String(kind)}`);
+      return { ok: true, value: terminals.open({ kind: agent, cwd: repo() }).tab };
     },
     'Không mở được terminal',
   );
