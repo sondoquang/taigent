@@ -9,7 +9,7 @@ import {
   type LegacyStoryCreate,
   type UnknownIssueValue,
 } from './manifest/backlog.ts';
-import { storyDescription } from './story-template.ts';
+import { differingFields, keyOf, manifestManagedValues, remoteManagedValues, type ManagedField, type ManifestItem } from './managed.ts';
 import { summarize, type Action, type PlanSummary } from './operations.ts';
 import {
   TaigaError,
@@ -183,11 +183,6 @@ export function describePlanOperation(op: Operation): string {
   }
 }
 
-/** The manifest key of an item, from its first `src:` tag (Taiga lowercases tags; keys are uppercase). */
-function keyOf(item: TaigaItem): string | undefined {
-  return item.tags.find((t) => t.startsWith('src:'))?.slice('src:'.length).toUpperCase();
-}
-
 export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   const remoteItems: Record<ItemType, TaigaItem[]> = { epic: remote.epics, story: remote.stories, task: remote.tasks, issue: remote.issues };
   const bySrcTag = {} as Record<ItemType, Map<string, TaigaItem>>;
@@ -206,89 +201,90 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
   const legacyCreates: LegacyStoryCreate[] = [];
   const unknownIssueValues: UnknownIssueValue[] = [];
 
-  type Spec = { key: string; subject: string; tags: string[]; customAttributes: Record<string, AttributeValue> };
-
   /**
-   * Plans create/update/skip for one manifest item and returns its Taiga counterpart, if any. `parent`: the key of
-   * the epic (story) or story (task) a new item belongs to; `moved` tells whether an existing item has to move to
-   * another parent (tasks); `values`: an issue's type, severity and priority ids.
+   * Plans create/update/skip for one manifest item from its managed values and those of its Taiga counterpart.
+   * Returns the counterpart, if any, and the fields where it differs. `values`: an issue's type, severity and
+   * priority ids.
    */
-  function reconcile(
-    type: ItemType,
-    spec: Spec,
-    description: string,
-    { parent, moved, values }: { parent?: string; moved?: (existing: TaigaItem) => FieldChanges['parent']; values?: Record<IssueValueField, number> } = {},
-  ): TaigaItem | undefined {
-    const tag = srcTag(spec.key);
+  function reconcile(entry: ManifestItem, values?: Record<IssueValueField, number>): { existing?: TaigaItem; differing?: ManagedField[] } {
+    const { type } = entry;
+    const { key } = entry.item;
+    const tag = srcTag(key);
     manifestTags[type].add(tag);
-    const tags = [...new Set([...spec.tags.map((t) => t.toLowerCase()), tag])];
+    const want = manifestManagedValues(entry);
     const defined = remote.customAttributes[type];
-    const attributes = Object.entries(spec.customAttributes).flatMap(([name, value]) => {
-      const attribute = defined.find((a) => a.name === name);
-      if (attribute) return [{ name, id: attribute.id, value }];
+    const declared = Object.keys(want.custom_attributes).filter((name) => {
+      if (defined.some((a) => a.name === name)) return true;
       const names = defined.map((a) => `"${a.name}"`).join(', ') || 'none';
-      unknownAttributes.push(`  ${spec.key} (${type}): "${name}"; ${type} attributes on Taiga: ${names}`);
-      return [];
+      unknownAttributes.push(`  ${key} (${type}): "${name}"; ${type} attributes on Taiga: ${names}`);
+      return false;
     });
     const existing = bySrcTag[type].get(tag);
     if (!existing) {
+      const parent = entry.type === 'story' ? entry.epic : entry.type === 'task' ? entry.story : undefined;
       operations.push({
         action: 'create',
         type,
-        key: spec.key,
+        key,
         ...(parent && { parent }),
-        fields: { subject: spec.subject, description, tags, ...values },
-        ...(attributes.length > 0 && { custom_attributes: spec.customAttributes }),
+        fields: { subject: want.subject, description: want.description, tags: [...new Set([...want.tags, tag])], ...values },
+        ...(declared.length > 0 && { custom_attributes: entry.item.customAttributes }),
       });
-      return undefined;
+      return {};
     }
+    const have = remoteManagedValues(type, existing, remote, declared);
+    const differing = differingFields(want, have);
     const changes: FieldChanges = {};
-    if (existing.subject !== spec.subject) changes.subject = { from: existing.subject, to: spec.subject };
-    if (existing.description !== description) changes.description = { from: existing.description, to: description };
-    const missingTags = tags.filter((t) => !existing.tags.includes(t));
-    if (missingTags.length > 0) changes.tags = { from: existing.tags, to: [...existing.tags, ...missingTags] };
-    for (const field of values ? ISSUE_VALUE_FIELDS : []) {
-      const from = (existing as TaigaIssue)[field];
-      const to = values![field];
-      if (from === to) continue;
-      const name = (id: number | null) => remote.issueValues[field].find((v) => v.id === id)?.name ?? null;
-      changes[field] = { from, to, names: { from: name(from), to: name(to)! } };
-    }
-    if (attributes.length > 0) {
-      const current = remote.attributeValues[type].get(existing.id);
-      if (!current) throw new Error(`planner: custom attribute values of ${type} ${spec.key} were not read`);
-      const from: Record<string, unknown> = {};
-      const to: Record<string, AttributeValue> = {};
-      for (const { name, id, value } of attributes) {
-        const now = current.values[String(id)];
-        if (JSON.stringify(now) !== JSON.stringify(value)) {
-          from[name] = now ?? null;
-          to[name] = value;
+    for (const field of differing) {
+      switch (field) {
+        case 'subject':
+        case 'description':
+          changes[field] = { from: existing[field], to: want[field] };
+          break;
+        case 'tags':
+          changes.tags = { from: existing.tags, to: [...existing.tags, ...want.tags.filter((t) => !existing.tags.includes(t))] };
+          break;
+        case 'type':
+        case 'severity':
+        case 'priority':
+          changes[field] = { from: (existing as TaigaIssue)[field], to: values![field], names: { from: have[field] ?? null, to: want[field]! } };
+          break;
+        case 'custom_attributes': {
+          const from: Record<string, unknown> = {};
+          const to: Record<string, AttributeValue> = {};
+          for (const name of declared) {
+            if (JSON.stringify(have.custom_attributes[name]) === JSON.stringify(want.custom_attributes[name])) continue;
+            from[name] = have.custom_attributes[name];
+            to[name] = entry.item.customAttributes[name]!;
+          }
+          if (Object.keys(to).length > 0) changes.custom_attributes = { from, to, version: remote.attributeValues[type].get(existing.id)!.version };
+          break;
         }
+        case 'story':
+          changes.parent = { from: have.story ?? null, to: want.story! };
+          break;
+        case 'epics':
+          // Planned as a link operation by the caller.
+          break;
       }
-      if (Object.keys(to).length > 0) changes.custom_attributes = { from, to, version: current.version };
     }
-    const parentChange = moved?.(existing);
-    if (parentChange) changes.parent = parentChange;
     const { id, ref, version } = existing;
     operations.push(
       Object.keys(changes).length > 0
-        ? { action: 'update', type, key: spec.key, id, ref, version, changes }
-        : { action: 'skip', type, key: spec.key, id, ref, version },
+        ? { action: 'update', type, key, id, ref, version, changes }
+        : { action: 'skip', type, key, id, ref, version },
     );
-    return existing;
+    return { existing, differing };
   }
 
   // Dependency order: each epic, then each of its stories followed by its epic link and its tasks.
-  const storiesById = new Map(remote.stories.map((story) => [story.id, story]));
   const staleLinks: StaleLink[] = [];
   for (const [e, epic] of backlog.epics.entries()) {
-    const remoteEpic = reconcile('epic', epic, epic.description);
+    const { existing: remoteEpic } = reconcile({ type: 'epic', item: epic });
     for (const [s, story] of epic.stories.entries()) {
-      const remoteStory = reconcile('story', story, storyDescription(story), { parent: epic.key });
+      const { existing: remoteStory, differing } = reconcile({ type: 'story', item: story, epic: epic.key });
       if (!remoteStory && story.format === 'legacy') legacyCreates.push({ key: story.key, path: storyPath(e, s) });
-      const linked = remoteEpic && remoteStory && remote.epicStories.get(remoteEpic.id)?.includes(remoteStory.id);
-      if (!linked) operations.push({ action: 'link', type: 'story', key: story.key, epic: epic.key });
+      if (!differing || differing.includes('epics')) operations.push({ action: 'link', type: 'story', key: story.key, epic: epic.key });
       // Links of this story to other taigent-managed epics (it moved epics in the manifest) are reported, never removed.
       for (const other of remote.epics) {
         const otherKey = keyOf(other);
@@ -296,13 +292,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
         if (!remote.epicStories.get(other.id)?.includes(remoteStory.id)) continue;
         staleLinks.push({ key: story.key, id: remoteStory.id, ref: remoteStory.ref, epic: otherKey, epicId: other.id, epicRef: other.ref });
       }
-      const inOtherStory = (task: TaigaItem): FieldChanges['parent'] => {
-        const current = (task as TaigaTask).userStory;
-        if (remoteStory && current === remoteStory.id) return undefined;
-        const from = current === null ? undefined : storiesById.get(current);
-        return { from: (from && keyOf(from)) ?? null, to: story.key };
-      };
-      for (const task of story.tasks) reconcile('task', task, task.description, { parent: story.key, moved: inOtherStory });
+      for (const task of story.tasks) reconcile({ type: 'task', item: task, story: story.key });
     }
   }
 
@@ -316,7 +306,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState): Plan {
       else unknownIssueValues.push({ key: issue.key, path: `${issuePath(i)}.${field}`, field, value: issue[field], names: defined.map((v) => v.name) });
     }
     // An issue with an unknown value is not planned: the plan fails below anyway.
-    if (ISSUE_VALUE_FIELDS.every((field) => values[field] !== undefined)) reconcile('issue', issue, issue.description, { values: values as Record<IssueValueField, number> });
+    if (ISSUE_VALUE_FIELDS.every((field) => values[field] !== undefined)) reconcile({ type: 'issue', item: issue }, values as Record<IssueValueField, number>);
   }
 
   if (legacyCreates.length > 0) throw new LegacyStoryCreateError(legacyCreates);
