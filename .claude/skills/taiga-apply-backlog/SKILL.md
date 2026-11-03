@@ -2,7 +2,7 @@
 name: taiga-apply-backlog
 description: "Show the Taiga plan of a backlog manifest, then apply it after you confirm. Carries the BA's edits of taiga/<slug>/preview.md into the manifest first, when that file exists."
 disable-model-invocation: true
-allowed-tools: Bash(npx taigent validate *) Bash(npx taigent preview *) Bash(npx taigent plan *) Bash(npx taigent apply *) PowerShell(npx taigent validate *) PowerShell(npx taigent preview *) PowerShell(npx taigent plan *) PowerShell(npx taigent apply *)
+allowed-tools: Bash(npx taigent validate *) Bash(npx taigent preview *) Bash(npx taigent plan *) Bash(npx taigent apply *) Bash(npx taigent pull *) PowerShell(npx taigent validate *) PowerShell(npx taigent preview *) PowerShell(npx taigent plan *) PowerShell(npx taigent apply *) PowerShell(npx taigent pull *)
 ---
 
 # Taiga apply backlog
@@ -60,6 +60,7 @@ Run `npx taigent plan --project <slug>`.
 - **Exit 3**: there are changes. Go to step 4.
 - **Exit 0**: Taiga already matches the manifest. Say so and stop.
 - **Exit 4**: the manifest breaks a convention. Show the problems, suggest `taiga-plan-backlog` (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`) to fix them, and stop.
+- **Exit 6**: some items are blocked (changed on Taiga since taigent last wrote them). Never run `apply --yes` while plan has blocked items. Show the `blocked` list (`npx taigent plan --project <slug> --json`: each item's `kind` and `fields`) and settle every item with the user as `taiga-plan-backlog` step 3 does: `remote-edit` → `npx taigent pull --project <slug> --key <KEY>` (Taiga wins), or `--keep-manifest` when the user deliberately keeps the manifest's values; `conflict` → merge with the user into `backlog.yaml`, then `pull --key <KEY> --keep-manifest`; `unknown` (the first plan after upgrading taigent shows earlier items that differ from Taiga this way; explain it once for the group) → `npx taigent pull --project <slug>`. On pull exit 4 (kind `pull`), rewrite the item from `error.description` in the user story format, pull it with `--keep-manifest`, and send it back to review instead of applying. Then return to step 3.
 - **Exit 2 or 5**: show the error (missing variable, login refused, unknown project, Taiga unreachable) and stop. For a missing `TAIGA_*` variable or a refused login, name `taiga-setup` as the fix; for an unknown project, `taiga-bootstrap-project`.
 
 ## 4. Show the plan and ask
@@ -79,6 +80,7 @@ After the confirmation:
 
 Done when apply exits 0.
 
+- **Exit 6, blocked**: an item was changed on Taiga after the plan; nothing was written. Settle it as in step 3 and return to step 3.
 - **Exit 5, conflict**: an item changed on Taiga during apply; nothing was overwritten. Show the message and return to step 3.
 - **Other exit 5**: show the message. Apply resumes where it stopped, so the user can re-run this skill once the cause is fixed.
 

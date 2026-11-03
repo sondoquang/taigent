@@ -3,7 +3,7 @@ name: prd-to-taiga
 description: "Turns a PRD (GitHub issue, file or pasted text) into the Taiga backlog manifest through taiga-plan-backlog, summarises the stories with the PRD user story each one comes from, and on request writes taiga/<slug>/preview.md for the BA to read and edit before taiga-apply-backlog. Files only: never applies to Taiga."
 disable-model-invocation: true
 argument-hint: "<PRD: #issue | path | text> [slug]"
-allowed-tools: Skill(taiga-plan-backlog) Bash(gh issue view *) Bash(npx taigent validate *) Bash(npx taigent plan *) Bash(npx taigent preview *) PowerShell(gh issue view *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) PowerShell(npx taigent preview *) mcp__taiga__listProjects mcp__taiga__listEpics mcp__taiga__getEpic mcp__taiga__listUserStories mcp__taiga__getUserStory
+allowed-tools: Skill(taiga-plan-backlog) Bash(gh issue view *) Bash(npx taigent validate *) Bash(npx taigent plan *) Bash(npx taigent preview *) Bash(npx taigent snapshot *) Bash(npx taigent adopt *) Bash(npx taigent pull *) PowerShell(gh issue view *) PowerShell(npx taigent validate *) PowerShell(npx taigent plan *) PowerShell(npx taigent preview *) PowerShell(npx taigent snapshot *) PowerShell(npx taigent adopt *) PowerShell(npx taigent pull *) mcp__taiga__listProjects
 ---
 
 # PRD to Taiga

@@ -13,11 +13,17 @@
 
 Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng để đọc, tra cứu, báo cáo và comment.
 
+**Taiga là nguồn sự thật; manifest là bản nháp** của những gì chưa apply
+([ADR 0004](../adr/0004-adopt-existing-taiga-projects.md)). Ai đó sửa item trên Taiga thì giá trị trên Taiga thắng:
+`taigent pull` ghi lại vào `backlog.yaml`, không bao giờ âm thầm ghi đè Taiga.
+
 1. **Plan (chỉ ghi file).** Agent đọc spec/PRD rồi viết hoặc cập nhật manifest trong `taiga/<slug>/`
    (`project.yaml`, `backlog.yaml`, `docs.yaml`).
    - Sửa manifest hiện có, giữ nguyên `key` cũ. Không viết lại từ đầu.
-   - Có thể đọc Taiga để tránh tạo trùng việc đã có: `taigent plan --project <slug> --json` (chỉ đọc) cho các item
-     đã có tag `src:`, và tool MCP đọc cho việc người khác tạo tay.
+   - Đọc Taiga để tránh tạo trùng việc đã có: `taigent snapshot --project <slug>` ghi toàn bộ epic và story, task,
+     issue đang mở (cả item tạo tay) vào `taiga/<slug>/snapshot.json` (không commit), và
+     `taigent plan --project <slug> --json` (chỉ đọc) cho các item đã có tag `src:`. Item tạo tay mà spec đụng tới
+     chỉ vào manifest qua `taigent adopt`, sau khi người dùng xác nhận **từng item** (§5).
    - Kết thúc bằng `taigent validate --project <slug>`. Phải ra exit 0.
 2. **Review.** Business Analyst / Product Owner duyệt backlog trước khi apply:
    - **Taigent Desktop** (`docs/desktop.md`) hoặc `taigent preview --project <slug>` (offline, in một trang Markdown
@@ -45,7 +51,10 @@ toàn: item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không
 Item bị sửa trên Taiga sau lần apply trước (remote edit), bị sửa khác nhau ở cả hai bên (conflict), hoặc chưa có
 baseline trong `state.json` mà khác manifest (unknown) thì bị chặn: `plan` liệt kê chúng kèm giá trị từng bên và thoát
 exit 6, `apply --yes` thoát exit 6 và không ghi gì (`docs/cli.md` §Baseline and remote edits). Item được adopt theo
-`ref` thì không bị chặn: chính lần adopt ghi baseline đầu tiên của nó.
+`ref` thì không bị chặn: chính lần adopt ghi baseline đầu tiên của nó. Agent không chạy `apply --yes` khi còn item bị
+chặn; mỗi item được gỡ bằng `taigent pull` (lấy giá trị Taiga vào manifest), hoặc gộp với người dùng rồi
+`pull --keep-manifest` (conflict), hoặc `--keep-manifest` khi người dùng chủ ý giữ manifest. Lần `plan` đầu sau khi
+nâng cấp hiện các item apply trước đây mà khác Taiga là `unknown`.
 
 `taigent validate` kiểm cả `review.yaml` (khi có):
 
@@ -394,7 +403,11 @@ Slug chuẩn:
   trang wiki.
 - `description` của attachment ghi ngắn gọn nội dung và nguồn (ví dụ `Luồng đăng nhập, bản 2026-10`).
 
-## 10. Tool MCP bị cấm
+## 10. Lệnh được phép và tool MCP bị cấm
+
+Lệnh `taigent` skill được dùng (allowlist của skill và wrapper headless): `validate`, `preview`, `plan`, `snapshot`
+(chỉ đọc Taiga, chỉ ghi `snapshot.json`), `adopt` và `pull` (chỉ đọc Taiga, chỉ ghi file local), `tickets`, `status`,
+`comment`, và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi người dùng đồng ý (§1).
 
 Các tool sau của `taiga-mcp-server@1.9.20` đang hỏng hoặc nguy hiểm. Agent **không được gọi** chúng; skill và wrapper
 headless không đưa chúng vào allowlist.
