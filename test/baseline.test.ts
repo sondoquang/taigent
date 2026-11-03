@@ -241,5 +241,5 @@ test('status, assignee, points and tags without a prefix changed on Taiga never 
   assert.equal(plan.code, 0, plan.stderr);
   const json = plan.json<Plan>();
   assert.deepEqual(json.blocked, []);
-  assert.deepEqual(json.summary, { create: 0, update: 0, link: 0, skip: 3 });
+  assert.deepEqual(json.summary, { create: 0, update: 0, adopt: 0, link: 0, skip: 3 });
 });

@@ -2,6 +2,7 @@
 
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
 import {
+  epicPath,
   issuePath,
   storyPath,
   type AttributeValue,
@@ -49,7 +50,7 @@ export interface RemoteState {
   issues: TaigaIssue[];
   /** The project's issue types, severities and priorities (read only when the backlog has issues). */
   issueValues: Record<IssueValueField, readonly TaigaIssueValue[]>;
-  /** Ids of the user stories linked to each existing epic that carries a `src:` tag (`related_userstories`). */
+  /** Ids of the user stories linked to each epic that carries a `src:` tag or that the backlog adopts by `ref` (`related_userstories`). */
   epicStories: ReadonlyMap<number, readonly number[]>;
   /** Custom attributes defined on the project, per item type. */
   customAttributes: Record<ItemType, readonly TaigaCustomAttribute[]>;
@@ -97,11 +98,16 @@ export type Operation =
   /** `parent`: key of the epic (story) or story (task) the new item belongs to. */
   | { action: 'create'; type: ItemType; key: string; parent?: string; fields: ItemFields; custom_attributes?: Record<string, AttributeValue> }
   | { action: 'update'; type: ItemType; key: string; id: number; ref: number; version: number; changes: FieldChanges }
+  /**
+   * Takes over the hand-made item the manifest's `ref` names (no item carries `src:<key>` yet): `changes.tags` adds
+   * `src:<key>`; the other changes are content updates, as in `update`.
+   */
+  | { action: 'adopt'; type: ItemType; key: string; id: number; ref: number; version: number; changes: FieldChanges }
   | { action: 'link'; type: 'story'; key: string; epic: string }
   | { action: 'skip'; type: ItemType; key: string; id: number; ref: number; version: number };
 
 /** The actions of a backlog plan. */
-export const PLAN_ACTIONS = ['create', 'update', 'link', 'skip'] as const;
+export const PLAN_ACTIONS = ['create', 'update', 'adopt', 'link', 'skip'] as const;
 
 /** An item tagged `src:<key>` on Taiga whose key is no longer in the manifest. Reported, never deleted. */
 export interface Orphan {
@@ -151,12 +157,26 @@ export interface BlockedItem {
   fields: Partial<Record<ManagedField, BlockedField>>;
 }
 
+/**
+ * A hand-made item (no `src:` tag, adopted by no backlog item) under a backlog item on Taiga: a story linked to a
+ * manifest epic, or a task in a manifest story. Reported, never touched: its content and links stay as they are.
+ */
+export interface HandMadeChild {
+  type: 'story' | 'task';
+  id: number;
+  ref: number;
+  subject: string;
+  /** Key of the backlog item it is under: the epic (story) or story (task). */
+  parent: string;
+}
+
 export interface Plan extends PlanSummary<Action> {
   project: PlanProject;
   operations: Operation[];
   orphans: Orphan[];
   staleLinks: StaleLink[];
   blocked: BlockedItem[];
+  handMadeChildren: HandMadeChild[];
 }
 
 /**
@@ -166,6 +186,27 @@ export interface Plan extends PlanSummary<Action> {
 export interface PlannedBacklog {
   plan: Plan;
   baselines: Map<string, ManagedValues>;
+}
+
+/** A manifest `ref` that names no item the backlog item can be or adopt; `path` locates the `ref` in backlog.yaml. */
+export interface RefMismatch {
+  key: string;
+  path: string;
+  message: string;
+}
+
+/**
+ * Backlog items whose `ref` does not match Taiga: the item tagged `src:<key>` has another ref, or the ref names no
+ * item, an item of another type, or one tagged with another key. The caller reports them as manifest issues.
+ */
+export class RefMismatchError extends Error {
+  readonly mismatches: readonly RefMismatch[];
+
+  constructor(mismatches: readonly RefMismatch[]) {
+    super(mismatches.map((mismatch) => mismatch.message).join('; '));
+    this.name = 'RefMismatchError';
+    this.mismatches = mismatches;
+  }
 }
 
 /**
@@ -210,7 +251,8 @@ export function describePlanOperation(op: Operation): string {
       const attributes = op.custom_attributes ? `  [custom attributes ${formatAttributes({}, op.custom_attributes)}]` : '';
       return `create ${op.type} ${op.key}  "${op.fields.subject}"${op.parent ? `  (in ${op.type === 'task' ? 'story' : 'epic'} ${op.parent})` : ''}${attributes}`;
     }
-    case 'update': {
+    case 'update':
+    case 'adopt': {
       const { custom_attributes: changed, parent } = op.changes;
       const attributes = changed ? `  [custom attributes ${formatAttributes(changed.from, changed.to)}]` : '';
       const fields = Object.keys(op.changes).map((field) => {
@@ -218,7 +260,8 @@ export function describePlanOperation(op: Operation): string {
         const value = (ISSUE_VALUE_FIELDS as readonly string[]).includes(field) ? op.changes[field as IssueValueField] : undefined;
         return value ? `${field} (${value.names.from ?? 'none'} -> ${value.names.to})` : field;
       });
-      return `update ${op.type} ${op.key}  (#${op.ref}, id ${op.id}): ${fields.join(', ')}${attributes}`;
+      const title = op.action === 'adopt' ? `adopt  ${op.type} ${op.key}  (hand-made #${op.ref}, id ${op.id})` : `update ${op.type} ${op.key}  (#${op.ref}, id ${op.id})`;
+      return `${title}: ${fields.join(', ')}${attributes}`;
     }
     case 'link':
       return `link   story ${op.key} -> epic ${op.epic}`;
@@ -227,6 +270,8 @@ export function describePlanOperation(op: Operation): string {
   }
 }
 
+/** How messages name each item type. */
+const ITEM_WHAT: Record<ItemType, string> = { epic: 'an epic', story: 'a user story', task: 'a task', issue: 'an issue' };
 
 /** `state`: the items of state.json; an entry's baseline counts only for the Taiga item of its type and id. */
 export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly<Record<string, StateEntry>> = {}): PlannedBacklog {
@@ -241,6 +286,47 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
       }
     }
   }
+
+  // Backlog items that adopt a hand-made item by `ref` (no item carries their `src:<key>` tag yet), resolved before
+  // anything is planned: a `ref` naming neither the tagged item nor an untagged item of the same type fails the plan.
+  const byRef = new Map<number, { type: ItemType; item: TaigaItem }>();
+  for (const type of ITEM_TYPES) for (const item of remoteItems[type]) byRef.set(item.ref, { type, item });
+  type RefEntry = { type: ItemType; spec: { key: string; ref?: number }; path: string };
+  const refEntries: RefEntry[] = [
+    ...backlog.epics.flatMap((epic, e): RefEntry[] => [
+      { type: 'epic', spec: epic, path: epicPath(e) },
+      ...epic.stories.flatMap((story, s): RefEntry[] => [
+        { type: 'story', spec: story, path: storyPath(e, s) },
+        ...story.tasks.map((task, t): RefEntry => ({ type: 'task', spec: task, path: `${storyPath(e, s)}.tasks[${t}]` })),
+      ]),
+    ]),
+    ...backlog.issues.map((issue, i): RefEntry => ({ type: 'issue', spec: issue, path: issuePath(i) })),
+  ];
+  const adopted = new Map<string, TaigaItem>();
+  const adoptedKeys = new Map<TaigaItem, string>();
+  const refMismatches: RefMismatch[] = [];
+  for (const { type, spec, path } of refEntries) {
+    if (spec.ref === undefined) continue;
+    const tagged = bySrcTag[type].get(srcTag(spec.key));
+    if (tagged?.ref === spec.ref) continue;
+    const found = byRef.get(spec.ref);
+    const foundKey = found && keyOf(found.item);
+    let problem: string;
+    if (tagged) problem = `${spec.key} is #${tagged.ref} on Taiga (tagged ${srcTag(spec.key)}), not #${spec.ref}`;
+    else if (!found) problem = `no epic, user story, task or issue #${spec.ref} in project ${remote.project.slug}`;
+    else if (found.type !== type) problem = `#${spec.ref} is ${ITEM_WHAT[found.type]} on Taiga, not ${ITEM_WHAT[type]}`;
+    else if (foundKey !== undefined) problem = `#${spec.ref} already carries src:${foundKey.toLowerCase()} (backlog item ${foundKey}); one Taiga item is never bound to two backlog items`;
+    else {
+      adopted.set(spec.key, found.item);
+      adoptedKeys.set(found.item, spec.key);
+      continue;
+    }
+    refMismatches.push({ key: spec.key, path: `${path}.ref`, message: `${spec.key}: ${problem}` });
+  }
+  if (refMismatches.length > 0) throw new RefMismatchError(refMismatches);
+  /** The key of the backlog item a Taiga item is: its `src:` tag, or the backlog item adopting it; none: hand-made. */
+  const backlogKey = (item: TaigaItem) => keyOf(item) ?? adoptedKeys.get(item);
+
   const manifestTags = Object.fromEntries(ITEM_TYPES.map((type) => [type, new Set<string>()])) as Record<ItemType, Set<string>>;
   const operations: Operation[] = [];
   const unknownAttributes: string[] = [];
@@ -250,9 +336,9 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
   const baselines = new Map<string, ManagedValues>();
 
   /**
-   * Plans create/update/skip for one manifest item from its managed values, those of its Taiga counterpart and its
-   * baseline, or blocks it. Returns the counterpart, if any, and the fields to write (none when blocked).
-   * `values`: an issue's type, severity and priority ids.
+   * Plans create/update/adopt/skip for one manifest item from its managed values, those of its Taiga counterpart
+   * (tagged `src:<key>`, or adopted by `ref`) and its baseline, or blocks it. Returns the counterpart, if any, and the
+   * fields to write (none when blocked). `values`: an issue's type, severity and priority ids.
    */
   function reconcile(entry: ManifestItem, values?: Record<IssueValueField, number>): { existing?: TaigaItem; differing?: ManagedField[] } {
     const { type } = entry;
@@ -267,7 +353,8 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
       unknownAttributes.push(`  ${key} (${type}): "${name}"; ${type} attributes on Taiga: ${names}`);
       return false;
     });
-    const existing = bySrcTag[type].get(tag);
+    const tagged = bySrcTag[type].get(tag);
+    const existing = tagged ?? adopted.get(key);
     if (!existing) {
       const parent = entry.type === 'story' ? entry.epic : entry.type === 'task' ? entry.story : undefined;
       operations.push({
@@ -282,13 +369,15 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
       baselines.set(key, entry.type === 'story' ? { ...want, epics: [] } : want);
       return {};
     }
-    const have = remoteManagedValues(type, existing, remote, declared);
+    const have = remoteManagedValues(type, existing, remote, declared, backlogKey);
     const differing = differingFields(want, have);
     const recorded = state[key];
     const baseline = recorded?.type === type && recorded.id === existing.id ? recorded.baseline : undefined;
     let kind: BlockedKind | undefined;
     let fields: ManagedField[] = differing;
-    if (!baseline) {
+    if (!tagged) {
+      // Adopting: the manifest takes over the hand-made item, and the adopt sets its first baseline.
+    } else if (!baseline) {
       if (differing.length > 0) kind = 'unknown';
     } else {
       const remoteEdits = remoteEditedFields(baseline, have, want);
@@ -336,33 +425,43 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
           break;
       }
     }
+    // Adopting adds the identity tag; the rest are the content updates, if any.
+    if (!tagged) changes.tags = { from: existing.tags, to: [...(changes.tags?.to ?? existing.tags), tag] };
     const { id, ref, version } = existing;
-    operations.push(
-      Object.keys(changes).length > 0
-        ? { action: 'update', type, key, id, ref, version, changes }
-        : { action: 'skip', type, key, id, ref, version },
-    );
+    if (!tagged) operations.push({ action: 'adopt', type, key, id, ref, version, changes });
+    else if (Object.keys(changes).length > 0) operations.push({ action: 'update', type, key, id, ref, version, changes });
+    else operations.push({ action: 'skip', type, key, id, ref, version });
     // What Taiga holds once the changes are written: tags are only added; a story's links change by link operations.
     baselines.set(key, differing.length === 0 ? have : { ...want, tags: [...new Set([...have.tags, ...want.tags])], ...(have.epics && { epics: have.epics }) });
     return { existing, differing };
   }
 
-  // Dependency order: each epic, then each of its stories followed by its epic link and its tasks.
+  // Dependency order: each epic, then each of its stories followed by its epic link and its tasks. Hand-made stories
+  // and tasks under a backlog item are listed apart: their content and links are never touched.
   const staleLinks: StaleLink[] = [];
+  const handMadeChildren: HandMadeChild[] = [];
   for (const [e, epic] of backlog.epics.entries()) {
     const { existing: remoteEpic } = reconcile({ type: 'epic', item: epic });
+    for (const id of remoteEpic ? (remote.epicStories.get(remoteEpic.id) ?? []) : []) {
+      const linked = remote.stories.find((story) => story.id === id);
+      if (linked && backlogKey(linked) === undefined) handMadeChildren.push({ type: 'story', id, ref: linked.ref, subject: linked.subject, parent: epic.key });
+    }
     for (const [s, story] of epic.stories.entries()) {
       const { existing: remoteStory, differing } = reconcile({ type: 'story', item: story, epic: epic.key });
       if (!remoteStory && story.format === 'legacy') legacyCreates.push({ key: story.key, path: storyPath(e, s) });
       if (!differing || differing.includes('epics')) operations.push({ action: 'link', type: 'story', key: story.key, epic: epic.key });
       // Links of this story to other taigent-managed epics (it moved epics in the manifest) are reported, never removed.
       for (const other of remote.epics) {
-        const otherKey = keyOf(other);
+        const otherKey = backlogKey(other);
         if (!remoteStory || otherKey === undefined || other.id === remoteEpic?.id) continue;
         if (!remote.epicStories.get(other.id)?.includes(remoteStory.id)) continue;
         staleLinks.push({ key: story.key, id: remoteStory.id, ref: remoteStory.ref, epic: otherKey, epicId: other.id, epicRef: other.ref });
       }
       for (const task of story.tasks) reconcile({ type: 'task', item: task, story: story.key });
+      for (const task of remoteStory ? remote.tasks : []) {
+        if (task.userStory !== remoteStory!.id || backlogKey(task) !== undefined) continue;
+        handMadeChildren.push({ type: 'task', id: task.id, ref: task.ref, subject: task.subject, parent: story.key });
+      }
     }
   }
 
@@ -398,5 +497,5 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
     }
   }
 
-  return { plan: { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans, staleLinks, blocked }, baselines };
+  return { plan: { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans, staleLinks, blocked, handMadeChildren }, baselines };
 }

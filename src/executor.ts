@@ -45,9 +45,10 @@ function create(op: Extract<Operation, { action: 'create' }>, plan: Plan, state:
 
 /**
  * PATCHes the changed item fields (a moved task: `user_story` = its manifest parent, recorded earlier in the run);
- * an update of custom attribute values alone leaves the item untouched.
+ * an update of custom attribute values alone leaves the item untouched. An adopt PATCHes its tags (`src:<key>` added)
+ * and its content updates the same way.
  */
-async function update(op: Extract<Operation, { action: 'update' }>, state: StateFile, client: TaigaClient): Promise<Pick<TaigaItem, 'id' | 'ref' | 'version'>> {
+async function update(op: Extract<Operation, { action: 'update' | 'adopt' }>, state: StateFile, client: TaigaClient): Promise<Pick<TaigaItem, 'id' | 'ref' | 'version'>> {
   const { custom_attributes: _attributes, parent, ...fields } = op.changes;
   const patch: ItemPatch = Object.fromEntries(Object.entries(fields).map(([field, change]) => [field, change.to]));
   if (parent) patch.user_story = recordedId(state, parent.to);
@@ -104,7 +105,7 @@ export async function executePlan({ plan, baselines }: PlannedBacklog, client: T
           // Until the attribute values are written, the baseline keeps those Taiga still holds (unset on a new item).
           const before: ManagedValues['custom_attributes'] = op.action === 'create' ? {} : { ...baseline.custom_attributes, ...op.changes.custom_attributes?.from } as ManagedValues['custom_attributes'];
           state.items[op.key] = { type: op.type, id: item.id, ref: item.ref, version: item.version, baseline: values ? { ...baseline, custom_attributes: before } : baseline };
-          const valuesVersion = op.action === 'update' ? op.changes.custom_attributes?.version : undefined;
+          const valuesVersion = op.action === 'create' ? undefined : op.changes.custom_attributes?.version;
           if (values) {
             await writeAttributes(op.type, item.id, values, valuesVersion, attributes, client);
             state.items[op.key]!.baseline = baseline;

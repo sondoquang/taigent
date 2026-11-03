@@ -22,23 +22,29 @@ export async function readBacklogRemote(backlog: Backlog, client: TaigaClient, s
     issueValues[field] = backlog.issues.length > 0 ? await client.listIssueValues(field, project.id) : [];
   }
 
-  // Links of every taigent-managed epic: missing ones are planned, those to an epic the story left are reported.
+  // Links of every taigent-managed epic and of every epic the backlog adopts (`ref`): missing ones are planned, those
+  // to an epic the story left are reported, and hand-made stories under a backlog epic are listed apart.
+  const adoptedEpics = new Set(backlog.epics.flatMap((epic) => epic.ref ?? []));
   const epicStories = new Map<number, number[]>();
   for (const epic of epics) {
-    if (epic.tags.some((tag) => tag.startsWith('src:'))) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
+    if (epic.tags.some((tag) => tag.startsWith('src:')) || adoptedEpics.has(epic.ref)) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
   }
 
-  // Current custom attribute values, only for existing items that declare some in the manifest.
+  // Current custom attribute values, only for existing items (by `src:` tag, or adopted by `ref`) that declare some
+  // in the manifest.
   const declaringTags = new Set<string>();
+  const declaringRefs = new Set<number>();
   for (const item of [...backlog.epics.flatMap((epic) => [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]), ...backlog.issues]) {
-    if (Object.keys(item.customAttributes).length > 0) declaringTags.add(srcTag(item.key));
+    if (Object.keys(item.customAttributes).length === 0) continue;
+    declaringTags.add(srcTag(item.key));
+    if (item.ref !== undefined) declaringRefs.add(item.ref);
   }
   const items = { epic: epics, story: stories, task: tasks, issue: issues };
   const attributeValues = {} as Record<ItemType, Map<number, TaigaAttributeValues>>;
   for (const type of ITEM_TYPES) {
     attributeValues[type] = new Map();
     for (const item of items[type]) {
-      if (item.tags.some((tag) => declaringTags.has(tag))) attributeValues[type].set(item.id, await client.getAttributeValues(type, item.id));
+      if (item.tags.some((tag) => declaringTags.has(tag)) || declaringRefs.has(item.ref)) attributeValues[type].set(item.id, await client.getAttributeValues(type, item.id));
     }
   }
 

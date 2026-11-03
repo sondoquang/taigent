@@ -572,14 +572,14 @@ async function withBusy<T>(fn: () => Promise<T>): Promise<T> {
 function planTable(plan: Plan): HTMLElement {
   const operations = plan.operations.filter((operation) => operation.action !== 'skip');
   const subjects = new Map(state.view ? visibleNodes(state.view, 'all').map((node) => [node.item.key, node.item.subject]) : []);
-  const ACTION: Record<string, string> = { create: 'Tạo mới', update: 'Cập nhật', link: 'Gắn vào epic' };
+  const ACTION: Record<string, string> = { create: 'Tạo mới', update: 'Cập nhật', adopt: 'Adopt', link: 'Gắn vào epic' };
   return h(
     'div',
     {},
     h(
       'p',
       {},
-      `Tạo mới ${plan.summary.create} · Cập nhật ${plan.summary.update} · Gắn epic ${plan.summary.link} · Không đổi ${plan.summary.skip}`,
+      `Tạo mới ${plan.summary.create} · Cập nhật ${plan.summary.update} · Adopt ${plan.summary.adopt} · Gắn epic ${plan.summary.link} · Không đổi ${plan.summary.skip}`,
     ),
     operations.length === 0 && h('p', {}, 'Không có thay đổi nào cần đẩy.'),
     operations.length > 0 &&
@@ -597,7 +597,7 @@ function planTable(plan: Plan): HTMLElement {
             h(
               'td',
               { class: 'muted' },
-              operation.action === 'update'
+              operation.action === 'update' || operation.action === 'adopt'
                 ? `Đổi: ${Object.keys(operation.changes ?? {}).join(', ')}${operation.ref ? ` (#${operation.ref})` : ''}`
                 : operation.action === 'link'
                   ? `→ ${operation.epic}`
@@ -664,14 +664,14 @@ function applyOutcome(slug: string, outcome: ApplyOutcome): void {
   }
   if (outcome.status === 'no-changes') return showChangesResult(slug, 'Taiga đã khớp với backlog', h('p', {}, 'Không có thay đổi nào cần đẩy.'));
   const { report } = outcome;
-  const RESULT: Record<string, string> = { created: 'Đã tạo', updated: 'Đã cập nhật', linked: 'Đã gắn', unchanged: 'Không đổi' };
+  const RESULT: Record<string, string> = { created: 'Đã tạo', updated: 'Đã cập nhật', adopted: 'Đã adopt', linked: 'Đã gắn', unchanged: 'Không đổi' };
   showChangesResult(
     slug,
     'Đã đẩy lên Taiga',
     h(
       'p',
       {},
-      `Tạo ${report.summary.created} · Cập nhật ${report.summary.updated} · Gắn epic ${report.summary.linked} · Không đổi ${report.summary.unchanged}`,
+      `Tạo ${report.summary.created} · Cập nhật ${report.summary.updated} · Adopt ${report.summary.adopted} · Gắn epic ${report.summary.linked} · Không đổi ${report.summary.unchanged}`,
     ),
     h(
       'table',

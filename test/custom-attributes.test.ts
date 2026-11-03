@@ -54,7 +54,7 @@ test('apply writes custom attribute values by name on new epics, stories and tas
   const patches = h.fake.requests.filter((r) => r.method === 'PATCH' && r.path.includes('/custom-attributes-values/'));
   assert.ok(patches.length > 0);
   for (const patch of patches) assert.ok(isRecord(patch.body) && patch.body.version === 1, 'PATCH carries the values version');
-  assert.deepEqual(result.json<ApplyReport>().summary, { created: 3, updated: 0, linked: 1, unchanged: 0 });
+  assert.deepEqual(result.json<ApplyReport>().summary, { created: 3, updated: 0, adopted: 0, linked: 1, unchanged: 0 });
 });
 
 test('re-applying the same values changes nothing: plan exits 0 and apply sends no PATCH', async (t) => {
@@ -71,7 +71,7 @@ test('re-applying the same values changes nothing: plan exits 0 and apply sends 
 
   const again = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
   assert.equal(again.code, 0, again.stderr);
-  assert.deepEqual(again.json<ApplyReport>().summary, { created: 0, updated: 0, linked: 0, unchanged: 3 });
+  assert.deepEqual(again.json<ApplyReport>().summary, { created: 0, updated: 0, adopted: 0, linked: 0, unchanged: 3 });
   assert.deepEqual(
     h.fake.requests.slice(requestsBefore).filter((r) => r.method !== 'GET' && r.path !== '/auth').map((r) => `${r.method} ${r.path}`),
     [],
@@ -118,7 +118,7 @@ ${billable}`;
 
   const applied = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
   assert.equal(applied.code, 0, applied.stderr);
-  assert.deepEqual(applied.json<ApplyReport>().summary, { created: 0, updated: 1, linked: 0, unchanged: 1 });
+  assert.deepEqual(applied.json<ApplyReport>().summary, { created: 0, updated: 1, adopted: 0, linked: 0, unchanged: 1 });
   const values = h.fake.state.customAttributeValues.find((v) => v.itemType === 'userstory' && v.item === story.id)!;
   assert.deepEqual(values.attributes_values, { [String(due.id)]: 'before launch', [String(owner.id)]: 'alice', [String(billable.id)]: true });
   assert.equal(story.version, 1, 'only the values changed: the story itself is not PATCHed');

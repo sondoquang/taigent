@@ -2,10 +2,10 @@
 // operations, each with an action; its summary counts them and `changes` says whether executing would write to Taiga.
 // Executing an operation yields a result, which the report counts the same way.
 
-export type Action = 'create' | 'update' | 'link' | 'skip';
+export type Action = 'create' | 'update' | 'adopt' | 'link' | 'skip';
 
 /** The result of executing an operation with each action. */
-export const RESULT = { create: 'created', update: 'updated', link: 'linked', skip: 'unchanged' } as const;
+export const RESULT = { create: 'created', update: 'updated', adopt: 'adopted', link: 'linked', skip: 'unchanged' } as const;
 export type Result = (typeof RESULT)[Action];
 
 /** The actions of a bootstrap or upload plan, which only fill gaps: create, update or skip (no links). */

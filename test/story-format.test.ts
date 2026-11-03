@@ -294,7 +294,7 @@ test('a legacy story already on Taiga is left alone: plan reports No changes, wi
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
   assert.equal(plan.code, 0, plan.stderr);
-  assert.deepEqual(plan.json<Plan>().summary, { create: 0, update: 0, link: 0, skip: 2 });
+  assert.deepEqual(plan.json<Plan>().summary, { create: 0, update: 0, adopt: 0, link: 0, skip: 2 });
   const text = await h.taigent(['plan', '--project', 'demo']);
   assert.equal(text.code, 0, text.stderr);
   assert.match(text.stdout, /No changes/);

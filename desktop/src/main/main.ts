@@ -226,6 +226,7 @@ async function apply(slug: string): Promise<Result<ApplyOutcome>> {
     `Dự án: ${slug}`,
     `Tạo mới: ${counts.create} mục`,
     `Cập nhật: ${counts.update} mục`,
+    `Adopt (gắn tag src: cho item tạo tay): ${counts.adopt} mục`,
     `Trong đó issue: tạo mới ${issueOps.filter((op) => op.action === 'create').length}, cập nhật ${issueOps.filter((op) => op.action === 'update').length}`,
     `Gắn story vào epic: ${counts.link}`,
     '',

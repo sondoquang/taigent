@@ -4,12 +4,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
+import { AdoptError, adoptItem } from './adopt.ts';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
 import { legacyStoryCreatesError, unknownIssueValuesError } from './manifest/backlog.ts';
-import { PROJECT_SLUG_PATTERN } from './manifest/conventions.ts';
+import { KEY_PATTERN, PROJECT_SLUG_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout } from './manifest/layout.ts';
 import { readState } from './manifest/state.ts';
@@ -18,7 +19,7 @@ import { initRepository, InitError, type InitStatus } from './init.ts';
 import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
 import { serveMcp, startProxy } from './mcp.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
-import { buildPlan, describePlanOperation, LegacyStoryCreateError, UnknownIssueValueError, type BlockedItem, type Plan, type PlannedBacklog } from './planner.ts';
+import { buildPlan, describePlanOperation, LegacyStoryCreateError, RefMismatchError, UnknownIssueValueError, type BlockedItem, type Plan, type PlannedBacklog } from './planner.ts';
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { formatProjectDetailText, formatProjectsText, readProjectDetail, readProjects } from './projects.ts';
@@ -43,6 +44,8 @@ Commands:
   bootstrap Create or complete the Taiga project declared in project.yaml (requires --yes)
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
+  adopt     Write the hand-made epic or issue #--ref of --project into backlog.yaml as backlog item --key, verbatim
+            (plan then proposes adopting it: apply adds its src:<key> tag); reads Taiga, writes the manifest only
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
   tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
   projects  List the Taiga projects you are a member of, with admin rights and whether taiga/<slug>/ exists; with
@@ -66,6 +69,7 @@ Commands:
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets, notify and projects)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
+  --ref <n>, --key <KEY>  adopt: the Taiga ref of the hand-made item and the key of the new backlog item
   --out <file>      preview: write the page (or the JSON) to this file instead of stdout
   --application <id>  login: store an application token of this Application (created by the instance admin)
                     instead of a refresh token
@@ -95,7 +99,7 @@ Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. chang
             a write under TAIGENT_READ_ONLY), 3 plan/--dry-run/skills check has changes, 4 manifest invalid,
             5 Taiga/network error`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'adopt', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
@@ -150,10 +154,12 @@ interface Options {
   to?: string;
   /** `skills` subcommand. */
   skillsAction?: SkillsAction;
-  /** `status`, `comment`: the ticket's ref. */
+  /** `status`, `comment`: the ticket's ref; `adopt`: the hand-made item's ref (`--ref`). */
   ref?: number;
   /** `status`: the status name (its words joined by spaces); `comment`: the comment text. */
   text?: string;
+  /** `adopt`: key of the new backlog item (`--key`). */
+  key?: string;
   /** `notify`: which message. */
   notifyKind?: NotifyKind;
   /** `login`: Application id for an application token. */
@@ -194,6 +200,8 @@ function parseOptions(argv: string[]): Options | 'help' {
         to: { type: 'string' },
         application: { type: 'string' },
         out: { type: 'string' },
+        ref: { type: 'string' },
+        key: { type: 'string' },
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
@@ -224,6 +232,17 @@ function parseOptions(argv: string[]): Options | 'help' {
     if (ref === undefined) throw new UsageError(`${command} needs the ticket's ref (e.g. 84 or #84), then ${what}${refArg === undefined ? '' : `, got "${refArg}"`}`);
     text = words.join(' ').trim();
     if (text === '') throw new UsageError(`${command} needs ${what} after the ref`);
+  }
+  let key: string | undefined;
+  if (command === 'adopt') {
+    ref = values.ref === undefined ? undefined : parseRef(values.ref);
+    if (ref === undefined) throw new UsageError(`adopt needs --ref <n>, the Taiga ref of the hand-made item (e.g. 84 or #84)${values.ref === undefined ? '' : `, got "${values.ref}"`}`);
+    key = values.key;
+    if (key === undefined || !KEY_PATTERN.test(key)) {
+      throw new UsageError(`adopt needs --key <KEY> for the new backlog item, matching ${KEY_PATTERN} (e.g. AUTH-LOGIN)${key === undefined ? '' : `, got "${key}"`}`);
+    }
+  } else if (values.ref !== undefined || values.key !== undefined) {
+    throw new UsageError('--ref and --key apply only to adopt');
   }
   let notifyKind: NotifyKind | undefined;
   if (command === 'notify') {
@@ -259,6 +278,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     skillsAction,
     ref,
     text,
+    key,
     notifyKind,
     application: values.application,
     out: values.out,
@@ -353,7 +373,7 @@ function retryUnitMs(env: NodeJS.ProcessEnv): number | undefined {
   return value;
 }
 
-const MARKER: Record<Action, string> = { create: '  + ', update: '  ~ ', link: '  + ', skip: '    skip ' };
+const MARKER: Record<Action, string> = { create: '  + ', update: '  ~ ', adopt: '  ~ ', link: '  + ', skip: '    skip ' };
 
 /** Text form of a plan: a title, one line per operation, `extra` lines (e.g. orphans), then the counts. */
 function formatPlanText<A extends Action, O extends { action: A }>(
@@ -384,7 +404,7 @@ function formatReportText<O extends { result: Result }>(
 
 /**
  * The parts of a backlog plan that are reported but never acted on: blocked items (with each version of the fields
- * at stake), orphans and stale epic links.
+ * at stake), orphans, stale epic links and hand-made children.
  */
 function formatLeftovers(plan: Plan): string[] {
   const lines: string[] = [];
@@ -408,6 +428,14 @@ function formatLeftovers(plan: Plan): string[] {
       ...plan.staleLinks.map(
         (link) =>
           `  ! stale link story ${link.key}  (#${link.ref}, id ${link.id}) -> epic ${link.epic}  (#${link.epicRef}, id ${link.epicId}): never removed; unlink it on Taiga if obsolete`,
+      ),
+    );
+  }
+  if (plan.handMadeChildren.length > 0) {
+    lines.push('Hand-made children (on Taiga under a backlog item, not in the manifest; left untouched):');
+    lines.push(
+      ...plan.handMadeChildren.map(
+        (child) => `  - hand-made ${child.type} #${child.ref} (id ${child.id})  "${child.subject}"  in ${child.type === 'task' ? 'story' : 'epic'} ${child.parent}`,
       ),
     );
   }
@@ -613,6 +641,9 @@ async function runPlan(run: Run): Promise<number> {
   try {
     planned = buildPlan(backlog, remote, state.items);
   } catch (error) {
+    if (error instanceof RefMismatchError) {
+      throw new ManifestError(error.mismatches.map(({ path, message }) => ({ file: layout.backlog, path, rule: 'item-ref', message })));
+    }
     if (error instanceof LegacyStoryCreateError) throw legacyStoryCreatesError(layout.backlog, error.stories);
     if (error instanceof UnknownIssueValueError) throw unknownIssueValuesError(layout.backlog, error.values);
     throw error;
@@ -636,6 +667,31 @@ async function runPlan(run: Run): Promise<number> {
 
   const report = await executePlan(planned, client, layout.state, remote.customAttributes);
   emit(run, report, () => formatReportText(`Applied to project ${report.project.slug} (id ${report.project.id}):`, report, describeAppliedOperation));
+  return ExitCode.Ok;
+}
+
+/**
+ * `adopt`: writes the hand-made item `--ref` of the project into backlog.yaml as backlog item `--key`. Reads Taiga,
+ * writes the manifest only; plan then proposes the `adopt` action. The project directory is validated first.
+ */
+async function runAdopt(run: Run): Promise<number> {
+  const { options } = run;
+  const slug = options.project!;
+  const layout = projectLayout(slug, run.env, run.cwd);
+  try {
+    await loadManifests(layout.dir, slug);
+  } catch (error) {
+    // A project directory without any manifest yet is fine: adopt writes the first backlog.yaml.
+    if (!(error instanceof ManifestError) || !error.issues.every((issue) => issue.rule === 'file-exists')) throw error;
+  }
+  const adopted = await adoptItem(layout.dir, slug, await connectTaiga(run), { ref: options.ref!, key: options.key! });
+  emit(
+    run,
+    adopted,
+    () =>
+      `Adopted ${adopted.type} #${adopted.ref} (id ${adopted.id}) as ${adopted.key} at ${adopted.path} of ${relative(run.cwd, layout.backlog)}.\n` +
+      `Run taigent plan --project ${slug}: it proposes adopting it, and apply adds its src:${adopted.key.toLowerCase()} tag.\n`,
+  );
   return ExitCode.Ok;
 }
 
@@ -848,6 +904,8 @@ function dispatch(run: Run): Promise<number> {
     case 'plan':
     case 'apply':
       return runPlan(run);
+    case 'adopt':
+      return runAdopt(run);
     case 'login':
       return runLogin(run);
     case 'logout':
@@ -902,7 +960,9 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
     if (error instanceof ReadOnlyError) return fail(secrets, ExitCode.Usage, 'read-only', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
-    if (error instanceof TicketError || error instanceof NotifyConfigError || error instanceof InitError) return fail(secrets, ExitCode.Usage, 'usage', error, json);
+    if (error instanceof TicketError || error instanceof NotifyConfigError || error instanceof InitError || error instanceof AdoptError) {
+      return fail(secrets, ExitCode.Usage, 'usage', error, json);
+    }
     if (error instanceof TelegramError) return fail(secrets, ExitCode.Taiga, 'telegram', error, json);
     if (error instanceof TaigaAuthError) {
       const hint = { token: 'check TAIGA_TOKEN', password: 'check TAIGA_USERNAME and TAIGA_PASSWORD', login: LOGIN_HINT }[error.credential];
