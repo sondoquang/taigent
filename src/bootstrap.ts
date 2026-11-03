@@ -75,6 +75,12 @@ export async function readBootstrapRemote(manifest: ProjectManifest, client: Tai
   const me = await client.getMe();
   const project = await client.findProjectBySlug(manifest.slug);
   if (!project) {
+    if (manifest.existing) {
+      throw new TaigaError(
+        `project.yaml declares "existing: true", but no project you can see has slug "${manifest.slug}"; refusing to create it. ` +
+          'Check the slug in Taiga (Settings > Project), or ask its admin to add you to the project.',
+      );
+    }
     const saved = await readSavedProject(statePath);
     const recorded = saved && (await client.findProject(saved.id));
     if (recorded) {

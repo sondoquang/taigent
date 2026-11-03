@@ -443,7 +443,14 @@ members:                            # optional
     role: Front
 wiki_home: |                        # optional Markdown for the wiki page `home`
   # Acme Portal
+existing: true                      # optional, default false: a project made in Taiga before taigent (see below)
 ```
+
+`existing: true` declares a Hand-made project that already exists on Taiga: the `project-name` and `project-slug`
+rules do not apply (`name` must be non-empty, `slug` is the project's real Taiga slug, still equal to the directory
+name), and bootstrap never creates it. When no visible project has the slug, bootstrap exits 5 before any write
+(`--dry-run` too); otherwise it fills the gaps like for any existing project. Taigent Desktop's project form writes
+the flag when it takes the project name from Taiga.
 
 Steps, in order (each is `create`, `update` or `skip` in the plan):
 
@@ -456,7 +463,7 @@ Steps, in order (each is `create`, `update` or `skip` in the plan):
 | membership | `POST /memberships {project, role, username}` (role id looked up by name) | username not a member / e-mail not invited |
 | wiki | `POST /wiki {project, slug: "home", content}` | `GET /wiki/by_slug` finds no `home` (an existing page is left alone) |
 
-Refusals (exit 5, nothing written): the slug exists but `i_am_admin` is false (`status: 403`); the slug belongs to a
+Refusals (exit 5, nothing written): `existing: true` but no visible project has the slug; the slug exists but `i_am_admin` is false (`status: 403`); the slug belongs to a
 private project the user cannot see (`status: 403`); a member's role is not defined by the template/project; the
 template is unknown. `GET /projects/by_slug` answers 404 both for a free slug and for a private project the user is not
 a member of, so when it finds nothing bootstrap asks `GET /resolver?project=<slug>`, which taiga-back answers 403 for

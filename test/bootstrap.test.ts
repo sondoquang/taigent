@@ -300,6 +300,50 @@ test('bootstrap requires project.yaml', async (t) => {
   assert.match(result.stderr, /project\.yaml.*manifest file not found/);
 });
 
+// A project made in Taiga before taigent: its name does not follow `<A> - <B>` and its slug is not derived from it.
+const LEGACY_YAML = PROJECT_YAML.replace('name: Acme - Portal', 'name: Portal khách hàng (cũ)');
+
+test('validate accepts a legacy project name and slug only with existing: true', async (t) => {
+  const h = await setup(t, LEGACY_YAML);
+  const refused = await h.taigent(['validate', '--project', SLUG, '--json']);
+  assert.equal(refused.code, 4, refused.stderr);
+  const rules = refused.json<{ error: { issues: { path: string; rule: string }[] } }>().error.issues.map((i) => `${i.path} ${i.rule}`);
+  assert.ok(rules.includes('name project-name'), rules.join('\n'));
+
+  await h.writeManifest(SLUG, 'project.yaml', `existing: true\n${LEGACY_YAML}`);
+  const accepted = await h.taigent(['validate', '--project', SLUG]);
+  assert.equal(accepted.code, 0, accepted.stderr);
+  assert.equal(h.fake.requests.length, 0);
+});
+
+test('bootstrap refuses to create a project marked existing: true that Taiga does not have, writing nothing', async (t) => {
+  const h = await setup(t, `existing: true\n${LEGACY_YAML}`);
+
+  for (const args of [['--yes'], ['--dry-run']]) {
+    const result = await h.taigent(['bootstrap', '--project', SLUG, ...args]);
+    assert.equal(result.code, 5, result.stderr);
+    assert.match(result.stderr, /existing: true.*no project you can see has slug "acme-portal"; refusing to create it/);
+  }
+  assert.equal(h.fake.state.projects.length, 0);
+  assert.deepEqual(writes(h.fake), []);
+  assert.equal(await h.readState(SLUG), undefined);
+});
+
+test('bootstrap on a project marked existing: true fills the gaps without renaming it', async (t) => {
+  const h = await setup(t, `existing: true\n${LEGACY_YAML}`);
+  const project = h.fake.addProject({ slug: SLUG, name: 'Portal khách hàng (cũ)', members: [h.fake.user.id] });
+
+  const result = await h.taigent(['bootstrap', '--project', SLUG, '--yes', '--json']);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(h.fake.state.projects.length, 1, 'no second project');
+  assert.equal(project.name, 'Portal khách hàng (cũ)');
+  assert.equal(project.modules.is_epics_activated, true);
+  assert.equal(projectAttributes(h.fake, project.id).length, 3);
+  assert.deepEqual(projectMembers(h.fake, project.id).map((m) => m.who), ['taigent-bot', 'alice', 'bob', 'carol@newcomer.test']);
+  assert.deepEqual(await h.readState(SLUG), { project: { id: project.id, slug: SLUG }, items: {} });
+});
+
 test('apply --dry-run behaves like plan: lists changes, writes nothing, exits 3', async (t) => {
   const h = await startHarness(t);
   h.fake.addProject({ slug: 'demo' });

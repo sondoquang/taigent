@@ -76,6 +76,13 @@ Lưu ý: Taiga coi `slug` là read-only khi tạo project và tự sinh nó từ
 mà bạn không thấy (không là thành viên) thì bootstrap từ chối trước khi tạo gì (nếu không Taiga sẽ tạo project thứ
 hai với slug `<slug>-1`). Đổi tên project về sau **không** đổi slug.
 
+**Project có sẵn** (Hand-made, tạo trên Taiga trước khi dùng taigent, tên/slug không theo quy ước): khai báo
+`existing: true` trong `project.yaml`. Khi đó `project-name` và `project-slug` không áp dụng: `name` chỉ cần không rỗng,
+`slug` là slug thật của project trên Taiga (chữ thường, số, `-`, `_`); `project-dir` vẫn áp dụng. `taigent bootstrap`
+không bao giờ tạo project có `existing: true`: không tìm thấy slug trên Taiga thì dừng (exit 5, không ghi gì); tìm
+thấy thì chỉ bổ sung module, tag, custom attribute, thành viên và wiki còn thiếu. Form project của Taigent Desktop tự
+đặt cờ này khi lấy tên project từ Taiga.
+
 ## 3. Template và module
 
 | Rule | Quy tắc |
