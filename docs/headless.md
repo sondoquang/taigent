@@ -91,7 +91,7 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
 It holds:
 
 - `Bash(npx taigent <command> *)` and `PowerShell(npx taigent <command> *)` for `validate`, `plan`, `apply`,
-  `bootstrap`, `upload`, `tickets`, `status`, `comment`, `preview`, `projects`, `report`, `snapshot`, `adopt`: writes
+  `bootstrap`, `upload`, `tickets`, `status`, `comment`, `preview`, `projects`, `report`, `snapshot`, `adopt`, `pull`: writes
   to Taiga go through the CLI only.
   `apply`/`bootstrap`/`upload` still need `--yes`, which the skills add only after the user's explicit confirmation,
   so a headless run of `taiga-apply-backlog` stops at the plan unless its arguments carry that confirmation.
@@ -99,7 +99,8 @@ It holds:
   Codex the shell guard below refuses a comment holding `( ) ? *` or the other shell characters it blocks.
   `projects` only reads (the user's projects, or one project's issue types, severities and priorities); so do
   `report` (one project's progress by sprint and by epic), `snapshot` (the whole backlog, written to the
-  git-ignored `taiga/<slug>/snapshot.json`) and `adopt` (one hand-made item, written into `backlog.yaml`).
+  git-ignored `taiga/<slug>/snapshot.json`), `adopt` (one hand-made item, written into `backlog.yaml`) and `pull`
+  (Taiga's values of backlog items, written into `backlog.yaml` and `state.json`; allowed under `TAIGENT_READ_ONLY`).
 - The Taiga MCP read tools of `taiga-mcp-server@1.9.20` (`list*`, `get*`, `getMilestoneStats`,
   `getIssuesByMilestone`, `advancedSearch`, `queryHelp`, `validateQuery`) as `mcp__taiga__<tool>`.
 
@@ -210,7 +211,7 @@ How Codex decides a shell command under `codex exec`:
    (`codex-rs/core/src/exec_policy.rs`, `policy_files`). A matching `decision = "allow"` rule runs the command
    **outside the sandbox** without prompting (`Decision::Allow` → `ExecApprovalRequirement::Skip { bypass_sandbox:
    true }`, then `SandboxOverride::BypassSandboxFirstAttempt` in `codex-rs/core/src/tools/sandboxing.rs`), so it has
-   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets|status|comment|preview|projects|report|snapshot|adopt …`; its
+   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets|status|comment|preview|projects|report|snapshot|adopt|pull …`; its
    `match`/`not_match` examples are checked by Codex when it loads the file.
 3. A command that **no rule matches** is decided by `render_decision_for_unmatched_command_for_platform`
    (`exec_policy.rs`): under `never` it is *allowed* inside the sandbox unless flagged dangerous. Rules cannot
