@@ -303,14 +303,14 @@ test('a legacy story already on Taiga is left alone: plan reports No changes, wi
   assert.deepEqual(writes(h.fake), []);
 });
 
-test('state.json is only a cache: a legacy story it lists but missing on Taiga is still refused', async (t) => {
+test('state.json is only a cache: a legacy story it lists but deleted on Taiga is still refused', async (t) => {
   const h = await startHarness(t);
   const story = seedLegacy(h);
   await h.writeManifest('demo', 'backlog.yaml', LEGACY);
   assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
   assert.equal((await h.readState('demo'))?.items['AUTH-LOGIN']?.id, story.id);
-  // Someone strips the identity tag on Taiga: the story is no longer taigent's, whatever state.json says.
-  h.fake.editItem(story, { tags: [] });
+  // Someone deletes the story on Taiga: plan would create it again, and never in the legacy format, whatever state.json says.
+  h.fake.state.userStories.splice(h.fake.state.userStories.indexOf(story), 1);
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
 

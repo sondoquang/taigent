@@ -2,8 +2,8 @@
 // state.json, so a remote edit stops blocking plan (ADR 0004: Taiga is the truth, the manifest a draft of changes not
 // applied yet). Reads Taiga through the plan, writes only local files. A story keeps its format: its description is
 // parsed back from the story template, and one that does not parse changes no file. `keepManifest` only moves the
-// baseline to Taiga's values, so the next plan proposes writing the manifest's values: the way to settle a conflict,
-// an unknown item or a deliberate overwrite.
+// baseline to Taiga's values, so the next plan proposes writing the manifest's values: the way to settle a both-edited
+// item, an unknown item or a deliberate overwrite.
 
 import { ManifestChangedError, saveItems, type BacklogItem, type IssueFields, type ItemFields, type StoryFields } from './edit.ts';
 import { ISSUE_VALUE_FIELDS, type ItemType } from './items.ts';
@@ -12,7 +12,7 @@ import { ManifestError } from './manifest/errors.ts';
 import type { ProjectLayout } from './manifest/layout.ts';
 import { readState, writeState } from './manifest/state.ts';
 import { differingFields, type BlockedKind, type ManagedField } from './managed.ts';
-import type { Counterpart, PlannedBacklog, PlanProject } from './planner.ts';
+import { srcTag, type Counterpart, type PlannedBacklog, type PlanProject } from './planner.ts';
 import { parseStoryDescription, type StoryText } from './story-template.ts';
 
 /** `--key` names no backlog item, or one not on Taiga yet. Maps to a usage error; nothing was written. */
@@ -79,7 +79,7 @@ function locate(backlog: Backlog): Map<string, Located> {
   return located;
 }
 
-const SETTLE = 'settle it in backlog.yaml, then pull it with --keep-manifest so that apply writes the manifest';
+const SETTLE_BY_HAND = 'settle it in backlog.yaml, then pull it with --keep-manifest so that apply writes the manifest';
 
 /** The edit that writes Taiga's managed values of `item` into backlog.yaml, in the manifest's own shape. */
 function pulledItem(item: Located, { taiga }: Counterpart, located: ReadonlyMap<string, Located>): BacklogItem {
@@ -88,7 +88,7 @@ function pulledItem(item: Located, { taiga }: Counterpart, located: ReadonlyMap<
   for (const [name, value] of Object.entries(taiga.custom_attributes)) {
     // Unset on Taiga: the manifest no longer declares it.
     if (value === null) continue;
-    if (typeof value === 'object') throw new PullError(`${key}: custom attribute "${name}" holds ${JSON.stringify(value)} on Taiga, which backlog.yaml cannot hold; ${SETTLE}`, key);
+    if (typeof value === 'object') throw new PullError(`${key}: custom attribute "${name}" holds ${JSON.stringify(value)} on Taiga, which backlog.yaml cannot hold; ${SETTLE_BY_HAND}`, key);
     customAttributes[name] = value;
   }
   const fields: ItemFields = { subject: taiga.subject, description: taiga.description, tags: taiga.tags, customAttributes };
@@ -99,7 +99,7 @@ function pulledItem(item: Located, { taiga }: Counterpart, located: ReadonlyMap<
       const issueFields: IssueFields = { ...fields };
       for (const field of ISSUE_VALUE_FIELDS) {
         const name = taiga[field];
-        if (name === null || name === undefined) throw new PullError(`issue ${key} has no ${field} the project defines on Taiga; set one there and pull again, or ${SETTLE}`, key);
+        if (name === null || name === undefined) throw new PullError(`issue ${key} has no ${field} the project defines on Taiga; set one there and pull again, or ${SETTLE_BY_HAND}`, key);
         issueFields[field] = name;
       }
       return { type: 'issue', key, fields: issueFields };
@@ -107,7 +107,7 @@ function pulledItem(item: Located, { taiga }: Counterpart, located: ReadonlyMap<
     case 'task': {
       const story = taiga.story ?? null;
       if (story === null || located.get(story)?.type !== 'story') {
-        throw new PullError(`task ${key} is in ${story === null ? 'no backlog story' : `story ${story}, which backlog.yaml does not hold,`} on Taiga; ${SETTLE}`, key);
+        throw new PullError(`task ${key} is in ${story === null ? 'no backlog story' : `story ${story}, which backlog.yaml does not hold,`} on Taiga; ${SETTLE_BY_HAND}`, key);
       }
       return { type: 'task', key, parent: story, fields };
     }
@@ -133,7 +133,7 @@ function pulledItem(item: Located, { taiga }: Counterpart, located: ReadonlyMap<
       const epics = (taiga.epics ?? []).filter((epic) => located.get(epic)?.type === 'epic');
       const parent = epics.includes(item.parent) ? item.parent : epics.length === 1 ? epics[0]! : undefined;
       if (parent === undefined) {
-        throw new PullError(`story ${key} is linked on Taiga to ${epics.length === 0 ? 'no backlog epic' : `several backlog epics (${epics.join(', ')})`}; ${SETTLE}`, key);
+        throw new PullError(`story ${key} is linked on Taiga to ${epics.length === 0 ? 'no backlog epic' : `several backlog epics (${epics.join(', ')})`}; ${SETTLE_BY_HAND}`, key);
       }
       const storyFields: StoryFields = {
         ...fields,
@@ -148,8 +148,8 @@ function pulledItem(item: Located, { taiga }: Counterpart, located: ReadonlyMap<
 
 /**
  * Pulls the backlog item `request.key`, or every item the plan blocks, from Taiga into the project's backlog.yaml
- * (unless `keepManifest`) and sets their baseline in state.json to Taiga's values. All items or none: on a PullError
- * or an invalid result no file is written.
+ * (unless `keepManifest`) and sets their baseline in state.json to Taiga's values (an item still being adopted: its
+ * `adopted` baseline). All items or none: on a PullError or an invalid result no file is written.
  */
 export async function pullItems(layout: ProjectLayout, backlog: Backlog, { plan, counterparts }: PlannedBacklog, request: PullRequest): Promise<PullReport> {
   const located = locate(backlog);
@@ -157,8 +157,18 @@ export async function pullItems(layout: ProjectLayout, backlog: Backlog, { plan,
   if (request.key !== undefined) {
     const { key } = request;
     if (!located.has(key)) throw new PullKeyError(`no backlog item ${key} in backlog.yaml`);
-    if (!counterparts.has(key)) throw new PullKeyError(`${key} is not on Taiga yet (no item carries src:${key.toLowerCase()}; apply creates or adopts it): nothing to pull`);
     keys = [key];
+  }
+  for (const key of keys) {
+    if (counterparts.has(key)) continue;
+    // Blocked without a counterpart: the item apply recorded lost its `src:<key>` tag on Taiga.
+    const lost = plan.blocked.find((candidate) => candidate.key === key);
+    if (!lost) throw new PullKeyError(`${key} is not on Taiga yet (no item carries ${srcTag(key)}; apply creates or adopts it): nothing to pull`);
+    throw new PullError(
+      `${key} is #${lost.ref} on Taiga, which no longer carries ${srcTag(key)}: pull cannot settle it; add the tag back on Taiga, ` +
+        `or write ref: ${lost.ref} for ${key} in backlog.yaml so that apply adopts it again`,
+      key,
+    );
   }
   const pulled = keys.map((key): PulledItem => {
     const { type, item, taiga, manifest } = counterparts.get(key)!;
@@ -176,8 +186,8 @@ export async function pullItems(layout: ProjectLayout, backlog: Backlog, { plan,
   }
   const state = await readState(layout.state, plan.project);
   for (const key of keys) {
-    const { type, item, taiga } = counterparts.get(key)!;
-    state.items[key] = { type, id: item.id, ref: item.ref, version: item.version, baseline: taiga };
+    const { type, item, taiga, adopting } = counterparts.get(key)!;
+    state[adopting ? 'adopted' : 'items'][key] = { type, id: item.id, ref: item.ref, version: item.version, baseline: taiga };
   }
   await writeState(layout.state, state);
   return { project: plan.project, keepManifest: request.keepManifest, pulled };

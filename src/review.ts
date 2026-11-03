@@ -10,6 +10,7 @@ import { sha256, writeAtomic } from './files.ts';
 import { isRecord } from './guards.ts';
 import { ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
 import {
+  backlogKeyOf,
   blockedFields,
   manifestManagedValues,
   snapshotManagedValues,
@@ -23,7 +24,7 @@ import { checkKeyReference, KEY_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { SNAPSHOT_FILE } from './manifest/layout.ts';
 import { loadManifests } from './manifest/manifests.ts';
-import { readState, STATE_FILE, type StateEntry } from './manifest/state.ts';
+import { readState, recordedBaseline, STATE_FILE, type StateFile } from './manifest/state.ts';
 import { readManifestYaml } from './manifest/yaml.ts';
 import { readSnapshotFile, type Snapshot, type SnapshotItem } from './snapshot.ts';
 import { storyDescription } from './story-template.ts';
@@ -369,11 +370,11 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
   const state = await readState(join(dir, STATE_FILE), { id: 0, slug });
   const review = await loadReview(join(dir, REVIEW_FILE));
   const snapshot = await readSnapshotFile(join(dir, SNAPSHOT_FILE));
-  const blockedBy = snapshot && snapshotComparison(snapshot, backlog, state.items);
+  const blockedBy = snapshot && snapshotComparison(snapshot, backlog, state);
 
   const summary: PreviewSummary = {
     epics: 0, stories: 0, tasks: 0, issues: 0, new: 0, adopt: 0, applied: 0, approved: 0, changes: 0, unreviewed: 0, stale: 0, openComments: 0,
-    blocked: { 'remote-edit': 0, conflict: 0, unknown: 0 }, unknownReviewKeys: [],
+    blocked: { 'remote-edit': 0, 'both-edited': 0, unknown: 0 }, unknownReviewKeys: [],
   };
   const keys = new Set<string>();
 
@@ -456,47 +457,44 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
 
 /**
  * How plan would block each backlog item against Taiga as `snapshot` holds it (`blockedFields`, the comparison plan
- * makes): its Taiga counterpart is the snapshot item tagged with its key (the oldest, as in plan); undefined without
- * one. An item adopted by `ref` is never blocked, as in plan; nor is one closed on Taiga, which the snapshot leaves out,
- * nor one the snapshot read before taigent last wrote it (a version below state.json's): its baseline is newer.
+ * makes): its Taiga counterpart is the snapshot item tagged with its key (the oldest, as in plan), else, for an item
+ * adopting one by `ref` with the baseline `taigent adopt` recorded, that item; undefined without one. An item adopted
+ * without that baseline is never blocked, as in plan; nor is one closed on Taiga, which the snapshot leaves out, nor
+ * one the snapshot read before taigent last wrote it (a version below state.json's): its baseline is newer.
  */
-function snapshotComparison(
-  snapshot: Snapshot,
-  backlog: Backlog,
-  state: Readonly<Record<string, StateEntry>>,
-): (entry: ManifestItem) => PreviewItem['blocked'] {
+function snapshotComparison(snapshot: Snapshot, backlog: Backlog, state: Pick<StateFile, 'items' | 'adopted'>): (entry: ManifestItem) => PreviewItem['blocked'] {
   const lists: { [T in ItemType]: SnapshotItems[T][] } = { epic: snapshot.epics, story: snapshot.stories, task: snapshot.tasks, issue: snapshot.issues };
   const tagged = {} as { [T in ItemType]: Map<string, SnapshotItems[T]> };
+  const byRef = {} as { [T in ItemType]: Map<number, SnapshotItems[T]> };
   for (const type of ITEM_TYPES) {
     const byKey = new Map<string, SnapshotItem>();
     for (const item of [...lists[type]].sort((a, b) => a.id - b.id)) if (item.key !== null && !byKey.has(item.key)) byKey.set(item.key, item);
     (tagged as Record<ItemType, Map<string, SnapshotItem>>)[type] = byKey;
+    (byRef as Record<ItemType, Map<number, SnapshotItem>>)[type] = new Map(lists[type].map((item: SnapshotItem) => [item.ref, item]));
   }
-  // Keys of the epics and stories a story links to or a task sits in, by ref: the tagged item's key, else the key of
-  // the backlog item adopting it, else (a closed story, left out of the snapshot) the key state.json records.
-  const adopting = new Map<string, string>();
-  for (const epic of backlog.epics) {
-    if (epic.ref !== undefined) adopting.set(`epic:${epic.ref}`, epic.key);
-    for (const story of epic.stories) if (story.ref !== undefined) adopting.set(`story:${story.ref}`, story.key);
-  }
-  const recorded = new Map(Object.entries(state).map(([key, entry]) => [`${entry.type}:${entry.ref}`, key]));
-  const byRef = new Map([...snapshot.epics.map((item) => [`epic:${item.ref}`, item] as const), ...snapshot.stories.map((item) => [`story:${item.ref}`, item] as const)]);
+  const keyByTagOrRef = backlogKeyOf(backlog);
+  // A closed story is left out of the snapshot, yet a task of the backlog may sit in it: only state.json still knows
+  // which backlog story that ref is. Every epic is in the snapshot, closed ones too.
+  const closedStories = new Map(Object.entries(state.items).flatMap(([key, entry]) => (entry.type === 'story' ? [[entry.ref, key] as const] : [])));
   const backlogKey = (type: 'epic' | 'story', ref: number): string | undefined => {
-    const item = byRef.get(`${type}:${ref}`);
-    if (!item) return recorded.get(`${type}:${ref}`);
-    return item.key ?? adopting.get(`${type}:${ref}`);
+    const item = byRef[type].get(ref);
+    if (!item) return type === 'story' ? closedStories.get(ref) : undefined;
+    return keyByTagOrRef(type, ref, item.key);
   };
 
   return (entry) => {
-    const { key } = entry.item;
-    const item = tagged[entry.type].get(key);
-    if (!item) return undefined;
-    const recordedEntry = state[key];
-    const recordedHere = recordedEntry?.type === entry.type && recordedEntry.id === item.id;
-    if (recordedHere && item.version < recordedEntry.version) return undefined;
-    const baseline = recordedHere ? recordedEntry.baseline : undefined;
+    const { key, ref } = entry.item;
+    let item: SnapshotItem | undefined = tagged[entry.type].get(key);
+    let recorded = state.items[key];
+    if (!item) {
+      recorded = state.adopted[key];
+      item = ref === undefined ? undefined : byRef[entry.type].get(ref);
+      if (!item || item.key !== null || recorded === undefined) return undefined;
+    }
+    const baseline = recordedBaseline(recorded, entry.type, item.id);
+    if (baseline && item.version < recorded!.version) return undefined;
     const want = manifestManagedValues(entry);
-    return blockedFields(want, snapshotManagedValues(entry.type, item, want, baseline, backlogKey), baseline);
+    return blockedFields(want, snapshotManagedValues(entry.type, item as SnapshotItems[typeof entry.type], want, baseline, backlogKey), baseline);
   };
 }
 
@@ -534,7 +532,7 @@ const TYPE_LABEL: Record<ItemType, string> = { epic: 'Epic', story: 'Story', tas
 
 const BLOCKED_LABEL: Record<BlockedKind, string> = {
   'remote-edit': 'remote edit on Taiga',
-  conflict: 'conflict with Taiga',
+  'both-edited': 'both edited: on Taiga and in the manifest, differently',
   unknown: 'unknown: differs from Taiga, no baseline',
 };
 
@@ -604,11 +602,11 @@ export function renderPreviewMarkdown(preview: Preview): string {
   if (preview.snapshot) {
     lines.push(
       `| Edited on Taiga (remote edit) | ${summary.blocked['remote-edit']} |`,
-      `| Conflict with Taiga | ${summary.blocked.conflict} |`,
+      `| Both edited (Taiga and the manifest, differently) | ${summary.blocked['both-edited']} |`,
       `| Unknown (no baseline, differs from Taiga) | ${summary.blocked.unknown} |`,
       '',
       `Taiga as \`taigent snapshot\` read it at ${snapshotTime(preview.snapshot.readAt)} (${SNAPSHOT_FILE}): \`plan\` blocks the items ` +
-        `marked remote edit, conflict or unknown until ${BACKLOG_FILE} settles them. Run \`taigent snapshot --project ${project.slug}\` again for a newer copy.`,
+        `marked remote edit, both edited or unknown until ${BACKLOG_FILE} settles them. Run \`taigent snapshot --project ${project.slug}\` again for a newer copy.`,
     );
   } else {
     lines.push('', `No ${SNAPSHOT_FILE}: run \`taigent snapshot --project ${project.slug}\` to see the items edited on Taiga since apply.`);

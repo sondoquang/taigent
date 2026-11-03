@@ -96,7 +96,7 @@ test('review.yaml never changes digests; an approval given on another digest is 
   assert.deepEqual(story(reviewed).review, { verdict: 'approved', stale: false, by: 'Lan', at: AT, comments: [], openComments: 0 });
   assert.deepEqual(
     { ...reviewed.summary },
-    { epics: 1, stories: 1, tasks: 1, issues: 0, new: 3, adopt: 0, applied: 0, approved: 1, changes: 1, unreviewed: 1, stale: 0, openComments: 1, blocked: { 'remote-edit': 0, conflict: 0, unknown: 0 }, unknownReviewKeys: [] },
+    { epics: 1, stories: 1, tasks: 1, issues: 0, new: 3, adopt: 0, applied: 0, approved: 1, changes: 1, unreviewed: 1, stale: 0, openComments: 1, blocked: { 'remote-edit': 0, 'both-edited': 0, unknown: 0 }, unknownReviewKeys: [] },
   );
 
   const changed = await preview(dir, { 'backlog.yaml': BACKLOG.replace('Wrong password shows an error', 'Wrong password is rejected') });
@@ -207,7 +207,7 @@ test('issues are reviewed like other items: verdict, comments, counted, and stal
   assert.equal(reviewed.issues[0]!.review.openComments, 1);
   assert.deepEqual(
     { ...reviewed.summary },
-    { epics: 1, stories: 1, tasks: 1, issues: 1, new: 4, adopt: 0, applied: 0, approved: 1, changes: 0, unreviewed: 3, stale: 0, openComments: 1, blocked: { 'remote-edit': 0, conflict: 0, unknown: 0 }, unknownReviewKeys: [] },
+    { epics: 1, stories: 1, tasks: 1, issues: 1, new: 4, adopt: 0, applied: 0, approved: 1, changes: 0, unreviewed: 3, stale: 0, openComments: 1, blocked: { 'remote-edit': 0, 'both-edited': 0, unknown: 0 }, unknownReviewKeys: [] },
   );
 
   // Apply writes the type, severity and priority too: changing one makes the approval stale.

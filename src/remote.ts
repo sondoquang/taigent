@@ -3,6 +3,7 @@
 // backlog.
 
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
+import { isSrcTag } from './managed.ts';
 import type { Backlog } from './manifest/backlog.ts';
 import { srcTag, type RemoteState } from './planner.ts';
 import type { TaigaAttributeValues, TaigaClient, TaigaIssueValue } from './taiga/client.ts';
@@ -27,7 +28,7 @@ export async function readBacklogRemote(backlog: Backlog, client: TaigaClient, s
   const adoptedEpics = new Set(backlog.epics.flatMap((epic) => epic.ref ?? []));
   const epicStories = new Map<number, number[]>();
   for (const epic of epics) {
-    if (epic.tags.some((tag) => tag.startsWith('src:')) || adoptedEpics.has(epic.ref)) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
+    if (epic.tags.some(isSrcTag) || adoptedEpics.has(epic.ref)) epicStories.set(epic.id, await client.listEpicUserStories(epic.id));
   }
 
   // Current custom attribute values, only for existing items (by `src:` tag, or adopted by `ref`) that declare some

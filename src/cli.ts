@@ -133,7 +133,7 @@ class UsageError extends Error {}
 class ReadOnlyError extends Error {}
 
 /** How the text output names each kind of blocked item. */
-const BLOCKED_LABEL: Record<BlockedItem['kind'], string> = { 'remote-edit': 'remote edit', conflict: 'conflict', unknown: 'unknown' };
+const BLOCKED_LABEL: Record<BlockedItem['kind'], string> = { 'remote-edit': 'remote edit', 'both-edited': 'both edited', unknown: 'unknown' };
 
 /** `apply --yes` refused because the plan blocks items. Maps to ExitCode.Blocked, kind `blocked`. */
 class BlockedPlanError extends Error {
@@ -676,7 +676,7 @@ async function readPlan(run: Run): Promise<{ layout: ProjectLayout; backlog: Bac
   const remote = await readBacklogRemote(backlog, client, slug);
   const state = await readState(layout.state, remote.project);
   try {
-    return { layout, backlog, client, remote, planned: buildPlan(backlog, remote, state.items) };
+    return { layout, backlog, client, remote, planned: buildPlan(backlog, remote, state) };
   } catch (error) {
     if (error instanceof RefMismatchError) {
       throw new ManifestError(error.mismatches.map(({ path, message }) => ({ file: layout.backlog, path, rule: 'item-ref', message })));

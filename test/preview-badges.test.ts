@@ -1,5 +1,5 @@
 // Badges of `taigent preview` (spec #53, ticket #61): "adopt #ref" for a backlog item adopting a hand-made item until
-// apply records it, and the remote edits, conflicts and unknowns that snapshot.json shows against the state.json
+// apply records it, and the remote edits, both-edited and unknown items that snapshot.json shows against the state.json
 // baseline, computed offline and dated by the snapshot.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -62,7 +62,7 @@ test('preview shows a remote edit from snapshot.json with its readAt, and no rem
   const without = await preview(h);
   assert.equal(without.json.snapshot, undefined);
   assert.equal(without.json.epics[0]!.blocked, undefined);
-  assert.deepEqual(without.json.summary.blocked, { 'remote-edit': 0, conflict: 0, unknown: 0 });
+  assert.deepEqual(without.json.summary.blocked, { 'remote-edit': 0, 'both-edited': 0, unknown: 0 });
   assert.doesNotMatch(without.page, /remote edit/);
   assert.match(without.page, /No snapshot\.json: run `taigent snapshot --project demo`/);
 
@@ -71,7 +71,7 @@ test('preview shows a remote edit from snapshot.json with its readAt, and no rem
   const { json, page } = await preview(h);
   assert.deepEqual(json.snapshot, { readAt });
   assert.deepEqual(json.epics[0]!.blocked, { kind: 'remote-edit', fields: ['subject'] });
-  assert.deepEqual(json.summary.blocked, { 'remote-edit': 1, conflict: 0, unknown: 0 });
+  assert.deepEqual(json.summary.blocked, { 'remote-edit': 1, 'both-edited': 0, unknown: 0 });
   assert.match(page, new RegExp(`Taiga as \`taigent snapshot\` read it at ${shown(readAt)}`));
   assert.match(page, new RegExp(`^on Taiga #\\d+ · \\*\\*remote edit on Taiga\\*\\* \\(snapshot ${shown(readAt)}\\): subject`, 'm'));
   assert.match(page, /\| Edited on Taiga \(remote edit\) \| 1 \|/);
@@ -87,7 +87,7 @@ test('a snapshot read before taigent last wrote an item shows no remote edit for
 
   const { json } = await preview(h);
   assert.equal(json.epics[0]!.blocked, undefined);
-  assert.deepEqual(json.summary.blocked, { 'remote-edit': 0, conflict: 0, unknown: 0 });
+  assert.deepEqual(json.summary.blocked, { 'remote-edit': 0, 'both-edited': 0, unknown: 0 });
 });
 
 const TREE = `epics:
@@ -117,7 +117,7 @@ issues:
     priority: High
 `;
 
-test('preview compares every item type with the snapshot: nothing right after apply, then each edit, conflict and unknown', async (t) => {
+test('preview compares every item type with the snapshot: nothing right after apply, then each edit, both-edited and unknown', async (t) => {
   const h = await startHarness(t);
   await applied(h, TREE);
   await snapshot(h);
@@ -141,15 +141,15 @@ test('preview compares every item type with the snapshot: nothing right after ap
   assert.deepEqual(
     all(json).flatMap((item) => (item.blocked ? [[item.key, item.blocked.kind, item.blocked.fields]] : [])),
     [
-      ['AUTH', 'conflict', ['subject']],
+      ['AUTH', 'both-edited', ['subject']],
       ['AUTH-LOGIN', 'remote-edit', ['tags']],
       ['AUTH-LOGIN-API', 'remote-edit', ['story']],
       ['BILLING', 'unknown', ['subject']],
       ['BUG-CRASH', 'remote-edit', ['severity']],
     ],
   );
-  assert.deepEqual(json.summary.blocked, { 'remote-edit': 3, conflict: 1, unknown: 1 });
-  assert.match(page, /\*\*conflict with Taiga\*\* \(snapshot [^)]+\): subject/);
+  assert.deepEqual(json.summary.blocked, { 'remote-edit': 3, 'both-edited': 1, unknown: 1 });
+  assert.match(page, /\*\*both edited: on Taiga and in the manifest, differently\*\* \(snapshot [^)]+\): subject/);
   assert.match(page, /\*\*unknown: differs from Taiga, no baseline\*\* \(snapshot [^)]+\): subject/);
 
   // Plan, reading Taiga itself, blocks the same items the same way.

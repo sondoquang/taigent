@@ -11,8 +11,9 @@ import { ExitCode } from '../src/exit-codes.ts';
 import type { ApplyReport } from '../src/executor.ts';
 import type { ManifestIssue } from '../src/manifest/errors.ts';
 import type { Plan } from '../src/planner.ts';
+import type { Preview } from '../src/review.ts';
 import { valueId } from './support/backlog.ts';
-import { startHarness, writes, type Harness } from './support/harness.ts';
+import { OFFLINE, startHarness, writes, type Harness } from './support/harness.ts';
 
 interface ErrorOutput {
   error: { kind: string; message: string; issues?: ManifestIssue[] };
@@ -77,7 +78,7 @@ test('adopting a hand-made epic writes it verbatim; plan proposes only adopt and
   assert.deepEqual(again.json<Plan>().operations.map((op) => [op.action, op.key]), [['skip', 'PAY']]);
 });
 
-test('an adopted epic is never blocked before its adopt; after apply, a subject edited on Taiga is a remote edit (exit 6)', async (t) => {
+test('a manifest edit of an adopted epic before apply is part of the adopt; after apply, a subject edited on Taiga is a remote edit (exit 6)', async (t) => {
   const h = await startHarness(t);
   const project = h.fake.addProject({ slug: 'demo' });
   const epic = h.fake.addEpic({ project: project.id, subject: 'Payments', description: 'Pay by card.', tags: ['type:feature'] });
@@ -106,6 +107,41 @@ test('an adopted epic is never blocked before its adopt; after apply, a subject 
   const refused = await h.taigent(['apply', '--project', 'demo', '--yes']);
   assert.equal(refused.code, ExitCode.Blocked, refused.stderr);
   assert.deepEqual(writes(h.fake), []);
+});
+
+test('adopt records the Taiga values it copied: an edit on Taiga before apply blocks the adopt until pull settles it', async (t) => {
+  const h = await startHarness(t);
+  const project = h.fake.addProject({ slug: 'demo' });
+  const epic = h.fake.addEpic({ project: project.id, subject: 'Payments', description: 'Pay by card.', tags: ['type:feature'] });
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(epic.ref), '--key', 'PAY'])).code, 0);
+  const copied = { subject: 'Payments', description: 'Pay by card.', tags: ['type:feature'], custom_attributes: {} };
+  assert.deepEqual(await h.readState('demo'), {
+    project: { id: project.id, slug: 'demo' },
+    items: {},
+    adopted: { PAY: { type: 'epic', id: epic.id, ref: epic.ref, version: epic.version, baseline: copied } },
+  });
+  const preview = await h.taigent(['preview', '--project', 'demo', '--json'], { env: OFFLINE });
+  assert.deepEqual(preview.json<Preview>().epics[0]!.adopt, { ref: epic.ref });
+
+  h.fake.editItem(epic, { subject: 'Payments (Q3)' });
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
+  assert.deepEqual(plan.json<Plan>().operations, []);
+  assert.deepEqual(plan.json<Plan>().blocked, [
+    { kind: 'remote-edit', type: 'epic', key: 'PAY', id: epic.id, ref: epic.ref, fields: { subject: { baseline: 'Payments', taiga: 'Payments (Q3)', manifest: 'Payments' } } },
+  ]);
+
+  const pull = await h.taigent(['pull', '--project', 'demo']);
+  assert.equal(pull.code, 0, pull.stderr);
+  assert.deepEqual(await readBacklog(h), { epics: [{ key: 'PAY', ref: epic.ref, subject: 'Payments (Q3)', description: 'Pay by card.', tags: ['type:feature'] }] });
+  assert.equal((await h.readState('demo'))!.adopted.PAY!.baseline!.subject, 'Payments (Q3)');
+  const adopt = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
+  assert.equal(adopt.code, 0, adopt.stderr);
+  assert.deepEqual(adopt.json<ApplyReport>().operations.map((op) => [op.action, op.key]), [['adopt', 'PAY']]);
+  const state = (await h.readState('demo'))!;
+  assert.equal(state.items.PAY!.baseline!.subject, 'Payments (Q3)');
+  assert.equal(state.adopted, undefined, 'apply moves the adopted entry to items');
 });
 
 test('adopting a hand-made issue copies its type, severity and priority by name, after the items already in backlog.yaml', async (t) => {
@@ -423,4 +459,35 @@ test('backlog.yaml edited while adopt reads Taiga: exit 2, nothing written over 
   assert.equal(adopted.json<ErrorOutput>().error.kind, 'usage');
   assert.match(adopted.stderr, /backlog\.yaml changed while adopting/);
   assert.equal(await readFile(join(h.manifestsDir, 'demo', 'backlog.yaml'), 'utf8'), edited);
+});
+
+test('a story linked on Taiga is adopted only under one of its epics; an unlinked story is adopted and linked to --epic', async (t) => {
+  const h = await startHarness(t);
+  const project = h.fake.addProject({ slug: 'demo' });
+  const payments = h.fake.addEpic({ project: project.id, subject: 'Payments' });
+  const shipping = h.fake.addEpic({ project: project.id, subject: 'Shipping' });
+  const linked = h.fake.addUserStory({ project: project.id, subject: 'Ship by post' });
+  h.fake.addEpicRelatedUserStory(shipping.id, linked.id);
+  const unlinked = h.fake.addUserStory({ project: project.id, subject: 'Pay cash' });
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(payments.ref), '--key', 'PAY'])).code, 0);
+  const before = await readFile(join(h.manifestsDir, 'demo', 'backlog.yaml'), 'utf8');
+
+  const refused = await h.taigent(['adopt', '--project', 'demo', '--ref', String(linked.ref), '--key', 'SHIP-POST', '--epic', 'PAY', '--json']);
+
+  assert.equal(refused.code, ExitCode.Usage, refused.stderr);
+  assert.equal(refused.json<ErrorOutput>().error.kind, 'usage');
+  assert.match(refused.json<ErrorOutput>().error.message, new RegExp(`user story #${linked.ref} is linked on Taiga to epic #${shipping.ref}, not to backlog epic PAY; adopt that epic first`));
+  assert.equal(await readFile(join(h.manifestsDir, 'demo', 'backlog.yaml'), 'utf8'), before);
+  // Once its epic is adopted, the story is adopted under it.
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(shipping.ref), '--key', 'SHIP'])).code, 0);
+  assert.equal((await h.taigent(['adopt', '--project', 'demo', '--ref', String(linked.ref), '--key', 'SHIP-POST', '--epic', 'SHIP'])).code, 0);
+
+  const adopted = await h.taigent(['adopt', '--project', 'demo', '--ref', String(unlinked.ref), '--key', 'PAY-CASH', '--epic', 'PAY']);
+  assert.equal(adopted.code, 0, adopted.stderr);
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, ExitCode.Changes, plan.stderr);
+  assert.deepEqual(
+    plan.json<Plan>().operations.map((op) => [op.action, op.key]),
+    [['adopt', 'PAY'], ['adopt', 'PAY-CASH'], ['link', 'PAY-CASH'], ['adopt', 'SHIP'], ['adopt', 'SHIP-POST']],
+  );
 });

@@ -8,8 +8,9 @@ import { dirname } from 'node:path';
 import { writeAtomic } from './files.ts';
 import { isFileNotFound } from './guards.ts';
 import { ISSUE_VALUE_FIELDS, type IssueValueField } from './items.ts';
-import { keyOf } from './managed.ts';
-import type { TaigaClient, TaigaItem } from './taiga/client.ts';
+import { issueValueName, keyOf } from './managed.ts';
+import type { PlanProject } from './planner.ts';
+import type { TaigaClient, TaigaIssueValue, TaigaItem } from './taiga/client.ts';
 
 /** One epic, story, task or issue as Taiga holds it. */
 export interface SnapshotItem {
@@ -43,7 +44,7 @@ export type SnapshotIssue = SnapshotItem & Record<IssueValueField, string | null
 
 /** `taiga/<slug>/snapshot.json`. */
 export interface Snapshot {
-  project: { id: number; slug: string };
+  project: PlanProject;
   /** When Taiga was read (ISO 8601, UTC). */
   readAt: string;
   /** Every epic, closed ones too. */
@@ -97,10 +98,8 @@ export async function readSnapshot(client: TaigaClient, slug: string): Promise<S
   }
   const storyRefs = new Map(stories.map((story) => [story.id, story.ref]));
 
-  const valueNames = {} as Record<IssueValueField, Map<number, string>>;
-  for (const field of ISSUE_VALUE_FIELDS) {
-    valueNames[field] = new Map((await client.listIssueValues(field, project.id)).map((value) => [value.id, value.name]));
-  }
+  const issueValues = {} as Record<IssueValueField, TaigaIssueValue[]>;
+  for (const field of ISSUE_VALUE_FIELDS) issueValues[field] = await client.listIssueValues(field, project.id);
 
   return {
     project: { id: project.id, slug: project.slug },
@@ -111,7 +110,7 @@ export async function readSnapshot(client: TaigaClient, slug: string): Promise<S
     issues: issues
       .filter((issue) => !issue.isClosed)
       .map((issue) => {
-        const values = Object.fromEntries(ISSUE_VALUE_FIELDS.map((field) => [field, issue[field] === null ? null : (valueNames[field].get(issue[field]) ?? null)]));
+        const values = Object.fromEntries(ISSUE_VALUE_FIELDS.map((field) => [field, issueValueName(issueValues[field], issue[field])]));
         return { ...snapshotItem(issue), ...(values as Record<IssueValueField, string | null>) };
       }),
   };

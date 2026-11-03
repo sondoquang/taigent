@@ -105,6 +105,7 @@ export async function executePlan({ plan, baselines }: PlannedBacklog, client: T
           // Until the attribute values are written, the baseline keeps those Taiga still holds (unset on a new item).
           const before: ManagedValues['custom_attributes'] = op.action === 'create' ? {} : { ...baseline.custom_attributes, ...op.changes.custom_attributes?.from } as ManagedValues['custom_attributes'];
           state.items[op.key] = { type: op.type, id: item.id, ref: item.ref, version: item.version, baseline: values ? { ...baseline, custom_attributes: before } : baseline };
+          if (op.action === 'adopt') delete state.adopted[op.key];
           const valuesVersion = op.action === 'create' ? undefined : op.changes.custom_attributes?.version;
           if (values) {
             await writeAttributes(op.type, item.id, values, valuesVersion, attributes, client);

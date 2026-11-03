@@ -5,12 +5,12 @@
 // projection can be stored and compared again later.
 
 import { ISSUE_VALUE_FIELDS, type IssueValueField, type ItemType } from './items.ts';
-import type { EpicSpec, IssueSpec, StorySpec, TaskSpec } from './manifest/backlog.ts';
-import { TAG_PREFIXES } from './manifest/conventions.ts';
+import type { Backlog, EpicSpec, IssueSpec, StorySpec, TaskSpec } from './manifest/backlog.ts';
+import { SRC_TAG_PREFIX, TAG_PREFIXES } from './manifest/conventions.ts';
 import { storyDescription } from './story-template.ts';
 import type { RemoteState } from './planner.ts';
 import type { SnapshotIssue, SnapshotItem, SnapshotStory, SnapshotTask } from './snapshot.ts';
-import type { TaigaIssue, TaigaItem, TaigaTask } from './taiga/client.ts';
+import type { TaigaIssue, TaigaIssueValue, TaigaItem, TaigaTask } from './taiga/client.ts';
 
 /** A value as JSON holds it (custom attribute values on Taiga are arbitrary JSON). */
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -31,13 +31,44 @@ export interface ManagedValues extends Partial<Record<IssueValueField, string | 
   // `type`, `severity`, `priority` (issues): the value's name; null on Taiga when unset or not in the project's list.
 }
 
+/** Whether `tag` is a `src:<key>` identity tag. */
+export function isSrcTag(tag: string): boolean {
+  return tag.startsWith(`${SRC_TAG_PREFIX}:`);
+}
+
 /** The manifest key of a Taiga item, from its first `src:` tag (Taiga lowercases tags; keys are uppercase). */
-export function keyOf(item: TaigaItem): string | undefined {
-  return item.tags.find((t) => t.startsWith('src:'))?.slice('src:'.length).toUpperCase();
+export function keyOf(item: Pick<TaigaItem, 'tags'>): string | undefined {
+  return item.tags.find(isSrcTag)?.slice(SRC_TAG_PREFIX.length + 1).toUpperCase();
+}
+
+/** Finds the key of the backlog item a Taiga item of `type` is, from its `src:` tag key (`tagKey`) and its `ref`. */
+export type BacklogKeyOf = (type: ItemType, ref: number, tagKey: string | null | undefined) => string | undefined;
+
+/**
+ * The key of the backlog item a Taiga item is: its `src:` tag's key, else the key of the backlog item naming its `ref`
+ * (adopting it); undefined for a hand-made item.
+ */
+export function backlogKeyOf(backlog: Backlog): BacklogKeyOf {
+  const byRef = new Map<string, string>();
+  const add = (type: ItemType, item: { key: string; ref?: number }) => item.ref !== undefined && byRef.set(`${type}:${item.ref}`, item.key);
+  for (const epic of backlog.epics) {
+    add('epic', epic);
+    for (const story of epic.stories) {
+      add('story', story);
+      for (const task of story.tasks) add('task', task);
+    }
+  }
+  for (const issue of backlog.issues) add('issue', issue);
+  return (type, ref, tagKey) => tagKey ?? byRef.get(`${type}:${ref}`);
+}
+
+/** The name of the issue type, severity or priority `id` among the project's `values`; null when it has none or it is not listed. */
+export function issueValueName(values: readonly TaigaIssueValue[], id: number | null): string | null {
+  return values.find((value) => value.id === id)?.name ?? null;
 }
 
 /** The managed tags among `tags`: lowercased, prefixed `type:`/`area:`, without duplicates. */
-function managedTags(tags: readonly string[]): string[] {
+export function managedTags(tags: readonly string[]): string[] {
   const prefixed = tags.map((t) => t.toLowerCase()).filter((t) => TAG_PREFIXES.some((prefix) => t.startsWith(`${prefix}:`)));
   return [...new Set(prefixed)];
 }
@@ -67,16 +98,9 @@ export function manifestManagedValues(entry: ManifestItem): ManagedValues {
 /**
  * The managed values of a Taiga item. `attributes`: names of the custom attributes the manifest declares for it;
  * only those the project defines are projected (their values must have been read into `remote.attributeValues`).
- * `backlogKey`: the key of the backlog item a Taiga epic or story is, for epic links and a task's story; by default
- * its `src:` tag (the planner adds the items the backlog adopts by `ref`).
+ * `backlogKey`: the key of the backlog item a Taiga epic or story is, for epic links and a task's story.
  */
-export function remoteManagedValues(
-  type: ItemType,
-  item: TaigaItem,
-  remote: RemoteState,
-  attributes: readonly string[],
-  backlogKey: (item: TaigaItem) => string | undefined = keyOf,
-): ManagedValues {
+export function remoteManagedValues(type: ItemType, item: TaigaItem, remote: RemoteState, attributes: readonly string[], backlogKey: BacklogKeyOf): ManagedValues {
   const defined = attributes.flatMap((name) => {
     const attribute = remote.customAttributes[type].find((a) => a.name === name);
     return attribute ? [{ name, id: attribute.id }] : [];
@@ -84,27 +108,22 @@ export function remoteManagedValues(
   const custom: Record<string, JsonValue> = {};
   if (defined.length > 0) {
     const current = remote.attributeValues[type].get(item.id);
-    if (!current) throw new Error(`planner: custom attribute values of ${type} ${backlogKey(item)} were not read`);
+    if (!current) throw new Error(`custom attribute values of ${type} #${item.ref} were not read from Taiga`);
     for (const { name, id } of defined) custom[name] = (current.values[String(id)] ?? null) as JsonValue;
   }
   const values: ManagedValues = { subject: item.subject, description: item.description, tags: managedTags(item.tags), custom_attributes: custom };
   if (type === 'story') {
     values.epics = remote.epics.flatMap((epic) => {
-      const key = backlogKey(epic);
+      const key = backlogKey('epic', epic.ref, keyOf(epic));
       return key !== undefined && remote.epicStories.get(epic.id)?.includes(item.id) ? [key] : [];
     });
   }
   if (type === 'task') {
     const id = (item as TaigaTask).userStory;
     const story = id === null ? undefined : remote.stories.find((s) => s.id === id);
-    values.story = (story && backlogKey(story)) ?? null;
+    values.story = (story && backlogKey('story', story.ref, keyOf(story))) ?? null;
   }
-  if (type === 'issue') {
-    for (const field of ISSUE_VALUE_FIELDS) {
-      const id = (item as TaigaIssue)[field];
-      values[field] = remote.issueValues[field].find((v) => v.id === id)?.name ?? null;
-    }
-  }
+  if (type === 'issue') for (const field of ISSUE_VALUE_FIELDS) values[field] = issueValueName(remote.issueValues[field], (item as TaigaIssue)[field]);
   return values;
 }
 
@@ -184,14 +203,14 @@ export function remoteEditedFields(baseline: ManagedValues, remote: ManagedValue
 
 /**
  * Why plan blocks an item, from its baseline (B, state.json), Taiga's values (T) and the manifest's (M):
- * `remote-edit` T changed since B and M did not; `conflict` both changed, differently; `unknown` no B and M ≠ T.
+ * `remote-edit` T changed since B and M did not; `both-edited` both changed, differently; `unknown` no B and M ≠ T.
  */
-export type BlockedKind = 'remote-edit' | 'conflict' | 'unknown';
+export type BlockedKind = 'remote-edit' | 'both-edited' | 'unknown';
 
 /**
- * The three-way comparison of an item tagged `src:<key>` (docs/cli.md §Baseline and remote edits): its kind and the
- * fields that tell why when plan blocks it, undefined when plan updates or skips it. Plan compares with Taiga,
- * preview with snapshot.json.
+ * The three-way comparison of an item and its Taiga counterpart (docs/cli.md §Baseline and remote edits): its kind
+ * and the fields that tell why when plan blocks it, undefined when plan updates or skips it. Plan compares with
+ * Taiga, preview with snapshot.json.
  */
 export function blockedFields(
   manifest: ManagedValues,
@@ -205,6 +224,6 @@ export function blockedFields(
   const manifestEdits = differingFields(manifest, baseline);
   if (manifestEdits.length === 0) return { kind: 'remote-edit', fields: remoteEdits };
   // Both changed the same way (differing is empty): a skip that takes Taiga's values as the new baseline.
-  if (differing.length > 0) return { kind: 'conflict', fields: [...new Set([...remoteEdits, ...manifestEdits, ...differing])] };
+  if (differing.length > 0) return { kind: 'both-edited', fields: [...new Set([...remoteEdits, ...manifestEdits, ...differing])] };
   return undefined;
 }
