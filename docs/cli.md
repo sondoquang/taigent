@@ -141,7 +141,7 @@ reproduce / Expected / Actual" template is a convention (`docs/taiga/conventions
 
 A story comes in one of two formats ([ADR 0001](adr/0001-user-story-format-mike-cohn-gherkin.md)): the **user story format**, `use_case` + `scenarios` (Mike Cohn +
 Gherkin, labels stay in English), and the **legacy format**, free `description` + `acceptance_criteria`, kept only
-for stories already on Taiga:
+for stories already on Taiga (tagged `src:<key>`, or adopted by `ref`, see [Adopt](#adopt)):
 
 ```yaml
       - key: AUTH-LOGOUT
@@ -194,6 +194,9 @@ Legacy format, unchanged byte for byte so stories already on Taiga stay unchange
 
 Spec: <spec>
 ```
+
+A legacy story with neither `acceptance_criteria` nor `spec` (a free-text story [adopted](#adopt) from Taiga) renders
+exactly its `description`, nothing trimmed: line endings, trailing whitespace and trailing blank lines stay.
 
 Names, tags, keys, wiki slugs and attachment names follow `docs/taiga/conventions.md`; each rule there has the
 `rule` id that validation errors report. Keys are unique across epics, stories, tasks and issues.
@@ -270,9 +273,10 @@ plan again. The first run after upgrading shows items applied earlier that diffe
   and the story's tasks (created with `user_story` = the parent story). A new story must use the user story format:
   after reading Taiga, `plan` and `apply` exit 4 (kind `validation`) if any story to create lacks `use_case` and
   `scenarios`, with one issue `{file, path: epics[i].stories[j], rule: story-format}` per such story, and write
-  nothing. A story is new when no story on Taiga carries its `src:<key>` tag; `state.json` plays no part. Updates
-  and skips of stories in the legacy format already on Taiga are unaffected: their template renders byte for byte
-  as before. Issues come after the epic tree, in manifest order; they have no parent and no link.
+  nothing. A story is new when no story on Taiga carries its `src:<key>` tag and its `ref` (if any) adopts none;
+  `state.json` plays no part. Adopts, updates and skips of stories in the legacy format already on Taiga are
+  unaffected: their template renders byte for byte as before. Issues come after the epic tree, in manifest order;
+  they have no parent and no link.
 - **Adopt**: a backlog item with a `ref` and no item tagged `src:<key>` takes over the untagged item of its type with
   that ref: an `adopt` operation, whose `changes.tags` adds `src:<key>` (plus the manifest's missing tags) and whose
   other changes are content updates, as in an update. Apply PATCHes it with the item's `version`, like an update;
@@ -341,8 +345,9 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   write to Taiga (a failed run resumes where it stopped). It stops at the first error, naming the operation and
   key. Without `--yes` it prints the plan, writes nothing (not even `state.json`) and exits 2 when there are
   changes. While any item is blocked it writes nothing and exits 6.
-- `taigent adopt --project <slug> --ref <n> --key <KEY> [--json]`: writes the hand-made epic or issue `#<n>` into
-  `backlog.yaml` as backlog item `<KEY>`; reads Taiga, writes the manifest only. See [Adopt](#adopt).
+- `taigent adopt --project <slug> --ref <n> --key <KEY> [--epic <KEY> | --story <KEY>] [--json]`: writes the
+  hand-made epic, user story (under manifest epic `--epic`), task (under manifest story `--story`) or issue `#<n>`
+  into `backlog.yaml` as backlog item `<KEY>`; reads Taiga, writes the manifest only. See [Adopt](#adopt).
 - `taigent pull --project <slug> [--key <KEY>] [--keep-manifest] [--json]`: writes Taiga's values of a backlog item,
   or of every blocked item, into `backlog.yaml` and makes them their baseline in `state.json`; reads Taiga, writes
   local files only. See [Pull](#pull).
@@ -682,28 +687,43 @@ login or cannot be reached).
 
 ## Adopt
 
-`taigent adopt --project <slug> --ref <n> --key <KEY> [--json]` writes the hand-made item `#<n>` of the project (no
-`src:` tag) into `backlog.yaml` as a new backlog item `<KEY>` with `ref: <n>` ([ADR 0004](adr/0004-adopt-existing-taiga-projects.md)).
-The skills run it once per item the user confirmed. It reads Taiga (the project's items, and an issue's values) and
-writes only the manifest, through the manifest edit API: comments and layout of the file stay, the item is added at
-the end of `epics` or `issues`, and `backlog.yaml` is created when missing. It copies, verbatim:
+`taigent adopt --project <slug> --ref <n> --key <KEY> [--epic <KEY> | --story <KEY>] [--json]` writes the hand-made
+item `#<n>` of the project (no `src:` tag) into `backlog.yaml` as a new backlog item `<KEY>` with `ref: <n>`
+([ADR 0004](adr/0004-adopt-existing-taiga-projects.md)). The skills run it once per item the user confirmed. It reads
+Taiga (the project's items, and an issue's values) and writes only the manifest, through the manifest edit API:
+comments and layout of the file stay, and `backlog.yaml` is created when missing. Where the item goes:
+
+- an **epic** or an **issue**: at the end of `epics` or `issues`; `--epic` and `--story` are refused;
+- a **user story**: at the end of the `stories` of the manifest epic `--epic <KEY>` (required). When the story is not
+  linked to that epic on Taiga yet, `plan` also proposes the link;
+- a **task**: at the end of the `tasks` of the manifest story `--story <KEY>` (required), which must be the backlog
+  item the task's story on Taiga is (tagged `src:<key>`, or adopted by `ref`).
+
+It copies, verbatim:
 
 - the subject and the description (line endings and trailing spaces included);
 - the tags a manifest may hold (`type:`/`area:` ones that follow the conventions); other tags stay on Taiga only;
 - an issue's `type`, `severity` and `priority`, by name.
 
-Custom attribute values are not copied. It takes epics and issues. It refuses, with exit 2 (kind `usage`) and
-nothing written: a closed item, an item already carrying a `src:` tag, a story or task, a ref no item of the project
-has, and a key or ref already in `backlog.yaml`. A missing or malformed `--ref` or `--key` is a usage error too; a
-new item breaking a manifest rule is exit 4. The project directory is validated first (exit 4), unless it holds no
-manifest yet.
+A story is written in the **legacy format**: its whole description in `description`, no `acceptance_criteria` split
+out and no `spec`, so its template renders exactly that description (see [Manifest layout](#manifest-layout)). The
+`story-format` rule allows the legacy format on `adopt`; it still refuses it on `create`.
+
+Custom attribute values are not copied. It refuses, with exit 2 (kind `usage`) and nothing written: a closed item, an
+item already carrying a `src:` tag, a ref no item of the project has, a key or ref already in `backlog.yaml`, a story
+without `--epic` naming a manifest epic, a task without `--story` naming a manifest story, a task in no story or in
+a story that is not a backlog item (adopt that story first), a task whose story is another backlog item than
+`--story`, and a parent flag on an epic or issue. A missing or malformed `--ref`, `--key`, `--epic` or `--story`, or
+both `--epic` and `--story`, is a usage error too; a new item breaking a manifest rule is exit 4. The project
+directory is validated first (exit 4), unless it holds no manifest yet.
 
 Then `plan` proposes an `adopt` operation for the item (see [Reconciliation](#reconciliation)): right after
 adopting, it only adds the `src:<key>` tag, and `apply --yes` writes nothing else. Status, assignee, sprint and
-points stay as they are on Taiga.
+points stay as they are on Taiga. Hand-made stories and tasks under an adopted epic or story stay hand-made: `plan`
+lists them under `handMadeChildren`.
 
-`--json` prints `{ "project": { "id", "slug" }, "type": "epic" | "issue", "key", "ref", "id", "path" }`, `path` being
-where the item is in `backlog.yaml` (e.g. `epics[2]`).
+`--json` prints `{ "project": { "id", "slug" }, "type": "epic" | "story" | "task" | "issue", "key", "ref", "id", "path" }`,
+`path` being where the item is in `backlog.yaml` (e.g. `epics[2]`, `epics[0].stories[1].tasks[0]`).
 
 ## Pull
 
@@ -1123,7 +1143,7 @@ skill checks all of it and names each fix.
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links (of epics tagged `src:` or adopted by `ref`), issue values (when the backlog has issues) and attribute values `buildPlan` needs |
 | Managed values | `src/managed.ts` | pure `manifestManagedValues(entry)` and `remoteManagedValues(type, item, remote, attributes, backlogKey?)` → `ManagedValues` (plain JSON, also the baseline stored in `state.json`): the fields taigent owns on an item (subject, description, `type:`/`area:` tags, declared custom attributes, an issue's type/severity/priority names, a task's story key, a story's epic keys), projected the same way from the manifest and from Taiga (`backlogKey` resolves a Taiga epic or story to its backlog key: its `src:` tag by default, the planner adds adopted items); `differingFields(manifest, remote)` (tags and epic links additive), `remoteEditedFields(baseline, remote, manifest)` (what changed on Taiga since the baseline), `keyOf(item)`. Status, assignee, sprint, points and unprefixed tags are outside the projection |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote, stateItems)` → `{ plan, baselines, counterparts }` (operations `create`, `update`, `adopt`, `link`, `skip`, orphans, stale links, blocked items and `handMadeChildren`, plus the baseline apply records per key, adopted items included, and `counterparts`: each tagged item's Taiga item with both sides' managed values, for `pull`), or `RefMismatchError` naming the backlog items whose `ref` does not match Taiga (reported as `item-ref` issues of `backlog.yaml`), `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)` |
-| Adopt | `src/adopt.ts` | `adoptItem(dir, slug, client, { ref, key })` → `AdoptResult` (writes `backlog.yaml` through `saveItem`, never Taiga), `AdoptError` (exit 2): the `adopt` command; one case per item type in `backlogItem` |
+| Adopt | `src/adopt.ts` | `adoptItem(dir, slug, client, { ref, key, parent? })` → `AdoptResult` (writes `backlog.yaml` through `saveItem`, never Taiga), `AdoptError` (exit 2): the `adopt` command; one case per item type in `backlogItem`, `parent` (`{ type: 'epic' \| 'story', key }`) required for a story and a task |
 | Pull | `src/pull.ts` | `pullItems(layout, backlog, planned, { key?, keepManifest })` → `PullReport` (writes `backlog.yaml` through `saveItems` and the baselines of `state.json`, never Taiga), `PullError` (exit 4, kind `pull`), `PullKeyError` (exit 2): the `pull` command |
 | Story template | `src/story-template.ts` | pure `storyDescription(story)`: the description apply writes for a story, shared by the planner, `preview` and Taigent Desktop's story form (bundled into its renderer, so the module imports nothing from Node); pure `parseStoryDescription(text, format)`, its inverse for `pull` (undefined unless the parse renders `text` again exactly) |
 | Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, `reviewKeys(backlog)` (the keys `review.yaml` may name), pure `setVerdict`/`addComment`, pure `rekeyReview(review, keys)` and `rekeyReviewFile(dir, keys)` (a renamed item keeps its comments and loses its verdict; a removed one loses its entry), `itemDigest`, `buildPreview(dir, slug)` → `Preview` (epic tree + `issues`), `renderPreviewMarkdown`: the offline `preview` command and the library Taigent Desktop uses |
