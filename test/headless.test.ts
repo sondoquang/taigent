@@ -37,7 +37,7 @@ const MCP_WRITE_TOOLS = [
   'updateWikiPage', 'uploadAttachment', 'watchWikiPage',
 ];
 
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'preview', 'projects', 'report', 'snapshot'];
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'preview', 'projects', 'report', 'snapshot', 'adopt'];
 
 function parseAllowlist(text: string): string[] {
   return text
@@ -102,6 +102,7 @@ test('the Codex shell guard lets through the allowlist taigent commands, run on 
   for (const command of [
     ...TAIGENT_COMMANDS.map((name) => `npx taigent ${name} --project vigo-auth`),
     'npx taigent apply --project vigo-auth --yes',
+    'npx taigent adopt --project vigo-auth --ref 84 --key AUTH-LOGIN --json',
     '  npx  taigent plan --project "vigo auth" --json ',
     'npx taigent validate',
   ]) {

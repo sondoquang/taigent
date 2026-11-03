@@ -104,16 +104,17 @@ export interface PlanOperation {
 export interface Plan {
   project: { id: number; slug: string };
   changes: boolean;
-  summary: { create: number; update: number; link: number; skip: number };
+  summary: { create: number; update: number; adopt: number; link: number; skip: number };
   operations: PlanOperation[];
   orphans: { type: string; key: string; id: number; ref: number; subject: string }[];
   staleLinks: StaleLink[];
+  handMadeChildren: { type: string; id: number; ref: number; subject: string; parent: string }[];
 }
 
 export interface ApplyReport {
   project: { id: number; slug: string };
   operations: { action: string; type: string; key: string; id: number; ref: number; epic?: string; result: string }[];
-  summary: { created: number; updated: number; linked: number; unchanged: number };
+  summary: { created: number; updated: number; adopted: number; linked: number; unchanged: number };
 }
 
 export type ApplyOutcome =

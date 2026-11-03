@@ -202,7 +202,7 @@ test('live smoke: apply + upload create linked items, wiki page and attachments;
   t.diagnostic(`run ${RUN} on project ${config.slug}: keys ${Object.values(KEY).join(', ')}; wiki page ${WIKI_SLUG}`);
 
   const applied = (await taigent(config, cwd, ['apply', '--yes', '--json'])).json<{ summary: Record<string, number> }>();
-  assert.deepEqual(applied.summary, { created: 4, updated: 0, linked: 1, unchanged: 0 });
+  assert.deepEqual(applied.summary, { created: 4, updated: 0, adopted: 0, linked: 1, unchanged: 0 });
   const uploaded = (await taigent(config, cwd, ['upload', '--yes', '--json'])).json<{ summary: Record<string, number> }>();
   assert.deepEqual(uploaded.summary, { created: 3, updated: 0, unchanged: 0 });
 

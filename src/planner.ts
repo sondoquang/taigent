@@ -40,7 +40,7 @@ export interface RemoteState {
   issues: TaigaIssue[];
   /** The project's issue types, severities and priorities (read only when the backlog has issues). */
   issueValues: Record<IssueValueField, readonly TaigaIssueValue[]>;
-  /** Ids of the user stories linked to each existing epic that carries a `src:` tag (`related_userstories`). */
+  /** Ids of the user stories linked to each epic that carries a `src:` tag or that the backlog adopts by `ref` (`related_userstories`). */
   epicStories: ReadonlyMap<number, readonly number[]>;
   /** Custom attributes defined on the project, per item type. */
   customAttributes: Record<ItemType, readonly TaigaCustomAttribute[]>;

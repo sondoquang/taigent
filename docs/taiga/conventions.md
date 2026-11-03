@@ -39,9 +39,9 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
    ý tường minh.
 
 `plan` và `apply` từ chối manifest sai quy ước với exit 4 và không ghi gì lên Taiga. Riêng rule `story-format` cho
-story sắp được tạo (§6.2) và rule `issue-value` (§6.4) được kiểm sau khi đọc Taiga, vì chỉ Taiga biết story nào là mới
-và project có những giá trị issue nào. Chạy lại `apply` luôn an toàn: item đã có thì bỏ qua (khớp theo tag
-`src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
+story sắp được tạo (§6.2), rule `issue-value` (§6.4) và rule `item-ref` (§5) được kiểm sau khi đọc Taiga, vì chỉ
+Taiga biết story nào là mới, project có những giá trị issue nào và mỗi `ref` là item nào. Chạy lại `apply` luôn an
+toàn: item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
 
 `taigent validate` kiểm cả `review.yaml` (khi có):
 
@@ -126,11 +126,22 @@ Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên
 | `key-unique` | Key duy nhất trong cả project (epic, story, task, issue dùng chung một không gian key). |
 | `key-reference` | Mọi chỗ tham chiếu key (ví dụ `target` của attachment trong `docs.yaml`) phải trỏ tới key có trong `backlog.yaml`. Attachment chỉ gắn vào epic, story hoặc task, không gắn vào issue. |
 | `key-locked` | Item đã có trên Taiga (key có trong `state.json`) không đổi key: đổi key = item mới + item cũ thành mồ côi. Form của Taigent Desktop kiểm rule này khi lưu. |
+| `ref-unique` | `ref` (nếu có) là số nguyên dương và mỗi ref chỉ thuộc một backlog item: một item trên Taiga không bao giờ gắn với hai backlog item. |
+| `item-ref` | Kiểm sau khi đọc Taiga (`plan`/`apply`, exit 4): item mang tag `src:<key>` phải có đúng ref trong manifest; nếu chưa có item nào mang tag đó thì ref phải là một item **cùng loại**, **chưa có tag `src:`** trong project. |
 
 - Key **không đổi** sau khi đã apply (rule `key-locked`).
 - Gợi ý đặt key: epic là tên mảng (`AUTH`), story là `<EPIC>-<việc>` (`AUTH-LOGIN`), task là
   `<STORY>-<bước>` (`AUTH-LOGIN-API`), issue là `<tiền tố>-<việc>` với tiền tố theo `type`: `Question` → `ASK`,
   `Enhancement` → `ENH`, type khác (kể cả `Bug`) → `BUG`. Ví dụ `BUG-LONG-PASSWORD`.
+- **Adopt hand-made item.** Item tạo tay trên Taiga (chưa có tag `src:`) chỉ vào manifest qua
+  `taigent adopt --project <slug> --ref <n> --key <KEY>`, sau khi người dùng xác nhận từng item. Lệnh chỉ đọc Taiga
+  và chỉ ghi `backlog.yaml`: một backlog item mới có `ref: <n>`, chép nguyên văn subject, mô tả, các tag có prefix
+  hợp lệ (§4; tag khác vẫn nằm trên Taiga), và `type`/`severity`/`priority` theo tên với issue; không chép custom
+  attribute. Hiện lệnh nhận epic và issue. Lệnh từ chối item đã đóng, item đã có tag `src:`, story/task, key hoặc ref
+  đã có trong manifest. Sau đó `plan` đề xuất action `adopt` (thêm tag `src:<key>`, cùng các update nội dung nếu có)
+  và `apply` ghi tag đó. `ref` giữ lại trong manifest sau apply, làm phép kiểm (rule `item-ref`).
+- Story và task tạo tay nằm dưới một epic hoặc story của manifest được `plan` liệt kê riêng trong
+  `handMadeChildren`, không phải `staleLinks`. Taigent không động vào nội dung và liên kết của chúng.
 - Item bỏ khỏi manifest không bị xoá trên Taiga. `plan` báo nó là mồ côi để người quyết định.
 - Chuyển task sang story khác (hoặc story sang epic khác) trong manifest: `apply` gắn task vào story mới
   (`user_story`), và gắn story vào epic mới. Liên kết cũ với epic cũ **không bị gỡ**; `plan` báo nó trong

@@ -77,7 +77,7 @@ test('apply --yes creates epics with subject, description and src:<key> tag, and
     },
   });
   const report = result.json<ApplyReport>();
-  assert.deepEqual(report.summary, { created: 2, updated: 0, linked: 0, unchanged: 0 });
+  assert.deepEqual(report.summary, { created: 2, updated: 0, adopted: 0, linked: 0, unchanged: 0 });
 });
 
 test('applying twice creates nothing the second time and plan then reports no changes (exit 0)', async (t) => {
@@ -88,7 +88,7 @@ test('applying twice creates nothing the second time and plan then reports no ch
   assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
   const second = await h.taigent(['apply', '--project', 'demo', '--yes']);
   assert.equal(second.code, 0, second.stderr);
-  assert.match(second.stdout, /0 created, 0 updated, 0 linked, 2 unchanged/);
+  assert.match(second.stdout, /0 created, 0 updated, 0 adopted, 0 linked, 2 unchanged/);
   assert.equal(h.fake.state.epics.length, 2);
 
   const plan = await h.taigent(['plan', '--project', 'demo']);
