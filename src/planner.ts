@@ -179,13 +179,22 @@ export interface Plan extends PlanSummary<Action> {
   handMadeChildren: HandMadeChild[];
 }
 
+/** The Taiga item tagged `src:<key>` for a backlog item, with the managed values of both sides as plan compared them. */
+export interface Counterpart {
+  type: ItemType;
+  item: TaigaItem;
+  taiga: ManagedValues;
+  manifest: ManagedValues;
+}
+
 /**
  * A plan and the baseline apply records for each item once its operation succeeds (by key; a story's epic links are
- * those before its `link` operation, which adds its epic).
+ * those before its `link` operation, which adds its epic), and the counterpart of each backlog item tagged on Taiga.
  */
 export interface PlannedBacklog {
   plan: Plan;
   baselines: Map<string, ManagedValues>;
+  counterparts: Map<string, Counterpart>;
 }
 
 /** A manifest `ref` that names no item the backlog item can be or adopt; `path` locates the `ref` in backlog.yaml. */
@@ -334,6 +343,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
   const unknownIssueValues: UnknownIssueValue[] = [];
   const blocked: BlockedItem[] = [];
   const baselines = new Map<string, ManagedValues>();
+  const counterparts = new Map<string, Counterpart>();
 
   /**
    * Plans create/update/adopt/skip for one manifest item from its managed values, those of its Taiga counterpart
@@ -371,6 +381,7 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
     }
     const have = remoteManagedValues(type, existing, remote, declared, backlogKey);
     const differing = differingFields(want, have);
+    if (tagged) counterparts.set(key, { type, item: existing, taiga: have, manifest: want });
     const recorded = state[key];
     const baseline = recorded?.type === type && recorded.id === existing.id ? recorded.baseline : undefined;
     let kind: BlockedKind | undefined;
@@ -497,5 +508,5 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Readonly
     }
   }
 
-  return { plan: { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans, staleLinks, blocked, handMadeChildren }, baselines };
+  return { plan: { project: remote.project, ...summarize(PLAN_ACTIONS, operations), operations, orphans, staleLinks, blocked, handMadeChildren }, baselines, counterparts };
 }
