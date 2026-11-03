@@ -96,7 +96,7 @@ export async function adoptItem(dir: string, slug: string, client: TaigaClient, 
   if (tag) {
     throw new AdoptError(`${WHAT[type]} #${ref} already carries ${tag}: it is backlog item ${tag.slice('src:'.length).toUpperCase()}; one Taiga item is never bound to two backlog items`);
   }
-  if (item.closed) throw new AdoptError(`${WHAT[type]} #${ref} is closed; closed items are not adopted`);
+  if (item.isClosed) throw new AdoptError(`${WHAT[type]} #${ref} is closed (${item.status ?? 'closed status'}); closed items are not adopted`);
 
   const adopting = await backlogItem(type, item, key, client, project.id);
   await mkdir(dir, { recursive: true });
