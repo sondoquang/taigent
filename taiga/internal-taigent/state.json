@@ -1,0 +1,482 @@
+{
+  "project": {
+    "id": 20,
+    "slug": "internal-taigent"
+  },
+  "items": {
+    "APPLY": {
+      "type": "epic",
+      "id": 18,
+      "ref": 38,
+      "version": 1
+    },
+    "APPLY-CONFIRM": {
+      "type": "story",
+      "id": 340,
+      "ref": 48,
+      "version": 1
+    },
+    "APPLY-CREATE": {
+      "type": "story",
+      "id": 333,
+      "ref": 41,
+      "version": 1
+    },
+    "APPLY-EPIC-LINK": {
+      "type": "story",
+      "id": 336,
+      "ref": 44,
+      "version": 1
+    },
+    "APPLY-IDEMPOTENT": {
+      "type": "story",
+      "id": 338,
+      "ref": 46,
+      "version": 1
+    },
+    "APPLY-KEEP-PEOPLE-FIELDS": {
+      "type": "story",
+      "id": 335,
+      "ref": 43,
+      "version": 1
+    },
+    "APPLY-NO-DELETE": {
+      "type": "story",
+      "id": 339,
+      "ref": 47,
+      "version": 1
+    },
+    "APPLY-OCC": {
+      "type": "story",
+      "id": 343,
+      "ref": 52,
+      "version": 1
+    },
+    "APPLY-PLAN-DIFF": {
+      "type": "story",
+      "id": 331,
+      "ref": 39,
+      "version": 1
+    },
+    "APPLY-PLAN-JSON": {
+      "type": "story",
+      "id": 332,
+      "ref": 40,
+      "version": 1
+    },
+    "APPLY-RESUME": {
+      "type": "story",
+      "id": 344,
+      "ref": 53,
+      "version": 1
+    },
+    "APPLY-RETRY": {
+      "type": "story",
+      "id": 345,
+      "ref": 54,
+      "version": 1
+    },
+    "APPLY-SRC-TAG-IDENTITY": {
+      "type": "story",
+      "id": 342,
+      "ref": 50,
+      "version": 1
+    },
+    "APPLY-SRC-TAG-IDENTITY-EPIC-FILTER": {
+      "type": "task",
+      "id": 104,
+      "ref": 51,
+      "version": 1
+    },
+    "APPLY-STATE": {
+      "type": "story",
+      "id": 341,
+      "ref": 49,
+      "version": 1
+    },
+    "APPLY-TASK-PARENT": {
+      "type": "story",
+      "id": 337,
+      "ref": 45,
+      "version": 1
+    },
+    "APPLY-UPDATE": {
+      "type": "story",
+      "id": 334,
+      "ref": 42,
+      "version": 1
+    },
+    "BOOT": {
+      "type": "epic",
+      "id": 16,
+      "ref": 21,
+      "version": 1
+    },
+    "BOOT-CREATE": {
+      "type": "story",
+      "id": 317,
+      "ref": 23,
+      "version": 1
+    },
+    "BOOT-CUSTOM-ATTRS": {
+      "type": "story",
+      "id": 320,
+      "ref": 26,
+      "version": 1
+    },
+    "BOOT-DRY-RUN": {
+      "type": "story",
+      "id": 325,
+      "ref": 31,
+      "version": 1
+    },
+    "BOOT-MANIFEST": {
+      "type": "story",
+      "id": 316,
+      "ref": 22,
+      "version": 1
+    },
+    "BOOT-MEMBERS": {
+      "type": "story",
+      "id": 321,
+      "ref": 27,
+      "version": 1
+    },
+    "BOOT-MODULES": {
+      "type": "story",
+      "id": 318,
+      "ref": 24,
+      "version": 1
+    },
+    "BOOT-REFUSE": {
+      "type": "story",
+      "id": 324,
+      "ref": 30,
+      "version": 1
+    },
+    "BOOT-RERUN": {
+      "type": "story",
+      "id": 323,
+      "ref": 29,
+      "version": 1
+    },
+    "BOOT-TAGS": {
+      "type": "story",
+      "id": 319,
+      "ref": 25,
+      "version": 1
+    },
+    "BOOT-WIKI-HOME": {
+      "type": "story",
+      "id": 322,
+      "ref": 28,
+      "version": 1
+    },
+    "CONV": {
+      "type": "epic",
+      "id": 15,
+      "ref": 11,
+      "version": 1
+    },
+    "CONV-BANNED-MCP": {
+      "type": "story",
+      "id": 313,
+      "ref": 17,
+      "version": 1
+    },
+    "CONV-DOC": {
+      "type": "story",
+      "id": 308,
+      "ref": 12,
+      "version": 1
+    },
+    "CONV-ITEM-TEMPLATE": {
+      "type": "story",
+      "id": 312,
+      "ref": 16,
+      "version": 1
+    },
+    "CONV-NAMING": {
+      "type": "story",
+      "id": 309,
+      "ref": 13,
+      "version": 1
+    },
+    "CONV-STATUS": {
+      "type": "story",
+      "id": 314,
+      "ref": 18,
+      "version": 1
+    },
+    "CONV-STATUS-VERIFY-EPIC": {
+      "type": "task",
+      "id": 103,
+      "ref": 19,
+      "version": 1
+    },
+    "CONV-TAGS": {
+      "type": "story",
+      "id": 311,
+      "ref": 15,
+      "version": 1
+    },
+    "CONV-TEMPLATE": {
+      "type": "story",
+      "id": 310,
+      "ref": 14,
+      "version": 1
+    },
+    "CONV-VALIDATE": {
+      "type": "story",
+      "id": 315,
+      "ref": 20,
+      "version": 1
+    },
+    "PLAN": {
+      "type": "epic",
+      "id": 17,
+      "ref": 32,
+      "version": 1
+    },
+    "PLAN-FILES-ONLY": {
+      "type": "story",
+      "id": 329,
+      "ref": 36,
+      "version": 1
+    },
+    "PLAN-FROM-SPEC": {
+      "type": "story",
+      "id": 326,
+      "ref": 33,
+      "version": 1
+    },
+    "PLAN-KEYS": {
+      "type": "story",
+      "id": 327,
+      "ref": 34,
+      "version": 1
+    },
+    "PLAN-READ-TAIGA": {
+      "type": "story",
+      "id": 330,
+      "ref": 37,
+      "version": 1
+    },
+    "PLAN-UPDATE-MANIFEST": {
+      "type": "story",
+      "id": 328,
+      "ref": 35,
+      "version": 1
+    },
+    "SETUP": {
+      "type": "epic",
+      "id": 14,
+      "ref": 1,
+      "version": 1
+    },
+    "SETUP-ENV": {
+      "type": "story",
+      "id": 301,
+      "ref": 2,
+      "version": 1
+    },
+    "SETUP-ERRORS": {
+      "type": "story",
+      "id": 306,
+      "ref": 9,
+      "version": 1
+    },
+    "SETUP-GITIGNORE": {
+      "type": "story",
+      "id": 303,
+      "ref": 6,
+      "version": 1
+    },
+    "SETUP-MCP-CONFIG": {
+      "type": "story",
+      "id": 302,
+      "ref": 3,
+      "version": 1
+    },
+    "SETUP-MCP-CONFIG-CLAUDE": {
+      "type": "task",
+      "id": 101,
+      "ref": 4,
+      "version": 1
+    },
+    "SETUP-MCP-CONFIG-CODEX": {
+      "type": "task",
+      "id": 102,
+      "ref": 5,
+      "version": 1
+    },
+    "SETUP-REDACT": {
+      "type": "story",
+      "id": 305,
+      "ref": 8,
+      "version": 1
+    },
+    "SETUP-ROTATE-PASSWORD": {
+      "type": "story",
+      "id": 307,
+      "ref": 10,
+      "version": 1
+    },
+    "SETUP-TOKEN": {
+      "type": "story",
+      "id": 304,
+      "ref": 7,
+      "version": 1
+    },
+    "SKILL": {
+      "type": "epic",
+      "id": 20,
+      "ref": 64,
+      "version": 1
+    },
+    "SKILL-ALLOWLIST": {
+      "type": "story",
+      "id": 360,
+      "ref": 73,
+      "version": 1
+    },
+    "SKILL-APPLY-REVIEW": {
+      "type": "story",
+      "id": 356,
+      "ref": 68,
+      "version": 1
+    },
+    "SKILL-CLAUDE": {
+      "type": "story",
+      "id": 353,
+      "ref": 65,
+      "version": 1
+    },
+    "SKILL-CODEX": {
+      "type": "story",
+      "id": 354,
+      "ref": 66,
+      "version": 1
+    },
+    "SKILL-EXPLICIT": {
+      "type": "story",
+      "id": 355,
+      "ref": 67,
+      "version": 1
+    },
+    "SKILL-HEADLESS": {
+      "type": "story",
+      "id": 359,
+      "ref": 71,
+      "version": 1
+    },
+    "SKILL-HEADLESS-CODEX-APPROVAL": {
+      "type": "task",
+      "id": 106,
+      "ref": 72,
+      "version": 1
+    },
+    "SKILL-STATUS-REPORT": {
+      "type": "story",
+      "id": 357,
+      "ref": 69,
+      "version": 1
+    },
+    "SKILL-SYNC": {
+      "type": "story",
+      "id": 358,
+      "ref": 70,
+      "version": 1
+    },
+    "TEST": {
+      "type": "epic",
+      "id": 21,
+      "ref": 74,
+      "version": 1
+    },
+    "TEST-FAKE-TAIGA": {
+      "type": "story",
+      "id": 361,
+      "ref": 75,
+      "version": 1
+    },
+    "TEST-LIVE-SMOKE": {
+      "type": "story",
+      "id": 362,
+      "ref": 76,
+      "version": 1
+    },
+    "TEST-SKILL-ACCEPTANCE": {
+      "type": "story",
+      "id": 363,
+      "ref": 77,
+      "version": 1
+    },
+    "TEST-SKILL-ACCEPTANCE-CLAUDE": {
+      "type": "task",
+      "id": 107,
+      "ref": 78,
+      "version": 1
+    },
+    "TEST-SKILL-ACCEPTANCE-CODEX": {
+      "type": "task",
+      "id": 108,
+      "ref": 79,
+      "version": 1
+    },
+    "UPLOAD": {
+      "type": "epic",
+      "id": 19,
+      "ref": 55,
+      "version": 1
+    },
+    "UPLOAD-ATTACHMENT": {
+      "type": "story",
+      "id": 348,
+      "ref": 58,
+      "version": 1
+    },
+    "UPLOAD-DEDUP": {
+      "type": "story",
+      "id": 349,
+      "ref": 59,
+      "version": 1
+    },
+    "UPLOAD-NEW-VERSION": {
+      "type": "story",
+      "id": 350,
+      "ref": 60,
+      "version": 1
+    },
+    "UPLOAD-SIZE-LIMIT": {
+      "type": "story",
+      "id": 352,
+      "ref": 62,
+      "version": 1
+    },
+    "UPLOAD-SIZE-LIMIT-PROXY": {
+      "type": "task",
+      "id": 105,
+      "ref": 63,
+      "version": 1
+    },
+    "UPLOAD-STREAM": {
+      "type": "story",
+      "id": 351,
+      "ref": 61,
+      "version": 1
+    },
+    "UPLOAD-WIKI-MANIFEST": {
+      "type": "story",
+      "id": 346,
+      "ref": 56,
+      "version": 1
+    },
+    "UPLOAD-WIKI-UPSERT": {
+      "type": "story",
+      "id": 347,
+      "ref": 57,
+      "version": 1
+    }
+  }
+}

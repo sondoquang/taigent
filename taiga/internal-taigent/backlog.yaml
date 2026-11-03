@@ -1,0 +1,650 @@
+# Spec: https://github.com/sondoquang/taigent/issues/1
+# Mỗi epic là một nhóm user story của spec; số US ở comment là số thứ tự user story trong spec.
+epics:
+  - key: SETUP
+    subject: "Thiết lập và bảo mật"
+    description: "Clone repo, đặt biến môi trường cá nhân là dùng được; mật khẩu và token không bao giờ vào git hay output. Spec: https://github.com/sondoquang/taigent/issues/1"
+    tags: [type:chore]
+    stories:
+      # US1, US3
+      - key: SETUP-ENV
+        subject: "Cấu hình credentials qua biến môi trường"
+        description: "Là thành viên team, tôi muốn clone repo, đặt TAIGA_API_URL/TAIGA_USERNAME/TAIGA_PASSWORD trong biến môi trường cá nhân là dùng được ngay, để không phải sửa file cấu hình nào."
+        acceptance_criteria:
+          - "File env mẫu liệt kê đủ các biến TAIGA_* cần đặt và không chứa giá trị thật."
+          - "Đặt các biến trong môi trường cá nhân thì cả MCP lẫn CLI taigent nối được Taiga mà không sửa file nào trong repo."
+          - "AGENTS.md hướng dẫn đặt biến trên PowerShell và POSIX shell."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      # US2, US5, US6
+      - key: SETUP-MCP-CONFIG
+        subject: "Cấu hình MCP không chứa bí mật cho Claude Code và Codex"
+        description: "Là thành viên team, tôi muốn cấu hình MCP được commit chỉ chứa placeholder và phiên bản server ghim cố định, để mật khẩu không vào git và mọi máy chạy cùng một bản."
+        acceptance_criteria:
+          - "Cấu hình MCP của Claude Code chỉ chứa placeholder ${TAIGA_*}, không có giá trị literal."
+          - "Cấu hình MCP project của Codex chuyển tiếp biến bằng env_vars với required = true, không có giá trị literal."
+          - "Cả hai cấu hình ghim taiga-mcp-server@1.9.20."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+        tasks:
+          - key: SETUP-MCP-CONFIG-CLAUDE
+            subject: "Cấu hình .mcp.json cho Claude Code"
+            description: "Done khi: .mcp.json chỉ dùng ${TAIGA_*}, ghim taiga-mcp-server@1.9.20 và claude mcp list thấy server taiga kết nối được."
+          - key: SETUP-MCP-CONFIG-CODEX
+            subject: "Cấu hình .codex/config.toml cho Codex"
+            description: "Done khi: .codex/config.toml dùng env_vars với required = true, ghim taiga-mcp-server@1.9.20 và Codex gọi được tool đọc của Taiga MCP."
+      # US4
+      - key: SETUP-GITIGNORE
+        subject: "Chặn bí mật bằng .gitignore"
+        description: "Là thành viên team, tôi muốn repo có .gitignore chặn file env, cấu hình agent cá nhân và state tạm, để không commit nhầm bí mật."
+        acceptance_criteria:
+          - "File env, cấu hình agent cá nhân và state tạm không xuất hiện trong git status sau khi tạo."
+          - "File env mẫu vẫn được commit."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      # US7
+      - key: SETUP-TOKEN
+        subject: "Hỗ trợ TAIGA_TOKEN thay cho mật khẩu"
+        description: "Là thành viên team, tôi muốn CLI hỗ trợ TAIGA_TOKEN thay cho mật khẩu, để sau này chuyển sang token mà không phải đổi quy trình."
+        acceptance_criteria:
+          - "Có TAIGA_TOKEN thì CLI gửi token đó và không cần TAIGA_PASSWORD."
+          - "Không có TAIGA_TOKEN thì CLI đăng nhập bằng TAIGA_USERNAME/TAIGA_PASSWORD như trước."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US8
+      - key: SETUP-REDACT
+        subject: "Không lộ mật khẩu và token trong output"
+        description: "Là thành viên team, tôi muốn CLI không bao giờ in mật khẩu hay token ra stdout, stderr hoặc log, kể cả khi lỗi, để output của agent không làm lộ bí mật."
+        acceptance_criteria:
+          - "Stdout, stderr và output JSON của mọi lệnh không chứa mật khẩu hay token, kể cả khi đăng nhập thất bại hoặc Taiga trả lỗi."
+          - "TAIGA_API_URL chứa credentials thì CLI từ chối với exit 2 và không in giá trị đó."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US9
+      - key: SETUP-ERRORS
+        subject: "Báo lỗi cấu hình và đăng nhập rõ ràng"
+        description: "Là thành viên team, tôi muốn CLI báo lỗi rõ khi thiếu biến môi trường hoặc đăng nhập thất bại, để tự sửa được."
+        acceptance_criteria:
+          - "Thiếu biến môi trường thì CLI thoát exit 2 và nêu tên biến thiếu."
+          - "Đăng nhập thất bại thì CLI thoát exit 5 và nêu URL Taiga, không nêu giá trị bí mật."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # Further Notes: việc của con người
+      - key: SETUP-ROTATE-PASSWORD
+        subject: "Đổi mật khẩu Taiga đã nằm literal trong cấu hình MCP"
+        description: "Là trưởng nhóm, tôi muốn đổi mật khẩu Taiga đã từng nằm literal trong cấu hình MCP trên máy, để mật khẩu cũ không còn dùng được."
+        acceptance_criteria:
+          - "Mật khẩu cũ không đăng nhập được Taiga nữa."
+          - "Biến môi trường TAIGA_PASSWORD trên các máy dùng repo đã đổi sang mật khẩu mới."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+
+  - key: CONV
+    subject: "Quy ước Taiga chung"
+    description: "Một tài liệu quy ước Taiga duy nhất cho người và agent, kèm lệnh taigent validate kiểm quy ước offline. Spec: https://github.com/sondoquang/taigent/issues/1"
+    tags: [type:feature]
+    stories:
+      # US10
+      - key: CONV-DOC
+        subject: "Tài liệu quy ước Taiga duy nhất cho cả hai agent"
+        description: "Là trưởng nhóm, tôi muốn một tài liệu quy ước Taiga duy nhất mà cả Claude Code lẫn Codex đều đọc qua AGENTS.md, để mọi người và mọi agent tạo dữ liệu theo cùng chuẩn."
+        acceptance_criteria:
+          - "docs/taiga/conventions.md là tài liệu quy ước duy nhất trong repo."
+          - "AGENTS.md trỏ tới tài liệu quy ước và quy trình plan → review → apply; repo không có CLAUDE.md riêng."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      # US11
+      - key: CONV-NAMING
+        subject: "Quy ước tên và slug project"
+        description: "Là trưởng nhóm, tôi muốn quy ước quy định tên project dạng <Khách hàng/Mảng> - <Sản phẩm> và quy tắc slug, để danh sách project không còn lệch chuẩn."
+        acceptance_criteria:
+          - "Quy ước nêu dạng tên hai phần nối bằng ' - ' kèm ví dụ đúng và sai."
+          - "Quy ước nêu cách Taiga sinh slug từ tên và việc thư mục manifest trùng slug."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      # US12
+      - key: CONV-TEMPLATE
+        subject: "Quy ước chọn template và module bắt buộc"
+        description: "Là trưởng nhóm, tôi muốn quy ước nói rõ loại dự án nào dùng scrum, loại nào dùng kanban, và module nào luôn bật, để mọi project mới có cấu trúc giống nhau."
+        acceptance_criteria:
+          - "Quy ước nêu khi nào chọn scrum và khi nào chọn kanban."
+          - "Quy ước nêu Epics và Wiki luôn bật, kể cả khi template của instance để tắt."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      # US13
+      - key: CONV-TAGS
+        subject: "Bộ tag có tiền tố và màu chuẩn"
+        description: "Là trưởng nhóm, tôi muốn bộ tag có tiền tố cố định (type:, area:, src:) và màu chuẩn, để lọc và báo cáo được trên mọi project."
+        acceptance_criteria:
+          - "Quy ước liệt kê giá trị và màu chuẩn của từng tiền tố."
+          - "Quy ước nêu src: chỉ do taigent gắn, manifest không được viết."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      # US14
+      - key: CONV-ITEM-TEMPLATE
+        subject: "Mẫu mô tả story và task"
+        description: "Là trưởng nhóm, tôi muốn mẫu mô tả story (user story, acceptance criteria, link spec) và mẫu task (định nghĩa done), để mọi item đọc lên giống nhau."
+        acceptance_criteria:
+          - "Quy ước có mẫu mô tả story gồm câu user story, acceptance criteria dạng checklist và link spec."
+          - "Quy ước có mẫu mô tả task ghi định nghĩa done."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      # US15
+      - key: CONV-BANNED-MCP
+        subject: "Danh sách tool MCP bị cấm"
+        description: "Là trưởng nhóm, tôi muốn quy ước liệt kê các tool MCP bị cấm kèm lý do, để agent không gọi tool hỏng."
+        acceptance_criteria:
+          - "Quy ước liệt kê linkStoryToEpic, batchCreate* và download/delete attachment cho story/task kèm lý do hỏng."
+          - "Không skill hay allowlist headless nào chứa tool bị cấm."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      # US16
+      - key: CONV-STATUS
+        subject: "Ánh xạ status mặc định của template"
+        description: "Là trưởng nhóm, tôi muốn quy ước ghi rõ ánh xạ status mặc định của template, để agent dùng đúng tên status."
+        acceptance_criteria:
+          - "Quy ước liệt kê đúng tên status theo thứ tự cho story, task và epic, kèm ý nghĩa."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+        tasks:
+          - key: CONV-STATUS-VERIFY-EPIC
+            subject: "Đối chiếu status epic trên instance"
+            description: "Done khi: danh sách status epic trong quy ước đã được so với instance taiga.vidratek.net, và quy ước bỏ ghi chú chưa đối chiếu hoặc sửa theo instance."
+      # US17
+      - key: CONV-VALIDATE
+        subject: "Lệnh taigent validate kiểm manifest offline"
+        description: "Là thành viên team, tôi muốn lệnh taigent validate kiểm tra manifest theo quy ước mà không cần mạng, để phát hiện lệch chuẩn trước khi chạm Taiga."
+        acceptance_criteria:
+          - "validate kiểm tên, slug, tag, key trùng và field bắt buộc của mọi manifest."
+          - "validate không cần biến TAIGA_* và không gọi Taiga."
+          - "Manifest hợp lệ thì exit 0; sai thì exit 4 và in từng lỗi dạng file: path: message [rule]."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+
+  - key: BOOT
+    subject: "Bootstrap project"
+    description: "Tạo project chuẩn, hoặc đưa project cũ về chuẩn, từ project.yaml bằng một lệnh taigent bootstrap. Spec: https://github.com/sondoquang/taigent/issues/1"
+    tags: [type:feature]
+    stories:
+      # US18
+      - key: BOOT-MANIFEST
+        subject: "Khai báo project trong project.yaml"
+        description: "Là trưởng nhóm, tôi muốn khai báo project mới trong manifest project, để tạo project chỉ bằng một lệnh."
+        acceptance_criteria:
+          - "project.yaml khai báo được tên, slug, mô tả, template, private/public, module, tag kèm màu, custom attributes, thành viên kèm role và trang wiki Home."
+          - "Field không có trong schema bị validate từ chối."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US19
+      - key: BOOT-CREATE
+        subject: "Tạo project từ template đã khai báo"
+        description: "Là trưởng nhóm, tôi muốn taigent bootstrap tạo project từ template đã khai báo, để project có đủ statuses, points và roles mặc định."
+        acceptance_criteria:
+          - "Bootstrap tạo project bằng POST /projects với creation_template lấy từ /project-templates theo tên."
+          - "Template không có trên instance thì bootstrap từ chối với exit 5 và không ghi gì."
+          - "Bootstrap không bao giờ tạo project template."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US20
+      - key: BOOT-MODULES
+        subject: "Tự bật các module bắt buộc"
+        description: "Là trưởng nhóm, tôi muốn bootstrap tự bật các module mà quy ước yêu cầu, đặc biệt Epics, để không ai phải bật tay."
+        acceptance_criteria:
+          - "Module có trong manifest mà đang tắt thì bootstrap bật nó."
+          - "Module không có trong manifest thì giữ nguyên, không bị tắt."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US21
+      - key: BOOT-TAGS
+        subject: "Tạo bộ tag chuẩn với màu chuẩn"
+        description: "Là trưởng nhóm, tôi muốn bootstrap tạo đủ bộ tag chuẩn với màu chuẩn, để tag dùng được ngay khi tạo backlog."
+        acceptance_criteria:
+          - "Tag khai báo mà chưa có thì bootstrap tạo với màu chuẩn."
+          - "Tag đã có nhưng khác màu thì bootstrap sửa về màu chuẩn."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US22
+      - key: BOOT-CUSTOM-ATTRS
+        subject: "Tạo custom attributes cho epic, story và task"
+        description: "Là trưởng nhóm, tôi muốn bootstrap tạo các custom attributes đã khai báo cho epic, story và task, để trường dữ liệu đồng nhất giữa các project."
+        acceptance_criteria:
+          - "Attribute khai báo mà chưa có tên đó trên loại item tương ứng thì bootstrap tạo với mô tả và kiểu đã khai báo."
+          - "Attribute đã có cùng tên thì để nguyên."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US23
+      - key: BOOT-MEMBERS
+        subject: "Mời thành viên theo role"
+        description: "Là trưởng nhóm, tôi muốn bootstrap mời thành viên theo username hoặc email với role theo tên, để phân quyền đúng ngay từ đầu."
+        acceptance_criteria:
+          - "Thành viên chưa có trong project thì bootstrap mời với role tra theo tên hoặc slug."
+          - "Role không có trong template/project thì bootstrap từ chối với exit 5 trước khi ghi."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US24
+      - key: BOOT-WIKI-HOME
+        subject: "Tạo trang wiki Home"
+        description: "Là trưởng nhóm, tôi muốn bootstrap tạo trang wiki Home từ nội dung đã khai báo, để project có điểm vào tài liệu."
+        acceptance_criteria:
+          - "Chưa có trang home thì bootstrap tạo từ wiki_home của manifest."
+          - "Trang home đã có thì giữ nguyên."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US25
+      - key: BOOT-RERUN
+        subject: "Chạy lại bootstrap chỉ bổ sung phần còn thiếu"
+        description: "Là trưởng nhóm, tôi muốn chạy lại bootstrap trên project đã tồn tại chỉ bổ sung phần còn thiếu, để đưa project cũ về chuẩn mà không tạo project trùng."
+        acceptance_criteria:
+          - "Slug đã có thì bootstrap dùng project đó, không tạo project mới."
+          - "Chạy bootstrap hai lần liên tiếp thì lần hai không có thay đổi và exit 0."
+          - "Bootstrap không bao giờ tắt, đổi tên hay xoá gì."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US26
+      - key: BOOT-REFUSE
+        subject: "Từ chối khi không có quyền admin"
+        description: "Là trưởng nhóm, tôi muốn bootstrap từ chối kèm thông báo rõ khi slug thuộc một project mà tôi không có quyền admin, để không ghi nhầm."
+        acceptance_criteria:
+          - "Slug thuộc project mà người dùng không phải admin thì bootstrap thoát exit 5 và không ghi gì."
+          - "Slug thuộc project private mà người dùng không thấy thì bootstrap từ chối, không tạo project slug-1."
+          - "Taiga sinh slug khác manifest thì bootstrap dừng với exit 5 sau khi ghi slug thật vào state.json, và lần chạy sau không tạo project thứ hai."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US27
+      - key: BOOT-DRY-RUN
+        subject: "Xem trước bootstrap bằng dry-run"
+        description: "Là trưởng nhóm, tôi muốn bootstrap có chế độ dry-run liệt kê các thao tác sẽ làm, để duyệt trước khi tạo thật."
+        acceptance_criteria:
+          - "bootstrap --dry-run liệt kê mọi thao tác create/update, không ghi gì kể cả state.json."
+          - "Có thay đổi thì exit 3, không có thì exit 0."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+
+  - key: PLAN
+    subject: "Lập kế hoạch backlog"
+    description: "Agent chuyển spec/PRD thành manifest backlog theo quy ước, chỉ ghi file, để người duyệt diff trước khi chạm Taiga. Spec: https://github.com/sondoquang/taigent/issues/1"
+    tags: [type:feature]
+    stories:
+      # US28, US30
+      - key: PLAN-FROM-SPEC
+        subject: "Sinh manifest backlog từ spec"
+        description: "Là PO, tôi muốn đưa cho agent một spec/PRD và nhận lại manifest backlog epic → story → task viết theo quy ước, để không phải tự chia nhỏ việc."
+        acceptance_criteria:
+          - "Skill taiga-plan-backlog đọc spec và ghi taiga/<slug>/backlog.yaml."
+          - "Mỗi story có subject, mô tả theo mẫu, acceptance criteria và tag."
+          - "Manifest sinh ra qua được taigent validate."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US29
+      - key: PLAN-KEYS
+        subject: "Key ổn định, đọc được cho mọi item"
+        description: "Là PO, tôi muốn mỗi epic, story và task có key ổn định, đọc được, để lần sau sửa spec thì agent cập nhật đúng item thay vì tạo mới."
+        acceptance_criteria:
+          - "Mọi item có key theo dạng chữ hoa, số và gạch ngang, duy nhất trong project."
+          - "Key sai dạng hoặc trùng thì validate báo lỗi key-format hoặc key-unique."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US31
+      - key: PLAN-UPDATE-MANIFEST
+        subject: "Cập nhật manifest hiện có khi spec đổi"
+        description: "Là PO, tôi muốn agent cập nhật manifest hiện có khi spec thay đổi thay vì viết lại từ đầu, để diff git phản ánh đúng thay đổi."
+        acceptance_criteria:
+          - "Item cũ giữ nguyên key, vị trí và comment; chỉ dòng do spec đổi mới thay đổi."
+          - "Item spec không còn nhắc tới được giữ lại và liệt kê trong báo cáo để người quyết định."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US32
+      - key: PLAN-FILES-ONLY
+        subject: "Lập kế hoạch chỉ ghi file, không chạm Taiga"
+        description: "Là PO, tôi muốn bước lập kế hoạch chỉ ghi file và không ghi lên Taiga, để tôi duyệt diff manifest trước khi có gì thay đổi trên Taiga."
+        acceptance_criteria:
+          - "Skill taiga-plan-backlog không gọi lệnh hay tool MCP nào ghi lên Taiga."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US33
+      - key: PLAN-READ-TAIGA
+        subject: "Đối chiếu việc đã có trên Taiga khi lập kế hoạch"
+        description: "Là PO, tôi muốn agent đọc Taiga qua MCP để đối chiếu item đã tồn tại khi lập kế hoạch, để manifest không tạo trùng với việc đã có."
+        acceptance_criteria:
+          - "Skill đọc item có tag src: bằng taigent plan --json và việc làm tay bằng tool MCP đọc."
+          - "Việc làm tay trùng nội dung spec được báo cho người dùng trước khi thêm vào manifest."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+
+  - key: APPLY
+    subject: "Áp backlog lên Taiga"
+    description: "taigent plan cho xem diff manifest với Taiga; taigent apply đưa Taiga về đúng manifest một cách idempotent, không xoá gì. Spec: https://github.com/sondoquang/taigent/issues/1"
+    tags: [type:feature]
+    stories:
+      # US34
+      - key: APPLY-PLAN-DIFF
+        subject: "Xem diff giữa manifest và Taiga bằng taigent plan"
+        description: "Là PO, tôi muốn taigent plan hiện diff giữa manifest và Taiga, để biết chính xác điều gì sắp xảy ra."
+        acceptance_criteria:
+          - "plan liệt kê item sẽ tạo, field sẽ cập nhật, liên kết sẽ thêm, item mồ côi và liên kết cũ."
+          - "plan chỉ đọc Taiga, không ghi gì."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US35
+      - key: APPLY-PLAN-JSON
+        subject: "Output JSON và exit code cho agent headless"
+        description: "Là agent chạy headless, tôi muốn plan có output JSON máy đọc được và exit code phân biệt không có thay đổi với có thay đổi, để skill quyết định bước tiếp."
+        acceptance_criteria:
+          - "plan --json in một Plan theo schema trong docs/cli.md."
+          - "Không có thay đổi thì exit 0, có thay đổi thì exit 3."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US36
+      - key: APPLY-CREATE
+        subject: "Tạo epic, story, task còn thiếu kèm tag src"
+        description: "Là PO, tôi muốn taigent apply tạo epic, story và task còn thiếu và gắn tag src:<key>, để Taiga khớp manifest."
+        acceptance_criteria:
+          - "Item có trong manifest mà chưa có trên Taiga thì apply tạo theo thứ tự epic → story → liên kết → task."
+          - "Mỗi item tạo ra mang tag src:<key> viết thường."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US37
+      - key: APPLY-UPDATE
+        subject: "Cập nhật field do manifest quản lý"
+        description: "Là PO, tôi muốn apply cập nhật subject, mô tả, tag và giá trị custom attribute khi chúng lệch manifest, để Taiga luôn theo manifest."
+        acceptance_criteria:
+          - "Subject hoặc mô tả lệch thì apply PATCH về giá trị của manifest."
+          - "Tag của manifest còn thiếu thì apply thêm vào; tag người dùng tự gắn được giữ nguyên."
+          - "Giá trị custom attribute lệch thì apply ghi lại; giá trị của attribute không khai báo được giữ nguyên."
+          - "Tên custom attribute không có trên project thì plan/apply báo lỗi exit 5 trước khi ghi."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US38
+      - key: APPLY-KEEP-PEOPLE-FIELDS
+        subject: "Không ghi đè field do người làm quản lý"
+        description: "Là PO, tôi muốn apply không đụng status, assignee, sprint và points, để không ghi đè tiến độ thực tế."
+        acceptance_criteria:
+          - "Status, assignee, sprint, points và thứ tự do người dùng đổi trên Taiga vẫn giữ nguyên sau apply."
+          - "Manifest không có field status, assignee, sprint hay points; validate từ chối nếu có."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US39
+      - key: APPLY-EPIC-LINK
+        subject: "Gắn story vào epic qua related_userstories"
+        description: "Là PO, tôi muốn apply gắn story vào epic qua endpoint related_userstories, để liên kết epic–story thực sự được lưu."
+        acceptance_criteria:
+          - "apply gắn story vào epic bằng POST /epics/{id}/related_userstories sau khi GET cho thấy chưa có liên kết."
+          - "Story chuyển sang epic khác thì apply gắn epic mới, giữ liên kết cũ và plan báo nó trong staleLinks."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US40
+      - key: APPLY-TASK-PARENT
+        subject: "Gắn task vào đúng story cha"
+        description: "Là PO, tôi muốn apply gắn task vào đúng story cha, để cây công việc khớp manifest."
+        acceptance_criteria:
+          - "Task mới được tạo với user_story là story cha trong manifest."
+          - "Task chuyển sang story khác trong manifest thì apply PATCH user_story về story mới."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US41
+      - key: APPLY-IDEMPOTENT
+        subject: "Chạy lại apply luôn an toàn"
+        description: "Là PO, tôi muốn chạy apply hai lần liên tiếp mà lần hai không tạo gì mới, để chạy lại luôn an toàn."
+        acceptance_criteria:
+          - "Sau một lần apply thành công, apply lần hai không tạo hay sửa gì."
+          - "plan ngay sau đó thoát exit 0."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US42
+      - key: APPLY-NO-DELETE
+        subject: "Không xoá item, chỉ báo mồ côi"
+        description: "Là PO, tôi muốn apply không bao giờ xoá item trên Taiga, để không mất dữ liệu."
+        acceptance_criteria:
+          - "Item có tag src: mà key không còn trong manifest được plan báo là mồ côi và không bị xoá."
+          - "Mồ côi không làm plan thoát exit 3."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US43
+      - key: APPLY-CONFIRM
+        subject: "Apply cần xác nhận tường minh bằng --yes"
+        description: "Là PO, tôi muốn apply yêu cầu xác nhận tường minh bằng cờ --yes khi chạy headless, để agent không tự ghi khi chưa được duyệt."
+        acceptance_criteria:
+          - "apply không có --yes thì in plan, không ghi gì kể cả state.json, và thoát exit 2 khi có thay đổi."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US44
+      - key: APPLY-STATE
+        subject: "Ghi ID và ref của từng key vào state.json"
+        description: "Là PO, tôi muốn sau apply, ID và ref Taiga của từng key được ghi vào state file trong repo, để lần sau tra nhanh và commit kèm manifest."
+        acceptance_criteria:
+          - "Sau mỗi lần ghi thành công, state.json có type, id, ref và version của key đó."
+          - "state.json giữ project id và slug của project."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US45
+      - key: APPLY-SRC-TAG-IDENTITY
+        subject: "Tag src là nguồn đối chiếu chính"
+        description: "Là PO, tôi muốn tag src:<key> trên Taiga là nguồn đối chiếu chính khi state file lệch hoặc mất, để không tạo trùng kể cả khi state file sai."
+        acceptance_criteria:
+          - "Xoá hoặc làm sai state.json rồi chạy apply thì không tạo item trùng."
+          - "Story và task được lọc theo tag phía server; epic được lọc theo tag phía client."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+        tasks:
+          - key: APPLY-SRC-TAG-IDENTITY-EPIC-FILTER
+            subject: "Kiểm chứng epic có lọc theo tag phía server không"
+            description: "Done khi: đã thử GET /epics?project=<id>&tags=src:<key> trên instance và ghi kết quả vào docs; nếu server lọc được thì mở việc chuyển epic sang lọc phía server."
+      # US46
+      - key: APPLY-OCC
+        subject: "Gửi version khi cập nhật và báo xung đột"
+        description: "Là PO, tôi muốn apply gửi kèm version khi cập nhật và báo xung đột rõ ràng nếu item vừa bị người khác sửa, để không ghi đè thay đổi đồng thời."
+        acceptance_criteria:
+          - "Mọi PATCH của apply gửi version hiện tại của item."
+          - "Taiga từ chối vì version cũ thì apply dừng, báo conflict kèm key và không ghi đè gì."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US47
+      - key: APPLY-RESUME
+        subject: "Dừng ở lỗi đầu tiên và chạy lại thì tiếp tục"
+        description: "Là PO, tôi muốn apply dừng ở lỗi đầu tiên với thông báo rõ và những gì đã tạo vẫn được ghi vào state, để chạy lại thì tiếp tục được từ chỗ dừng."
+        acceptance_criteria:
+          - "Lỗi giữa chừng thì apply dừng và nêu key, thao tác và lỗi Taiga trả về."
+          - "Các item đã tạo trước lỗi có trong state.json."
+          - "Chạy lại apply thì hoàn tất phần còn lại mà không tạo trùng."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US48 + Implementation Decisions (refresh token)
+      - key: APPLY-RETRY
+        subject: "Tự retry khi bị throttle hoặc token hết hạn"
+        description: "Là PO, tôi muốn CLI tự retry có backoff khi Taiga trả 429 và tự refresh token khi gặp 401, để throttle hay token hết hạn không làm job hỏng."
+        acceptance_criteria:
+          - "Taiga trả 429 thì CLI chờ theo backoff rồi gửi lại request."
+          - "Token hết hạn giữa chừng thì CLI refresh bằng /auth/refresh, retry một lần và hoàn tất."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+
+  - key: UPLOAD
+    subject: "Upload tài liệu"
+    description: "taigent upload đưa trang wiki và attachment khai báo trong docs.yaml lên Taiga, không tạo trùng và không xoá gì. Spec: https://github.com/sondoquang/taigent/issues/1"
+    tags: [type:feature]
+    stories:
+      # US49
+      - key: UPLOAD-WIKI-MANIFEST
+        subject: "Khai báo trang wiki trong docs.yaml"
+        description: "Là PO, tôi muốn khai báo trong manifest tài liệu những file Markdown sẽ thành trang wiki kèm slug, để tài liệu dự án nằm đúng chỗ trên Taiga."
+        acceptance_criteria:
+          - "docs.yaml khai báo được slug và file Markdown cho mỗi trang wiki."
+          - "Slug sai quy ước, trùng hoặc file không tồn tại thì validate báo lỗi."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US50
+      - key: UPLOAD-WIKI-UPSERT
+        subject: "Tạo hoặc cập nhật trang wiki theo slug"
+        description: "Là PO, tôi muốn taigent upload tạo hoặc cập nhật trang wiki theo slug, để chạy lại không sinh trang trùng."
+        acceptance_criteria:
+          - "Chưa có trang với slug đó thì upload tạo trang."
+          - "Trang đã có mà nội dung khác file thì upload cập nhật; nội dung giống thì bỏ qua."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US51
+      - key: UPLOAD-ATTACHMENT
+        subject: "Upload attachment cho epic, story, task hoặc wiki"
+        description: "Là PO, tôi muốn upload file nhị phân làm attachment cho epic, story, task hoặc wiki, xác định item qua key của manifest, để tài liệu gắn đúng ngữ cảnh."
+        acceptance_criteria:
+          - "Attachment có target là key trong backlog.yaml hoặc wiki:<slug> được upload vào đúng item."
+          - "Target không có trong backlog.yaml thì validate báo lỗi key-reference."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US52
+      - key: UPLOAD-DEDUP
+        subject: "Bỏ qua attachment đã có cùng tên và nội dung"
+        description: "Là PO, tôi muốn upload bỏ qua attachment đã có cùng tên và cùng nội dung, để chạy lại không nhân bản file."
+        acceptance_criteria:
+          - "Attachment cùng name, size và sha1 đã có trên item thì upload bỏ qua."
+          - "Chạy upload hai lần liên tiếp thì lần hai không upload gì."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US53
+      - key: UPLOAD-NEW-VERSION
+        subject: "Upload bản mới khi file cục bộ đổi nội dung"
+        description: "Là PO, tôi muốn khi file cục bộ đổi nội dung thì upload thêm bản mới và báo rõ bản cũ còn đó, để không mất lịch sử mà vẫn biết có thay đổi."
+        acceptance_criteria:
+          - "File cùng tên nhưng khác sha1 thì upload thêm bản mới, không xoá bản cũ."
+          - "Output nêu rõ bản cũ vẫn còn trên item."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US54
+      - key: UPLOAD-STREAM
+        subject: "Stream file từ đĩa lên Taiga"
+        description: "Là PO, tôi muốn upload đọc file từ đĩa và stream lên Taiga thay vì đưa nội dung qua context của model, để file lớn không tốn token."
+        acceptance_criteria:
+          - "CLI đọc file từ đường dẫn trong docs.yaml và gửi multipart; skill không đọc nội dung file nhị phân."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US55
+      - key: UPLOAD-SIZE-LIMIT
+        subject: "Báo lỗi rõ khi file vượt giới hạn kích thước"
+        description: "Là PO, tôi muốn upload báo lỗi rõ khi file vượt giới hạn kích thước của server, để biết phải xử lý."
+        acceptance_criteria:
+          - "Server từ chối vì file quá lớn thì upload thoát exit 5 và nêu tên file, kích thước và mã lỗi."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+        tasks:
+          - key: UPLOAD-SIZE-LIMIT-PROXY
+            subject: "Đo giới hạn upload thực tế của reverse proxy trên instance"
+            description: "Done khi: đã đo giới hạn kích thước upload của taiga.vidratek.net (reverse proxy và Taiga) và ghi con số vào docs/cli.md."
+
+  - key: SKILL
+    subject: "Agent và skills"
+    description: "Bộ skill taiga-* dùng chung cho Claude Code và Codex theo quy trình plan → review → apply, kèm wrapper chạy headless. Spec: https://github.com/sondoquang/taigent/issues/1"
+    tags: [type:feature]
+    stories:
+      # US56
+      - key: SKILL-CLAUDE
+        subject: "Gọi các skill taiga-* trong Claude Code"
+        description: "Là người dùng Claude Code, tôi muốn gọi /taiga-bootstrap-project, /taiga-plan-backlog, /taiga-apply-backlog, /taiga-upload-docs và /taiga-status-report, để làm từng việc bằng một lệnh."
+        acceptance_criteria:
+          - "Năm skill có trong .claude/skills/ và gọi được bằng slash command trong Claude Code."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US57
+      - key: SKILL-CODEX
+        subject: "Dùng cùng bộ skill trong Codex CLI"
+        description: "Là người dùng Codex CLI, tôi muốn dùng được đúng những skill đó với cùng hành vi, để team dùng agent nào cũng ra kết quả giống nhau."
+        acceptance_criteria:
+          - "Năm skill có trong .agents/skills/ và gọi được bằng $<tên skill> trong Codex."
+          - "Cùng manifest và cùng skill thì Claude Code và Codex cho cùng kết quả trên Taiga."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US58
+      - key: SKILL-EXPLICIT
+        subject: "Skill có ghi chỉ chạy khi gọi tường minh"
+        description: "Là trưởng nhóm, tôi muốn các skill có ghi vào Taiga chỉ chạy khi người dùng gọi tường minh, để tránh ghi ngoài ý muốn."
+        acceptance_criteria:
+          - "Skill bootstrap, apply và upload tắt implicit invocation ở cả Claude (disable-model-invocation) lẫn Codex (allow_implicit_invocation: false)."
+          - "Mỗi skill khai báo allowed-tools hẹp và không chứa tool MCP ghi."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US59
+      - key: SKILL-APPLY-REVIEW
+        subject: "Skill apply luôn cho xem plan trước khi ghi"
+        description: "Là PO, tôi muốn skill apply luôn chạy plan, cho tôi xem diff và chỉ apply sau khi tôi đồng ý, để giữ quy trình plan → review → apply."
+        acceptance_criteria:
+          - "Skill chạy taigent plan và hiện đủ thao tác trước khi hỏi xác nhận."
+          - "Skill chỉ chạy apply --yes sau khi người dùng đồng ý tường minh; trả lời khác thì dừng, Taiga không đổi."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US60
+      - key: SKILL-STATUS-REPORT
+        subject: "Báo cáo tiến độ bằng /taiga-status-report"
+        description: "Là PO, tôi muốn /taiga-status-report tóm tắt tiến độ theo epic và sprint bằng MCP chỉ đọc, để nắm tình hình mà không mở web."
+        acceptance_criteria:
+          - "Báo cáo nêu số story xong/mở, points và item bị chặn theo epic và sprint."
+          - "Skill chỉ dùng tool MCP đọc."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US61
+      - key: SKILL-SYNC
+        subject: "Một nguồn skill chuẩn và lệnh đồng bộ"
+        description: "Là trưởng nhóm, tôi muốn skills có một nguồn chuẩn duy nhất và một lệnh đồng bộ sang thư mục skill của agent còn lại, kèm lệnh kiểm tra phát hiện lệch, để hai bản không trôi khỏi nhau."
+        acceptance_criteria:
+          - "taigent skills sync chép .agents/skills/taiga-* sang .claude/skills/."
+          - "taigent skills check thoát exit 3 khi hai bản khác nhau; npm test chạy lệnh này."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+      # US62
+      - key: SKILL-HEADLESS
+        subject: "Script chạy skill headless trên PowerShell và shell"
+        description: "Là thành viên team, tôi muốn script wrapper chạy một skill headless qua claude -p hoặc codex exec với tham số và allowlist chuẩn, để mọi người chạy cùng một cách."
+        acceptance_criteria:
+          - "tools/taiga/run-skill.ps1 và run-skill.sh nhận agent, tên skill và tham số rồi dựng lệnh claude -p hoặc codex exec."
+          - "--dry-run chỉ in lệnh sẽ chạy."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+        tasks:
+          - key: SKILL-HEADLESS-CODEX-APPROVAL
+            subject: "Kiểm chứng codex exec xử lý duyệt tool MCP khi không có người"
+            description: "Done khi: đã chạy một skill bằng codex exec không có người trả lời và docs/headless.md ghi lại cách Codex xử lý yêu cầu duyệt tool MCP."
+      # US63
+      - key: SKILL-ALLOWLIST
+        subject: "Allowlist headless chỉ gồm tool đọc và lệnh taigent"
+        description: "Là thành viên team chạy headless, tôi muốn allowlist chỉ cho phép tool MCP đọc và lệnh CLI taigent, để agent không gọi tool ghi hay tool hỏng ngoài quy trình."
+        acceptance_criteria:
+          - "tools/taiga/allowlist.txt chỉ chứa tool MCP đọc và lệnh npx taigent."
+          - "Dưới codex exec, lệnh shell ngoài allowlist bị hook chặn."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:feature]
+
+  - key: TEST
+    subject: "Kiểm thử và nghiệm thu"
+    description: "Test CLI qua seam duy nhất với fake Taiga, smoke test tuỳ chọn trên Taiga thật và nghiệm thu skills bằng tay. Spec: https://github.com/sondoquang/taigent/issues/1"
+    tags: [type:chore]
+    stories:
+      - key: TEST-FAKE-TAIGA
+        subject: "Bộ test CLI với fake Taiga HTTP server"
+        description: "Là thành viên team, tôi muốn test gọi CLI taigent như người dùng gọi, với TAIGA_API_URL trỏ tới fake Taiga trong tiến trình test, để refactor nội bộ không làm vỡ test."
+        acceptance_criteria:
+          - "Fake Taiga cài đúng tập endpoint CLI dùng và từ chối field sai bằng lỗi 400."
+          - "Fake có hook mô phỏng 401 hết hạn token, 429 và xung đột version."
+          - "Test chỉ kiểm trạng thái của fake, stdout/JSON và exit code; không mock module nội bộ."
+          - "npm test và npm run typecheck chạy qua."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      - key: TEST-LIVE-SMOKE
+        subject: "Smoke test trên Taiga thật"
+        description: "Là trưởng nhóm, tôi muốn một smoke test tuỳ chọn chạy apply và upload trên project test của taiga.vidratek.net, để biết CLI chạy đúng với Taiga thật."
+        acceptance_criteria:
+          - "Smoke test chỉ chạy khi đặt biến môi trường bật riêng, không chạy trong bộ test mặc định."
+          - "Smoke test chạy apply và upload với manifest nhỏ trên project test (ID 7) rồi kiểm lại qua REST."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+      - key: TEST-SKILL-ACCEPTANCE
+        subject: "Nghiệm thu từng skill với Claude Code và Codex"
+        description: "Là trưởng nhóm, tôi muốn chạy tay mỗi skill với cả Claude Code và Codex trên project test, để nghiệm thu skills trước khi team dùng."
+        acceptance_criteria:
+          - "Mỗi skill taiga-* đã chạy một lần với Claude Code và một lần với Codex trên project test."
+          - "Kết quả nghiệm thu và lỗi phát hiện được ghi vào issue nghiệm thu."
+        spec: https://github.com/sondoquang/taigent/issues/1
+        tags: [type:chore]
+        tasks:
+          - key: TEST-SKILL-ACCEPTANCE-CLAUDE
+            subject: "Nghiệm thu năm skill với Claude Code"
+            description: "Done khi: năm skill taiga-* đã chạy với Claude Code trên project test và kết quả đã ghi vào issue nghiệm thu."
+          - key: TEST-SKILL-ACCEPTANCE-CODEX
+            subject: "Nghiệm thu năm skill với Codex CLI"
+            description: "Done khi: năm skill taiga-* đã chạy với Codex trên project test và kết quả đã ghi vào issue nghiệm thu."

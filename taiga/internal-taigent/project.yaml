@@ -1,0 +1,13 @@
+name: Internal - Taigent
+slug: internal-taigent
+description: Headless toolkit for driving Taiga from AI agents (declarative manifests, plan → review → apply).
+template: kanban
+is_private: true
+modules: [epics, backlog, kanban, wiki]
+tags:
+  - name: type:feature
+    color: "#2E7D32"
+  - name: type:bug
+    color: "#C62828"
+  - name: type:chore
+    color: "#757575"
