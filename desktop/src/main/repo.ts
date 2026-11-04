@@ -60,9 +60,9 @@ export async function setHeadlessAgent(agent: unknown): Promise<HeadlessAgent> {
   return known;
 }
 
-/** The app's colours; the OS's until the user picks light or dark. */
+/** The app's colours; dark until the user picks the OS's or light. */
 export async function theme(): Promise<Theme> {
-  return (await readSettings()).theme ?? 'system';
+  return (await readSettings()).theme ?? 'dark';
 }
 
 export async function setTheme(choice: unknown): Promise<Theme> {

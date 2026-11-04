@@ -128,7 +128,7 @@ export async function smokeTickets({ app, page, work, shots, check, log, login }
       await answer(1);
       await page.selectOption(`${row(open)} select.ticket-status`, 'Ready for test');
       await page.click(`${row(open)} .ticket-status-save`);
-      await page.waitForFunction(() => document.querySelector('#toast')?.textContent?.includes('Đã huỷ'));
+      await page.waitForFunction(() => document.querySelector('[data-sonner-toaster]')?.textContent?.includes('Đã huỷ'));
       check(patches() === 0 && (await app.evaluate(() => globalThis.smokeDialogs)).includes('Đổi status ticket'), 'tickets (FakeTaiga): status change asked for confirmation; "Huỷ" wrote nothing');
 
       // Confirmed: the status is written, then the list is read again.

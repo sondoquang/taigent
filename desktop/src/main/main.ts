@@ -109,8 +109,8 @@ function createWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     title: 'Taigent Desktop',
-    // The page's paper (styles.css), so the window shows no flash of the other theme while it loads.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1f' : '#ffffff',
+    // The page's background (--background in src/renderer/globals.css), so the window shows no flash while it loads.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#000000' : '#ffffff',
     show: false,
     webPreferences: {
       preload: PRELOAD,

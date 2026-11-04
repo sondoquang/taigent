@@ -140,31 +140,30 @@ try {
   check((await page.getAttribute('#tree .node.selected', 'data-key')) === story, `${story} still selected after switching sections (j ignored outside Backlog)`);
   check((await page.textContent('.breadcrumb'))?.includes(story), `detail still shows ${story}`);
 
-  // Settings > Giao diện: Tối and Sáng switch the page (prefers-color-scheme through nativeTheme) and are saved.
-  const paperOf = () => page.evaluate(() => ({ dark: matchMedia('(prefers-color-scheme: dark)').matches, paper: getComputedStyle(document.documentElement).backgroundColor }));
+  // Settings > Giao diện: Sáng and Tối switch the page (prefers-color-scheme through nativeTheme) and are saved. The
+  // html element is transparent; the body carries bg-background.
+  const paperOf = () => page.evaluate(() => ({ dark: matchMedia('(prefers-color-scheme: dark)').matches, paper: getComputedStyle(document.body).backgroundColor }));
   const themeFile = join(work, 'user-data', 'settings.json');
+  const themeRadio = (value) => `#settings-theme [role="radio"][value="${value}"]`;
   await goTo(page, 'settings');
-  check(await page.isChecked('input[name="theme"][value="system"]'), 'Settings: the theme follows the system by default');
-  await page.check('input[name="theme"][value="dark"]');
-  await page.waitForFunction(() => matchMedia('(prefers-color-scheme: dark)').matches);
-  const dark = await paperOf();
-  check(dark.paper === 'rgb(30, 30, 31)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'dark', `Tối: the page turns dark and settings.json keeps it (${JSON.stringify(dark)})`);
-  await goTo(page, 'backlog');
-  await page.screenshot({ path: join(shots, 'theme-dark-backlog.png') });
-  await goTo(page, 'settings');
-  await page.screenshot({ path: join(shots, 'theme-dark-settings.png') });
-  await page.check('input[name="theme"][value="light"]');
+  await page.waitForSelector('#settings-theme [role="radio"][aria-checked="true"]');
+  check(await page.isChecked(themeRadio('dark')), 'Settings: the theme is dark by default');
+  await page.check(themeRadio('light'));
   await page.waitForFunction(() => !matchMedia('(prefers-color-scheme: dark)').matches);
   const light = await paperOf();
   check(light.paper === 'rgb(255, 255, 255)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'light', `Sáng: the page turns light and settings.json keeps it (${JSON.stringify(light)})`);
-  await page.check('input[name="theme"][value="system"]');
-  await page.waitForFunction(() => document.querySelector('input[name="theme"][value="system"]')?.checked === true);
+  await page.check(themeRadio('dark'));
+  await page.waitForFunction(() => matchMedia('(prefers-color-scheme: dark)').matches);
+  const dark = await paperOf();
+  check(dark.paper === 'rgb(0, 0, 0)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'dark', `Tối: the page turns dark and settings.json keeps it (${JSON.stringify(dark)})`);
+  await page.screenshot({ path: join(shots, 'theme-dark-settings.png') });
   await goTo(page, 'backlog');
+  await page.screenshot({ path: join(shots, 'theme-dark-backlog.png') });
 
   // Approve, then change the story's description as an agent would: the approval turns stale.
   await page.click('.verdict-bar [data-verdict="approved"]');
-  await page.waitForSelector('.verdict-bar .verdict.approve.on, #toast.error');
-  check(await page.isVisible('.verdict-bar .verdict.approve.on'), `the story is marked Đạt${(await page.isVisible('#toast.error')) ? ` (error: ${await page.textContent('#toast')})` : ''}`);
+  await page.waitForSelector('.verdict-bar .verdict.approve.on, [data-sonner-toast][data-type="error"]');
+  check(await page.isVisible('.verdict-bar .verdict.approve.on'), `the story is marked Đạt${(await page.isVisible('[data-sonner-toast][data-type="error"]')) ? ` (error: ${await page.textContent('[data-sonner-toaster]')})` : ''}`);
   check((await readFile(reviewFile, 'utf8')).includes('verdict: approved'), 'review.yaml has verdict approved');
   const backlog = await readFile(backlogFile, 'utf8');
   // A Windows checkout (core.autocrlf) has CRLF line endings.
@@ -332,7 +331,7 @@ check(survivors.length === 0, `after quitting, none of the app's ${appTree.size}
  */
 async function formScenario(page) {
   await page.click('#add-epic');
-  await page.waitForSelector('#item-form[open]');
+  await page.waitForSelector('#item-form[data-state="open"]');
   await page.fill('#form-subject', 'Soạn backlog bằng form');
   const epicKey = await page.inputValue('#form-key');
   check(epicKey === 'SOAN-BACKLOG', `epic key suggested from the subject (${epicKey})`);
@@ -351,7 +350,7 @@ async function formScenario(page) {
 
   await page.click('#tree .node[data-key="REVIEW-APPROVE"]');
   await page.click('.detail-head [data-action="add-task"]');
-  await page.waitForSelector('#item-form[open]');
+  await page.waitForSelector('#item-form[data-state="open"]');
   await page.fill('#form-subject', 'Kiểm tra form task');
   const taskKey = await page.inputValue('#form-key');
   check(taskKey === 'REVIEW-APPROVE-KIEM-TRA', `task key suggested under its story (${taskKey})`);
@@ -366,20 +365,20 @@ async function formScenario(page) {
 
   await page.click('#tree .node[data-key="REVIEW"]');
   await page.click('.detail-head [data-action="edit"]');
-  await page.waitForSelector('#item-form[open]');
+  await page.waitForSelector('#item-form[data-state="open"]');
   check(await page.isDisabled('#form-key'), 'the key of an epic already on Taiga is locked');
   await page.click('#form-cancel');
 
   await page.click(`#tree .node[data-key="${taskKey}"]`);
   await page.click('.detail-head [data-action="edit"]');
-  await page.waitForSelector('#item-form[open]');
+  await page.waitForSelector('#item-form[data-state="open"]');
   await page.fill('#form-subject', 'Kiểm tra form task (đã sửa)');
   const byAgent = (await readFile(backlogFile, 'utf8')).replace('subject: "Hạ tầng smoke test của desktop"', 'subject: "Hạ tầng smoke test của desktop (agent sửa)"');
   await writeFile(backlogFile, byAgent);
-  await page.waitForSelector('#form-stale:not([hidden])', { timeout: 10_000 });
+  await page.waitForSelector('#form-stale', { timeout: 10_000 });
   log('ok - the open form notices that backlog.yaml changed');
   await page.click('#form-save');
-  await page.waitForSelector('#conflict-dialog[open]');
+  await page.waitForSelector('#conflict-dialog[data-state="open"]');
   check((await page.textContent('#conflict-diff'))?.includes('(agent sửa)'), "the conflict dialog shows the agent's change");
   check((await readFile(backlogFile, 'utf8')) === byAgent, "the save is refused: backlog.yaml is still the agent's version");
   await page.screenshot({ path: join(shots, '7-conflict.png') });
@@ -390,7 +389,7 @@ async function formScenario(page) {
 
   await page.click('#tree .node[data-key="REVIEW-MARKDOWN"]');
   await page.click('.detail-head [data-action="remove"]');
-  await page.waitForSelector('#remove-dialog[open]');
+  await page.waitForSelector('#remove-dialog[data-state="open"]');
   const orphans = await page.textContent('#remove-orphans');
   check(orphans?.includes('mồ côi') && orphans.includes('REVIEW-MARKDOWN'), 'removing a story already on Taiga warns that it becomes an orphan');
   await page.screenshot({ path: join(shots, '8-remove-warning.png') });
@@ -399,7 +398,7 @@ async function formScenario(page) {
 
   await page.click(`#tree .node[data-key="${taskKey}"]`);
   await page.click('.detail-head [data-action="remove"]');
-  await page.waitForSelector('#remove-dialog[open]');
+  await page.waitForSelector('#remove-dialog[data-state="open"]');
   check(!(await page.isVisible('#remove-orphans')), 'no orphan warning for an item not on Taiga');
   await page.click('#remove-confirm');
   await page.waitForSelector(`#tree .node[data-key="${taskKey}"]`, { state: 'detached' });
@@ -434,12 +433,12 @@ async function wikiScenario(page) {
   check((await page.locator('#wiki-pages .wiki-page').count()) === 2, 'Wiki lists the 2 pages of docs.yaml');
 
   await page.click('#wiki-add');
-  await page.waitForSelector('#wiki-form[open]');
+  await page.waitForSelector('#wiki-form[data-state="open"]');
   await page.fill('#wiki-slug', 'Trang Smoke');
   await page.fill('#wiki-content', '# Trang smoke\n\nTạo bằng **form wiki** của desktop.\n');
   check((await page.textContent('#wiki-preview h1')) === 'Trang smoke', 'the form previews the Markdown');
   await page.click('#wiki-save');
-  await page.waitForSelector('#wiki-form .field[data-field="slug"] .field-error:not([hidden])');
+  await page.waitForSelector('#wiki-form .field[data-field="slug"] .field-error');
   check((await page.textContent('#wiki-form .field[data-field="slug"] .field-error'))?.includes('[wiki-slug]'), 'a slug that breaks the rule is refused with rule wiki-slug');
   check((await readFile(docsFile, 'utf8')) === docsBefore, 'nothing is written for a bad slug');
   await page.fill('#wiki-slug', 'trang-smoke');
@@ -452,7 +451,7 @@ async function wikiScenario(page) {
   check(docs.startsWith(docsBefore.trimEnd()) && /\n {2}- slug: trang-smoke\r?\n {4}file: pages\/trang-smoke\.md\r?\n$/.test(docs), 'docs.yaml has the new entry after the others, comments kept');
 
   await page.click('#wiki-pages .wiki-page[data-slug="trang-smoke"] [data-action="edit"]');
-  await page.waitForSelector('#wiki-form[open]');
+  await page.waitForSelector('#wiki-form[data-state="open"]');
   check(await page.isDisabled('#wiki-slug'), 'the slug of an existing page is locked');
   await page.fill('#wiki-content', '# Trang smoke\n\nĐã sửa bằng form.\n');
   await page.click('#wiki-save');
@@ -570,7 +569,7 @@ async function storyFormScenario(page) {
 
   await page.click('#tree .node[data-key="PUSH"]');
   await page.click('.detail-head [data-action="add-story"]');
-  await page.waitForSelector('#item-form[open] #story-format[data-format="user-story"]');
+  await page.waitForSelector('#item-form[data-state="open"] #story-format[data-format="user-story"]');
   check((await page.inputValue('#form-parent')) === 'PUSH', 'the new story belongs to the epic it was added from');
   await page.fill('#form-subject', 'Soạn story bằng form');
   const storyKey = await page.inputValue('#form-key');
@@ -632,7 +631,7 @@ async function storyFormScenario(page) {
   // A legacy story is edited in the legacy mode: its format stays.
   await page.click('#tree .node[data-key="REVIEW-MARKDOWN"]');
   await page.click('.detail-head [data-action="edit"]');
-  await page.waitForSelector('#item-form[open] #story-format[data-format="legacy"]');
+  await page.waitForSelector('#item-form[data-state="open"] #story-format[data-format="legacy"]');
   check(!(await page.isVisible('#story-as-a')) && (await page.locator('#story-format .criterion').count()) === 2, 'a legacy story opens in the legacy mode with its acceptance criteria');
   await page.fill('#form-description', 'Là BA, tôi muốn thấy mô tả story đúng như Taiga sẽ hiển thị (sửa bằng form).');
   await page.click('#form-save');
@@ -642,7 +641,7 @@ async function storyFormScenario(page) {
 
   // "Chuyển sang user story format" runs only when chosen.
   await page.click('.detail-head [data-action="edit"]');
-  await page.waitForSelector('#item-form[open] #story-format[data-format="legacy"]');
+  await page.waitForSelector('#item-form[data-state="open"] #story-format[data-format="legacy"]');
   await page.click('#story-convert');
   await page.waitForSelector('#story-format[data-format="user-story"] #story-converted');
   check(JSON.stringify(await names()) === JSON.stringify(legacy.acceptance_criteria), 'each acceptance criterion becomes a scenario to complete');
@@ -672,7 +671,7 @@ async function storyFormScenario(page) {
  */
 async function issueFormScenario(page) {
   await page.click('#add-issue');
-  await page.waitForSelector('#item-form[open] #form-type');
+  await page.waitForSelector('#item-form[data-state="open"] #form-type');
   const template = await page.inputValue('#form-description');
   check(['## Steps to reproduce', '## Expected', '## Actual'].every((label) => template.includes(label)), 'a new issue starts from the Steps to reproduce / Expected / Actual template');
   await page.waitForFunction(() => !document.querySelector('#form-values-hint')?.textContent?.startsWith('Đang đọc'), null, { timeout: 120_000 });
@@ -721,7 +720,7 @@ async function issueFormScenario(page) {
   check((await page.textContent('.detail-head'))?.includes('Chưa duyệt'), 'the new issue shows as Chưa duyệt');
 
   await page.click('.detail-head [data-action="edit"]');
-  await page.waitForSelector('#item-form[open] #form-type');
+  await page.waitForSelector('#item-form[data-state="open"] #form-type');
   check((await page.inputValue('#form-type')) === chosen.type && (await page.inputValue('#form-description')) === description, 'editing the issue opens its saved values');
   await page.fill('#form-subject', 'Form issue mất mẫu mô tả khi lưu (đã sửa)');
   await page.click('#form-save');
@@ -749,7 +748,7 @@ async function issueValuesOnTaiga(page) {
   await page.waitForFunction((slug) => [...document.querySelectorAll('#project-select option')].some((option) => option.value === slug), onTaiga.slug);
   await page.selectOption('#project-select', onTaiga.slug);
   await page.click('#add-issue');
-  await page.waitForSelector('#item-form[open] select#form-type', { timeout: 120_000 });
+  await page.waitForSelector('#item-form[data-state="open"] select#form-type', { timeout: 120_000 });
   const detail = await page.evaluate((slug) => window.taigent.readTaigaProject(slug), onTaiga.slug);
   const taiga = detail.ok ? detail.value.taiga : undefined;
   check(taiga !== undefined, `taigent projects --project ${onTaiga.slug} --json lists the issue values`);

@@ -1,0 +1,262 @@
+/*
+ * Taigent Desktop design tokens: shadcn/ui (new-york, zinc) defaults on Tailwind v4, dark first. The root font size
+ * is 13px, so the Tailwind spacing and radius scales land on the design system's values (docs/desktop-design-system.md):
+ * p-0.5 = 1.63px, p-1 = 3.25px, p-2 = 6.5px, p-3 = 9.75px; text-sm = 13px body text. Components use the semantic
+ * tokens below (bg-background, text-muted-foreground, border-border…), never raw colours.
+ */
+
+@import 'tailwindcss' source('.');
+@import 'tw-animate-css';
+
+/* `dark:` follows prefers-color-scheme, which the main process drives through nativeTheme.themeSource (Settings). */
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+/* Geist for the whole interface; Geist Mono only for the terminal (xterm.js, screens/terminal/terminal-dock.tsx). Both
+ * vendored in fonts/ (SIL OFL 1.1, OFL.txt): nothing loads from the network. */
+@font-face {
+  font-family: 'Geist';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./fonts/Geist-Variable.woff2') format('woff2-variations');
+}
+@font-face {
+  font-family: 'Geist';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./fonts/Geist-Italic-Variable.woff2') format('woff2-variations');
+}
+@font-face {
+  font-family: 'Geist Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./fonts/GeistMono-Variable.woff2') format('woff2-variations');
+}
+
+/* Light: shadcn zinc. */
+:root {
+  --radius: 0.5rem;
+  --background: #ffffff; /* the window's backgroundColor in src/main/main.ts */
+  --foreground: oklch(0.141 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+  --primary: oklch(0.21 0.006 285.885);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+  --accent: oklch(0.967 0.001 286.375);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.705 0.015 286.067);
+  --success: oklch(0.527 0.154 150.069);
+  --warning: oklch(0.555 0.163 48.998);
+  --info: oklch(0.546 0.245 262.881);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.141 0.005 285.823);
+  --sidebar-primary: oklch(0.21 0.006 285.885);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.967 0.001 286.375);
+  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
+  --sidebar-border: oklch(0.92 0.004 286.32);
+  --sidebar-ring: oklch(0.705 0.015 286.067);
+  --elevation-1: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --elevation-2: 0 0 0 1px rgb(0 0 0 / 0.08), 0 2px 2px 0 rgb(0 0 0 / 0.08);
+  color-scheme: light;
+}
+
+/* Dark (the default): the design system's surfaces, text and elevation. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #000000; /* color.surface.base */
+    --foreground: #f4f4f5; /* color.text.secondary: strongest text */
+    --card: #18181b; /* color.surface.raised */
+    --card-foreground: #f4f4f5;
+    --popover: #18181b;
+    --popover-foreground: #f4f4f5;
+    --primary: #f4f4f5;
+    --primary-foreground: #18181b;
+    --secondary: #212124; /* color.surface.strong */
+    --secondary-foreground: #f4f4f5;
+    --muted: #212124;
+    --muted-foreground: #a1a1aa; /* color.text.primary: secondary text, ≥ 6.3:1 on every dark surface */
+    --accent: #212124;
+    --accent-foreground: #f4f4f5;
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: #27272a;
+    --input: #27272a;
+    --ring: #a1a1aa;
+    --success: oklch(0.792 0.209 151.711);
+    --warning: oklch(0.828 0.189 84.429);
+    --info: oklch(0.707 0.165 254.624);
+    --sidebar: #18181b;
+    --sidebar-foreground: #f4f4f5;
+    --sidebar-primary: #f4f4f5;
+    --sidebar-primary-foreground: #18181b;
+    --sidebar-accent: #212124;
+    --sidebar-accent-foreground: #f4f4f5;
+    --sidebar-border: #27272a;
+    --sidebar-ring: #a1a1aa;
+    /* shadow.1 and shadow.2 */
+    --elevation-1:
+      rgba(255, 255, 255, 0.06) 0px -1px 0px 0px, rgba(255, 255, 255, 0.06) 0px 0px 0px 1px, rgb(39, 39, 42) 0px 0px 0px 1px,
+      rgba(0, 0, 0, 0.32) 0px 1px 2px 0px, rgba(0, 0, 0, 0.32) 0px 2px 4px 0px;
+    --elevation-2:
+      rgba(255, 255, 255, 0.06) 0px -1px 0px 0px, rgba(255, 255, 255, 0.06) 0px 0px 0px 1px, rgb(39, 39, 42) 0px 0px 0px 1px,
+      rgba(0, 0, 0, 0.24) 0px 0px 1px 1.5px, rgba(0, 0, 0, 0.24) 0px 2px 2px 0px;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  /* Geist for code too: Tailwind's preflight and shadcn's <kbd> use --font-mono for code, kbd, samp and pre. */
+  --font-mono: 'Geist', ui-sans-serif, system-ui, sans-serif;
+
+  /* font.size.xs 10px, font.size.sm 10.56px, font.size.md 13px (body), font.size.lg 14.63px; line height 1.5 = 19.5px. */
+  --text-2xs: 0.7692rem;
+  --text-2xs--line-height: 1.4;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.4;
+  --text-sm: 1rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.5;
+
+  /* radius.xs 4.88px (rounded-sm), radius.sm 6.5px (rounded-lg, the --radius). */
+  --radius-sm: 0.375rem;
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-xs: var(--elevation-1);
+  --shadow-sm: var(--elevation-1);
+  --shadow-md: var(--elevation-2);
+  --shadow-lg: var(--elevation-2);
+
+  /* motion.duration.instant 150ms (default transitions), motion.duration.fast 200ms (overlays). */
+  --default-transition-duration: 150ms;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    font-size: 13px;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    margin: 0;
+    overflow: hidden;
+  }
+}
+
+/* Rendered Markdown (components/markdown.tsx): descriptions as Taiga shows them, wiki previews. */
+@layer components {
+  .markdown {
+    @apply min-w-0 text-sm leading-relaxed text-foreground;
+    overflow-wrap: anywhere;
+  }
+  .markdown > * + * {
+    @apply mt-3;
+  }
+  .markdown :is(h1, h2, h3, h4) {
+    @apply font-semibold tracking-tight text-foreground;
+  }
+  .markdown h1 {
+    @apply text-xl;
+  }
+  .markdown h2 {
+    @apply text-lg;
+  }
+  .markdown :is(h3, h4) {
+    @apply text-base;
+  }
+  .markdown :is(ul, ol) {
+    @apply space-y-1 pl-5;
+  }
+  .markdown ul {
+    @apply list-disc;
+  }
+  .markdown ol {
+    @apply list-decimal;
+  }
+  .markdown li:has(> input[type='checkbox']) {
+    @apply -ml-5 list-none;
+  }
+  .markdown li > input[type='checkbox'] {
+    @apply mr-2 size-3.5 translate-y-0.5 accent-primary;
+  }
+  .markdown a {
+    @apply font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground;
+  }
+  .markdown :not(pre) > code {
+    @apply rounded-sm bg-muted px-1 py-0.5 text-xs;
+  }
+  .markdown pre {
+    @apply overflow-x-auto rounded-md border bg-muted/50 p-3 text-xs;
+  }
+  .markdown blockquote {
+    @apply border-l-2 pl-3 text-muted-foreground;
+  }
+  .markdown table {
+    @apply w-full border-collapse text-xs;
+  }
+  .markdown :is(th, td) {
+    @apply border px-2 py-1 text-left align-top;
+  }
+  .markdown th {
+    @apply bg-muted font-medium;
+  }
+  .markdown hr {
+    @apply border-border;
+  }
+  .markdown img {
+    @apply max-w-full rounded-md;
+  }
+}

@@ -459,7 +459,7 @@ export interface TaigentApi {
   /** The agent of the headless buttons, from the app settings (default omp). */
   headlessAgent(): Promise<HeadlessAgent>;
   setHeadlessAgent(agent: HeadlessAgent): Promise<Result<HeadlessAgent>>;
-  /** The app's colours, from the app settings (default system); the window and the CSS follow at once. */
+  /** The app's colours, from the app settings (default dark); the window and the CSS follow at once. */
   theme(): Promise<Theme>;
   setTheme(theme: Theme): Promise<Result<Theme>>;
   /**

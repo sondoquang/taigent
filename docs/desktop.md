@@ -125,14 +125,13 @@ Bố cục gồm bốn phần, từ trên xuống:
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
   - **Setup repo**: tạo, clone hoặc mở repo, cài Taigent vào repo, `npm install` và checklist công cụ (xem
     [Setup repo](#setup-repo-wizard)).
-  - **Settings**: **Giao diện** (*Theo hệ thống*, mặc định, đổi theo chế độ sáng/tối của Windows hoặc macOS; *Sáng*;
-    *Tối*), agent cho các nút chạy skill headless (`omp`, `claude` hoặc `codex`), cả hai lưu trong `settings.json` của
+  - **Settings**: **Giao diện** (*Theo hệ thống*, đổi theo chế độ sáng/tối của Windows hoặc macOS; *Sáng*; *Tối*, mặc
+    định), agent cho các nút chạy skill headless (`omp`, `claude` hoặc `codex`), cả hai lưu trong `settings.json` của
     ứng dụng, và phiên bản của ứng dụng, taigent, Electron và Node. Giao diện đổi ngay khi chọn, cả thanh tiêu đề của
     cửa sổ (main process đặt `nativeTheme.themeSource`, trang đổi theo `prefers-color-scheme`); terminal giữ nền tối ở
     cả hai giao diện.
 
-  Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở. Khi cửa
-  sổ hẹp hơn 1180px, thanh điều hướng thu lại chỉ còn biểu tượng (rê chuột để xem tên mục).
+  Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở.
 - **Panel dưới đáy**: terminal (xem [Terminal](#terminal)), ẩn mặc định.
 - **Thanh trạng thái**: người duyệt và kết quả `taigent whoami`.
 
@@ -153,16 +152,15 @@ Mục **Backlog** gồm:
   ý như mọi mục khác; đổi loại, mức độ hay ưu tiên của một issue đã *Đạt* cũng làm nó thành *Đã đổi sau khi duyệt*.
 - **Phím tắt**: `j`/`k` hoặc `↓`/`↑` để chuyển mục (chỉ khi đang ở mục Backlog); `Ctrl+Enter` trong ô góp ý để gửi.
 
-Giao diện dùng một design system duy nhất, khai báo bằng biến CSS ở đầu `desktop/src/renderer/styles.css`: ba màu gốc
-trắng `#ffffff` (nền), than `#333333` (chữ, cấu trúc) và đỏ `#e32d17` (chỉ dùng cho chỗ cần người dùng: mục đang chọn,
-nút hành động chính, *Cần sửa*, góp ý chưa xử lý, viền focus); mọi màu khác pha từ ba màu này. Font là Geist (chữ) và
-Geist Mono (key, đường dẫn, code, terminal), đóng gói sẵn trong `desktop/src/renderer/fonts/` (giấy phép SIL OFL 1.1,
+Giao diện viết bằng React với component của shadcn/ui trên Tailwind CSS v4, theo một design system duy nhất: token
+(màu, chữ, khoảng cách, bo góc, đổ bóng) khai báo ở `desktop/src/renderer/globals.css`, luật dùng trong
+[docs/desktop-design-system.md](desktop-design-system.md). Giao diện tối là mặc định. Toàn bộ giao diện dùng font Geist,
+riêng terminal dùng Geist Mono; cả hai đóng gói sẵn trong `desktop/src/renderer/fonts/` (giấy phép SIL OFL 1.1,
 `OFL.txt`) nên không tải gì từ mạng.
 
-Các mục Wiki, Taiga, Thay đổi, Git, Setup repo và Settings dùng hết bề ngang cửa sổ: đầu trang có tiêu đề và mô tả ở
-bên trái, các nút của mục ở bên phải; danh sách, bảng và dải số liệu trải hết chiều rộng. Git (nhánh và ô commit),
-Setup repo (bước 4 Kiểm tra) và Settings đặt nội dung phụ thành cột bên phải; khi cửa sổ hẹp hơn 1180px, cột này xuống
-dưới nội dung chính.
+Các mục Wiki, Taiga, Thay đổi, Git, Setup repo và Settings có cùng bố cục: đầu trang có tiêu đề và mô tả ở bên trái,
+các nút của mục ở bên phải; nội dung chia thành các card. Git (nhánh và ô commit) và Setup repo (bước 4 Kiểm tra) đặt
+nội dung phụ thành cột bên phải, Settings xếp các card thành hai cột.
 
 ## Duyệt và góp ý
 
