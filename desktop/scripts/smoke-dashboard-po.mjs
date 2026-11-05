@@ -3,7 +3,8 @@
 // the two sprints, tags them with releases and declares releases in the temporary project.yaml (restored afterwards),
 // reads again, and checks:
 //   - health: four signals, each with its colour and a reason in Vietnamese;
-//   - the current sprint against its ideal line, velocity, planned vs completed labelled by its basis;
+//   - the current sprint against its ideal line, velocity, planned vs completed labelled by its basis (sprint start),
+//     and the scope change of each sprint, rebuilt from the stories' sprint changes;
 //   - the release burndowns: a declared release with an ideal line, an undeclared tag drawn without one, a declared
 //     release without stories, and a story with two release tags left out, all three warned about;
 //   - the bug trend with the bugs reopened per period from the issues' history, and the sprint and epic tables that the
@@ -20,17 +21,22 @@ function day(offset) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-/** Sprints, release tags and an epic on the stories smoke-dashboard.mjs seeded; no item is added or removed. */
+/**
+ * Sprints, release tags and an epic on the stories smoke-dashboard.mjs seeded; no item is added or removed. "Trang hồ
+ * sơ" (created 5 days ago) and "Chưa ai nhận" (3 days ago) were created after Sprint 2 started, "Đổi mật khẩu" (8 days
+ * ago) after Sprint 1 did: scope added. "Chưa ai nhận" was then taken out of Sprint 2 yesterday: scope removed.
+ */
 function plan(fake, slug) {
   const project = fake.state.projects.find((candidate) => candidate.slug === slug);
-  const sprint = (name) => fake.state.milestones.find((milestone) => milestone.project === project.id && milestone.name === name).id;
+  const sprint = (name) => fake.state.milestones.find((milestone) => milestone.project === project.id && milestone.name === name);
   const story = (subject) => fake.state.userStories.find((candidate) => candidate.project === project.id && candidate.subject === subject);
   const now = new Date().toISOString();
   const set = (subject, changes) => Object.assign(story(subject), { ...changes, modified_date: now });
-  const sso = set('Đăng nhập SSO', { milestone: sprint('Sprint 2'), tags: ['release:v1-0-0'] });
-  const profile = set('Trang hồ sơ', { milestone: sprint('Sprint 2'), tags: ['release:v1-0-0'] });
-  const password = set('Đổi mật khẩu', { milestone: sprint('Sprint 1'), tags: ['release:v1-0-0', 'release:v2-0-0'] });
+  const sso = set('Đăng nhập SSO', { milestone: sprint('Sprint 2').id, tags: ['release:v1-0-0'] });
+  const profile = set('Trang hồ sơ', { milestone: sprint('Sprint 2').id, tags: ['release:v1-0-0'] });
+  const password = set('Đổi mật khẩu', { milestone: sprint('Sprint 1').id, tags: ['release:v1-0-0', 'release:v2-0-0'] });
   const unclaimed = set('Chưa ai nhận', { tags: ['release:v3-0-0'] });
+  fake.addMilestoneChange(unclaimed, { at: new Date(`${day(-1)}T12:00:00`).toISOString(), from: sprint('Sprint 2'), to: null });
   const epic = fake.addEpic({ project: project.id, subject: 'Đăng nhập' });
   fake.addEpicRelatedUserStory(epic, sso);
   fake.addEpicRelatedUserStory(epic, password);
@@ -77,13 +83,21 @@ export async function smokeProductOwner({ page, fake, work, project, shots, chec
     check(await page.isVisible('#dashboard-sprint [data-slot="chart"] .recharts-surface'), 'dashboard PO: the current sprint is drawn against its ideal line');
     check((await page.getAttribute('#dashboard-velocity [data-slot="chart"]', 'data-series')) === '2', 'dashboard PO: velocity is the points closed in the closed sprint');
 
+    // Planned at sprint start: Sprint 1 had no story on its first day (Đổi mật khẩu came later, 2 points closed),
+    // Sprint 2 only Đăng nhập SSO (3 points).
     const basis = await page.getAttribute('#dashboard-planned-basis', 'data-basis');
     const basisText = (await page.textContent('#dashboard-planned-basis')) ?? '';
-    const planned = ((await page.getAttribute('#dashboard-planned [data-slot="chart"]', 'data-series')) ?? '').split(',').map((pair) => pair.split('/').map(Number));
+    const planned = (await page.getAttribute('#dashboard-planned [data-slot="chart"]', 'data-series')) ?? '';
     check(
-      (basis === 'current' ? basisText.includes('point hiện tại') && planned.map(([value]) => value).join() === '2,8' : basis === 'sprint-start' && basisText.includes('ngày sprint bắt đầu')) &&
-        planned.map(([, completed]) => completed).join() === '2,0',
-      `dashboard PO: planned vs completed per sprint, labelled by its basis "${basis}" (${JSON.stringify(planned)})`,
+      basis === 'sprint-start' && basisText.includes('ngày sprint bắt đầu') && planned === '0/2,3/0',
+      `dashboard PO: planned (at sprint start) vs completed per sprint, labelled by its basis "${basis}" (${planned})`,
+    );
+    // Scope change, added/removed points per sprint: Sprint 1 +2; Sprint 2 +5 +8, then -8.
+    const scope = await page.locator('#dashboard-scope tr[data-period]').evaluateAll((rows) => rows.map((row) => `${row.dataset.added}/${row.dataset.removed}`));
+    const scopeText = (await page.textContent('#dashboard-scope')) ?? '';
+    check(
+      scope.join('|') === '2/0|13/8' && scopeText.includes(`#${unclaimed.ref} ${unclaimed.subject}`) && scopeText.includes('Rút ra'),
+      `dashboard PO: scope change per sprint with the stories added and taken out (${scope.join(', ')})`,
     );
 
     // Release burndown: v1-0-0 declared with 2 stories, v0-9-0 declared without any, v3-0-0 tagged but not declared;
@@ -117,7 +131,7 @@ export async function smokeProductOwner({ page, fake, work, project, shots, chec
     await refresh();
     await page.waitForSelector('#dashboard-product-owner[data-cadence="week"]');
     check(
-      (await page.isVisible('#dashboard-po-kanban')) && (await page.locator('#dashboard-sprint, #dashboard-velocity, #dashboard-planned').count()) === 0 && (await signals()).every((entry) => entry.signal !== 'sprintPace'),
+      (await page.isVisible('#dashboard-po-kanban')) && (await page.locator('#dashboard-sprint, #dashboard-velocity, #dashboard-planned, #dashboard-scope').count()) === 0 && (await signals()).every((entry) => entry.signal !== 'sprintPace'),
       'dashboard PO: a kanban project has no sprint widgets nor sprint pace, and a note says why',
     );
     log('dashboard PO kanban note:', (await page.textContent('#dashboard-po-kanban'))?.trim());

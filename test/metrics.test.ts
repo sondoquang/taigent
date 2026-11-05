@@ -154,8 +154,7 @@ test('metrics of a scrum project: periods are the started sprints, phase 2 metri
   assert.deepEqual(
     report.unavailable.map(({ metric, reason }) => [metric, reason]),
     [
-      ['productOwner.planned.sprintStart', 'history'],
-      ['productOwner.scopeChange', 'history'],
+
       ['businessAnalyst.requirementChange', 'history'],
     ],
   );
@@ -304,7 +303,7 @@ test('metrics prints a text summary without --json', async (t) => {
   assert.match(result.stdout, /Unassigned: 0 stories \(0 points\), 0 tasks/);
   assert.match(result.stdout, new RegExp(`Blocked \\(1\\):\\n {4}story #${sso.ref} SSO \\(In progress, due ${day(-1)}; alice, taigent-bot\\)`));
   assert.match(result.stdout, /Overdue \(1\):/);
-  assert.match(result.stdout, /Not available yet:\n {2}productOwner\.planned\.sprintStart: needs the Taiga history/);
+  assert.match(result.stdout, /Not available yet:\n {2}businessAnalyst\.requirementChange: needs the Taiga history/);
 });
 
 test('metrics works under TAIGENT_READ_ONLY=1', async (t) => {

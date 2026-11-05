@@ -75,8 +75,7 @@ export function WidgetTable({ head, rows, empty }: { head: string[]; rows: Widge
 
 /** How the dashboards name each metric of the report's `unavailable` (its path in the JSON). */
 const UNAVAILABLE_LABEL: Record<string, string> = {
-  'productOwner.planned.sprintStart': 'Planned lúc sprint bắt đầu',
-  'productOwner.scopeChange': 'Scope change',
+
   'businessAnalyst.requirementChange': 'Requirement change',
 };
 

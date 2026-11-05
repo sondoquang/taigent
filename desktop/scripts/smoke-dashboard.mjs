@@ -3,9 +3,8 @@
 // app's process env points the CLI at the fake for this step, then is restored.
 //   1. Without a Role the three choices sit in the page; the one picked is saved in settings.json.
 //   2. The Developer dashboard shows the fake project's numbers, cycle time from the items' history (kept in the app's
-//      metrics-cache by --cache-dir), the bug reopen rate from the issues' history, the metrics `taigent metrics`
-//      cannot compute yet as "Chưa có" cells with their reason, and "Chỉ tôi" narrows the workload and the lists to
-//      the user.
+//      metrics-cache by --cache-dir), the bug reopen rate from the issues' history, and "Chỉ tôi" narrows the workload
+//      and the lists to the user.
 //   3. The Role menu switches to the Product Owner dashboard (smoke-dashboard-po.mjs) and the Business Analyst
 //      dashboard (smoke-dashboard-ba.mjs); Settings shows the Role and changes it too.
 //   4. Làm mới reads again: the numbers follow what Taiga holds.

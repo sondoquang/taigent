@@ -1,9 +1,8 @@
 // Product Owner dashboard: the `productOwner` section of `taigent metrics` (GLOSSARY.md, Dashboards). Health first
 // (each signal's colour and why), then the current sprint against its ideal line, velocity, planned vs completed
-// (labelled by its `basis`), the release burndowns with their warnings, the bug trend, and the sprint and epic tables
-// that the Báo cáo card of the Taiga section used to show (`productOwner.report`: no `taigent report` run). A kanban
-// project has no sprint widgets: a note says why. A metric the run could not compute is a "Chưa có" cell with its
-// reason (the report's `unavailable`).
+// (labelled by its `basis`), the scope change of each sprint, the release burndowns with their warnings, the bug trend,
+// and the sprint and epic tables that the Báo cáo card of the Taiga section used to show (`productOwner.report`: no
+// `taigent report` run). A kanban project has no sprint widgets: a note says why.
 
 import type { ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, LineChart, XAxis, YAxis } from 'recharts';
@@ -11,13 +10,14 @@ import type { MetricsReport } from '../../../shared/api.ts';
 import { StatCell, StatusBadge, type Tone } from '@/components/common.tsx';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { type ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart.tsx';
-import { periodLabel, Stats, UnavailableCells, Widget, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
+import { periodLabel, Stats, Widget, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
 
 type ProductOwner = MetricsReport['productOwner'];
 type Health = ProductOwner['health'];
 type HealthLevel = Health['overdue']['level'];
 type CurrentSprint = NonNullable<ProductOwner['currentSprint']>;
 type Release = ProductOwner['releaseBurndown']['releases'][number];
+type ScopeSide = NonNullable<ProductOwner['scopeChange']>[number]['added'];
 
 const SPRINT_CONFIG = {
   remaining: { label: 'Point còn lại', color: 'var(--chart-1)' },
@@ -37,10 +37,6 @@ const BUG_CONFIG = {
 
 /** What planned is for each `basis` of the CLI: the chart series' label and the sentence above the chart. */
 const BASIS: Record<string, { series: string; text: string }> = {
-  current: {
-    series: 'Planned (point hiện tại)',
-    text: 'Planned là số point hiện tại của sprint, chưa phải số point đã cam kết lúc sprint bắt đầu (cần history của Taiga).',
-  },
   'sprint-start': { series: 'Planned (lúc bắt đầu sprint)', text: 'Planned là số point của các story nằm trong sprint vào ngày sprint bắt đầu.' },
 };
 
@@ -79,16 +75,6 @@ interface SignalRow {
   reason: string;
   /** The CLI's own reason, in English. */
   detail: string;
-}
-
-/** The "Chưa có" cells of `metrics` in a stat row; nothing when the run computed them all. */
-function UnavailableStats({ unavailable, metrics }: { unavailable: MetricsReport['unavailable']; metrics: string[] }) {
-  if (!unavailable.some((entry) => metrics.includes(entry.metric))) return null;
-  return (
-    <Stats>
-      <UnavailableCells unavailable={unavailable} metrics={metrics} />
-    </Stats>
-  );
 }
 
 function HealthWidget({ productOwner }: { productOwner: ProductOwner }) {
@@ -344,8 +330,47 @@ function ReportTables({ report }: { report: ProductOwner['report'] }) {
   );
 }
 
+/** One side of a sprint's scope change: how many stories and points, then each story with its points and day. */
+function ScopeCell({ side }: { side: ScopeSide }) {
+  if (side.stories.length === 0) return '—';
+  return (
+    <>
+      <span>{`${side.stories.length} story, ${number(side.points)} point`}</span>
+      <ul className="list-disc space-y-1 pl-4">
+        {side.stories.map((story) => (
+          <li key={`${story.id}:${story.day}`}>{`#${story.ref} ${story.subject} (${story.points === null ? 'chưa ước lượng' : `${number(story.points)} point`}, ${story.day})`}</li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function ScopeChangeWidget({ scopeChange, periods }: { scopeChange: NonNullable<ProductOwner['scopeChange']>; periods: MetricsReport['periods'] }) {
+  const periodOf = new Map(periods.map((period) => [period.id, period]));
+  return (
+    <Widget
+      id="dashboard-scope"
+      title="Scope change"
+      description="Story được thêm vào hoặc rút ra khỏi sprint sau ngày bắt đầu, tới ngày cuối của sprint (dựng lại từ history của Taiga), kèm point hiện tại của story."
+    >
+      <WidgetTable
+        head={['Sprint', 'Thêm vào', 'Rút ra']}
+        empty="Chưa có sprint nào bắt đầu."
+        rows={scopeChange.map((entry) => {
+          const period = periodOf.get(entry.period);
+          return {
+            key: entry.period,
+            data: { 'data-period': entry.period, 'data-added': String(entry.added.points), 'data-removed': String(entry.removed.points) },
+            cells: [period ? periodLabel(period) : entry.period, <ScopeCell side={entry.added} />, <ScopeCell side={entry.removed} />],
+          };
+        })}
+      />
+    </Widget>
+  );
+}
+
 function SprintWidgets({ report }: { report: MetricsReport }): ReactNode {
-  const { productOwner, periods, unavailable } = report;
+  const { productOwner, periods } = report;
   const periodOf = new Map(periods.map((period) => [period.id, period]));
   const velocity = (productOwner.velocity ?? []).map((entry) => ({ label: entry.name, points: entry.points }));
   const planned = productOwner.planned;
@@ -408,15 +433,15 @@ function SprintWidgets({ report }: { report: MetricsReport }): ReactNode {
               </BarChart>
             </ChartContainer>
           )}
-          <UnavailableStats unavailable={unavailable} metrics={['productOwner.planned.sprintStart', 'productOwner.scopeChange']} />
         </Widget>
       </div>
+      {productOwner.scopeChange && <ScopeChangeWidget scopeChange={productOwner.scopeChange} periods={periods} />}
     </>
   );
 }
 
 export function ProductOwnerDashboard({ report }: { report: MetricsReport }) {
-  const { productOwner, periods, unavailable } = report;
+  const { productOwner, periods } = report;
   const periodOf = new Map(periods.map((period) => [period.id, period]));
   const label = (id: string) => {
     const period = periodOf.get(id);
@@ -433,8 +458,8 @@ export function ProductOwnerDashboard({ report }: { report: MetricsReport }) {
       ) : (
         <Widget id="dashboard-po-kanban" title="Sprint">
           <p className="empty text-muted-foreground">
-            Project này không bật module Backlog (sprint) trên Taiga, nên không có tiến độ sprint, velocity và planned vs completed. Các
-            xu hướng tính theo tuần, thứ Hai đến Chủ nhật.
+            Project này không bật module Backlog (sprint) trên Taiga, nên không có tiến độ sprint, velocity, planned vs completed và scope
+            change. Các xu hướng tính theo tuần, thứ Hai đến Chủ nhật.
           </p>
         </Widget>
       )}

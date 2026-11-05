@@ -1,7 +1,6 @@
 // Developer dashboard: the `developer` section of `taigent metrics` (GLOSSARY.md, Dashboards). "Chỉ tôi" narrows it to
 // the user the CLI logs in as, here in the renderer: the `mine` figures, their own workload row, and the blocked and
-// overdue items assigned to them; the CLI does not run again. A metric the run could not compute is a "Chưa có" cell
-// with its reason (the report's `unavailable`).
+// overdue items assigned to them; the CLI does not run again.
 
 import { useState, type ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
@@ -10,7 +9,7 @@ import { StatCell } from '@/components/common.tsx';
 import { type ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart.tsx';
 import { Label } from '@/components/ui/label.tsx';
 import { Switch } from '@/components/ui/switch.tsx';
-import { days, periodLabel, Stats, UnavailableCells, Widget, type WidgetRow, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
+import { days, periodLabel, Stats, Widget, type WidgetRow, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
 
 const TREND_CONFIG = {
   stories: { label: 'Story', color: 'var(--chart-1)' },
@@ -53,7 +52,7 @@ function itemRows(items: DeveloperItem[], names: Map<number, string>): WidgetRow
 
 export function DeveloperDashboard({ report }: { report: MetricsReport }) {
   const [mine, setMine] = useState(false);
-  const { developer, periods, unavailable } = report;
+  const { developer, periods } = report;
   const me = developer.me;
   const scope = mine ? 'mine' : 'all';
   const names = new Map(developer.people.map((person) => [person.id, person.username]));
