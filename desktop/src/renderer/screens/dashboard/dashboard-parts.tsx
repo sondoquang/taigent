@@ -1,9 +1,8 @@
 // Pieces every Role's dashboard uses: the widget card (its `id` is the stable hook of the smoke, ADR 0004), the stat
-// row, the edge-to-edge table, the period label and the "Chưa có" cells of the metrics a run could not compute.
+// row, the edge-to-edge table and the period label.
 
 import type { ReactNode } from 'react';
-import type { Period, UnavailableMetric } from '../../../shared/api.ts';
-import { StatCell } from '@/components/common.tsx';
+import type { Period } from '../../../shared/api.ts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.tsx';
 
@@ -71,28 +70,4 @@ export function WidgetTable({ head, rows, empty }: { head: string[]; rows: Widge
       </Table>
     </div>
   );
-}
-
-/** How the dashboards name each metric of the report's `unavailable` (its path in the JSON). */
-const UNAVAILABLE_LABEL: Record<string, string> = {
-  'developer.bugs.reopenRate': 'Reopen rate của bug',
-  'productOwner.bugTrend.reopened': 'Bug reopen trong bug trend',
-};
-
-/** Why a metric is missing, in Vietnamese; the CLI's own message stays in the cell's title. */
-const UNAVAILABLE_REASON: Record<UnavailableMetric['reason'], string> = {
-  history: 'cần lịch sử thay đổi (history) của từng item trên Taiga, mà taigent metrics chưa dùng để tính chỉ số này',
-  'backlog-missing': 'dự án chưa có backlog manifest (taiga/<slug>/backlog.yaml) trong repo',
-  'backlog-invalid': 'backlog manifest của dự án đang lỗi (xem taigent validate)',
-};
-
-/** A "Chưa có" cell, with its reason, for each of `metrics` the report lists as unavailable; nothing for the others. */
-export function UnavailableCells({ unavailable, metrics }: { unavailable: UnavailableMetric[]; metrics: string[] }) {
-  return unavailable
-    .filter((entry) => metrics.includes(entry.metric))
-    .map((entry) => (
-      <div key={entry.metric} className="unavailable min-w-0" data-metric={entry.metric} title={entry.message}>
-        <StatCell label={`${UNAVAILABLE_LABEL[entry.metric] ?? entry.metric}: ${UNAVAILABLE_REASON[entry.reason] ?? entry.message}`} value="Chưa có" />
-      </div>
-    ));
 }

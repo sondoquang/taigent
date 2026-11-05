@@ -3,8 +3,8 @@
 // app's process env points the CLI at the fake for this step, then is restored.
 //   1. Without a Role the three choices sit in the page; the one picked is saved in settings.json.
 //   2. The Developer dashboard shows the fake project's numbers, cycle time from the items' history (kept in the app's
-//      metrics-cache by --cache-dir), the metrics `taigent metrics` cannot compute yet as "Chưa có" cells with their
-//      reason, and "Chỉ tôi" narrows the workload and the lists to the user.
+//      metrics-cache by --cache-dir), the bug reopen rate from the issues' history, and "Chỉ tôi" narrows the workload
+//      and the lists to the user.
 //   3. The Role menu switches to the Product Owner dashboard (smoke-dashboard-po.mjs) and the Business Analyst
 //      dashboard (smoke-dashboard-ba.mjs); Settings shows the Role and changes it too.
 //   4. Làm mới reads again: the numbers follow what Taiga holds.
@@ -48,7 +48,7 @@ async function startSilentServer() {
   };
 }
 
-/** The fake project: the current sprint and the one before, work of the fake user and a teammate, and two bugs. */
+/** The fake project: the current sprint and the one before, work of the fake user and a teammate, and three bugs. */
 function seed(fake, slug) {
   const me = fake.user.id;
   const lan = fake.addUser({ username: 'lan' }).id;
@@ -100,6 +100,11 @@ function seed(fake, slug) {
   fake.addStatusChange(test, { at: at(-1), from: 'In progress', to: 'Closed' });
   bug('Crash khi đăng nhập', { name: 'Closed', assignee: me, created: -5, closed: -2 });
   bug('Không tái hiện được', { name: 'Rejected', assignee: lan, created: -3, closed: -1 });
+  // Resolved, reopened and closed again in the current sprint: 2 bugs resolved, 1 reopened, none open at its end.
+  const reopened = bug('Mất ảnh đại diện', { name: 'Closed', assignee: me, created: -6, closed: -1 });
+  fake.addStatusChange(reopened, { at: at(-5), from: 'New', to: 'Ready for test' });
+  fake.addStatusChange(reopened, { at: at(-4), from: 'Ready for test', to: 'In progress' });
+  fake.addStatusChange(reopened, { at: at(-1), from: 'In progress', to: 'Closed' });
   return { me, lan, project, sso, profile, migrate, done: status(fake.state.storyStatuses, 'Done') };
 }
 
@@ -176,14 +181,16 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
       `dashboard: the current sprint's stories and tasks, counted apart (${JSON.stringify(current)})`,
     );
     const bugs = await stats('#dashboard-bugs');
-    check(bugs['Bug resolved trong kỳ'] === '1' && bugs['Bug bị Rejected trong kỳ'] === '1', `dashboard: bugs resolved and Rejected apart (${JSON.stringify(bugs)})`);
+    check(bugs['Bug resolved trong kỳ'] === '2' && bugs['Bug bị Rejected trong kỳ'] === '1', `dashboard: bugs resolved and Rejected apart (${JSON.stringify(bugs)})`);
     const times = await stats('#dashboard-times');
     check(
       times['Cycle time story (trung vị của 1 item)'] === '4 ngày' && times['Cycle time task (trung vị của 1 item)'] === '1 ngày',
       `dashboard: cycle time from the first entry into In progress, stories and tasks apart (${JSON.stringify(times)})`,
     );
-    const reopen = (await page.textContent('#dashboard-bugs [data-metric="developer.bugs.reopenRate"]')) ?? '';
-    check(reopen.includes('Chưa có') && reopen.includes('history'), 'dashboard: developer.bugs.reopenRate is a "Chưa có" cell with its reason');
+    check(
+      bugs['Reopen rate (1 reopened / 2 resolved)'] === '50%' && (await page.getAttribute('#dashboard-bugs [data-metric="developer.bugs.reopenRate"]', 'data-value')) === '0.5',
+      `dashboard: the reopen rate from the bugs' history, reopened over resolved (${JSON.stringify(bugs)})`,
+    );
     check(await page.isVisible('#dashboard-trend [data-slot="chart"] .recharts-surface'), 'dashboard: the completion trend is a chart');
     const team = await rows('#dashboard-workload', 'data-assignee');
     check(team.join('|') === `${lan}|${me}|none`, `dashboard: workload of each assignee, then Chưa giao (${team.join(', ')})`);

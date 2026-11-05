@@ -8,7 +8,6 @@ import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
 import type { MetricsReport } from '../../../src/metrics/compute.ts';
-import type { UnavailableMetric } from '../../../src/metrics/context.ts';
 import type { DeveloperItem, MedianDays, WorkloadRow } from '../../../src/metrics/developer.ts';
 import type { Period } from '../../../src/metrics/periods.ts';
 import type { StaleLink } from '../../../src/planner.ts';
@@ -24,7 +23,7 @@ export type { SaveWikiPageRequest, UploadOperation, UploadPlan, UploadReport, Wi
 export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult };
 export type { InitFile, InitReport };
 export type { CommentAdded, DueStatus, StatusChange, StoryStatusEntry, Ticket, TicketsReport };
-export type { DeveloperItem, MedianDays, MetricsReport, Period, UnavailableMetric, WorkloadRow };
+export type { DeveloperItem, MedianDays, MetricsReport, Period, WorkloadRow };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
 export interface Failure {

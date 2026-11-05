@@ -658,9 +658,13 @@ Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`
   day is before today, compared by calendar day like the **Due status** (due today is not overdue), earliest first.
   Each item carries its `assignees` (user ids; `people` names the project's members), so a client narrows the lists
   to `me` itself.
-- `bugs.periods`: per period, the bugs **resolved** in it and the bugs **rejected** in it (counted apart; a rejected
-  bug has no resolution time), and the median **Resolution time** (`resolutionTime.medianDays`, from the local day a
-  bug was created to the day it was resolved) over the resolved ones created on a known day (`count`). `mine` counts
+- `bugs.periods`: per period, the bugs **resolved** in it (moved into `Ready for test` or `Closed` in it, by the
+  issue's history; once each, however often) and the bugs **rejected** in it (counted apart; a rejected bug has no
+  resolution time), the median **Resolution time** (`resolutionTime.medianDays`, from the local day a bug was created
+  to its last resolution in the period) over the resolved ones created on a known day (`count`), the bugs
+  **reopened** in it (moved from `Ready for test` or `Closed` back to an open status; out of `Rejected` is not a
+  reopen) and the **reopen rate** (`reopenRate`: reopened over resolved in the period, null when none was resolved;
+  it can exceed 1). A bug whose history records no status change is resolved on the day it was closed. `mine` counts
   the bugs assigned to `me`.
 
 `productOwner` holds:
@@ -691,10 +695,10 @@ Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`
   - `blocked`: the open blocked user `stories` (blocked tasks do not count): 1 is yellow, 2 or more red.
 - `report`: the tables of [`taigent report --json`](#report) (`sprints`, `epics`, `noEpic`, `outsideSprints`), without
   its `project`, computed by the same code from the same reads.
-- `bugTrend`: per period, the bugs **created** in it, **resolved** in it and **rejected** in it, and the bugs **open**
-  at its last day: created by then and not closed by then, from the days created and closed, for old periods too.
-  Without the history only a bug's last close is known: a reopened bug counts as open from its creation until it
-  closes again (the reopened part of the trend needs the history).
+- `bugTrend`: per period, the bugs **created** in it, **resolved** in it, **rejected** in it and **reopened** in it
+  (as in `developer.bugs`), and the bugs **open** at its last day: created by then and, by the issue's history, in an
+  open status at the end of that day, so a bug reopened and closed again counts as open in between. A bug whose
+  history records no status change is open until the day it was closed.
 - `releaseBurndown`: the **Release burndown** ([conventions §4.1](taiga/conventions.md#41-releases), ADR 0005). A
   release is the user stories carrying exactly one tag `release:<version>` on Taiga; its target day comes from
   `releases` in `project.yaml`. `releases` lists the declared releases in the manifest's order, then the undeclared
@@ -741,8 +745,7 @@ Without `backlog.yaml` only `statuses.stories` and `requirementChange` are there
 issue and says to run `taigent validate --project <slug>`. The command still exits 0.
 
 `unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
-Taiga history of each item and are not computed from it yet (`reason: "history"`: bug reopen rate, the reopened part
-of the bug trend), and those that need the backlog manifest (`backlog-missing`, `backlog-invalid`). `warnings` holds
+backlog manifest (`backlog-missing`, `backlog-invalid`). `warnings` holds
 the `kanban` warning, the release warnings: `release-undeclared` (a `release:` tag `project.yaml` does not declare;
 drawn without an ideal line), `release-empty` (a declared release no story carries) and `release-multiple` (one per
 story with two release tags or more), and the `backlog-missing` and `backlog-invalid` warnings. `--json` prints:
@@ -791,8 +794,8 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
       "periods": [
         { "period": "sprint:30", "all": { … }, "mine": { … } },
         { "period": "sprint:31",
-          "all": { "resolved": 3, "rejected": 1, "resolutionTime": { "medianDays": 4, "count": 3 } },
-          "mine": { "resolved": 1, "rejected": 0, "resolutionTime": { "medianDays": 2, "count": 1 } } }
+          "all": { "resolved": 3, "rejected": 1, "resolutionTime": { "medianDays": 4, "count": 3 }, "reopened": 1, "reopenRate": 0.3333333333333333 },
+          "mine": { "resolved": 1, "rejected": 0, "resolutionTime": { "medianDays": 2, "count": 1 }, "reopened": 0, "reopenRate": 0 } }
       ]
     }
   },
@@ -832,8 +835,8 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
     },
     "report": { "sprints": [ … ], "epics": [ … ], "noEpic": { … }, "outsideSprints": { … } },
     "bugTrend": [
-      { "period": "sprint:30", "created": 5, "resolved": 2, "rejected": 0, "open": 7 },
-      { "period": "sprint:31", "created": 2, "resolved": 3, "rejected": 1, "open": 5 }
+      { "period": "sprint:30", "created": 5, "resolved": 2, "rejected": 0, "reopened": 0, "open": 7 },
+      { "period": "sprint:31", "created": 2, "resolved": 3, "rejected": 1, "reopened": 1, "open": 5 }
     ],
     "releaseBurndown": {
       "releases": [
@@ -895,11 +898,7 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
     { "code": "release-undeclared", "message": "user stories carry the tag release:v1-3 but project.yaml declares no release v1-3: …" },
     { "code": "release-multiple", "message": "user story #9 Export carries release:v1-2-0, release:v2-0-0: …" }
   ],
-  "unavailable": [
-    { "metric": "developer.bugs.reopenRate", "reason": "history",
-      "message": "needs the Taiga history of each item, which metrics reads but does not compute this metric from yet" },
-    { "metric": "productOwner.bugTrend.reopened", "reason": "history", "message": "…" }
-  ]
+  "unavailable": []
 }
 ```
 

@@ -7,7 +7,8 @@
 //     and the scope change of each sprint, rebuilt from the stories' sprint changes;
 //   - the release burndowns: a declared release with an ideal line, an undeclared tag drawn without one, a declared
 //     release without stories, and a story with two release tags left out, all three warned about;
-//   - the bug trend, and the sprint and epic tables that the Taiga section no longer shows;
+//   - the bug trend with the bugs reopened per period from the issues' history, and the sprint and epic tables that the
+//     Taiga section no longer shows;
 //   - a kanban project (Backlog module off): no sprint widgets, a note saying why.
 
 import { readFile, writeFile } from 'node:fs/promises';
@@ -112,6 +113,9 @@ export async function smokeProductOwner({ page, fake, work, project, shots, chec
 
     check(await page.isVisible('#dashboard-bug-trend [data-slot="chart"] .recharts-surface'), 'dashboard PO: the bug trend is a chart');
     check((await attributes('#dashboard-bug-trend tr[data-period]', 'data-period')).length === 2, 'dashboard PO: the bug trend has one row per sprint');
+    // Sprint 2: 3 bugs created, 2 resolved, "Mất ảnh đại diện" reopened and closed again, none open at its end.
+    const bugSeries = await page.getAttribute('#dashboard-bug-trend [data-slot="chart"]', 'data-series');
+    check(bugSeries === '0/0/0/0,3/2/1/0', `dashboard PO: the bug trend counts created/resolved/reopened/open per sprint from the history (${bugSeries})`);
 
     // The tables of the former Taiga > Báo cáo card.
     const sprints = await attributes('#dashboard-report-sprints tr[data-sprint]', 'data-sprint');
