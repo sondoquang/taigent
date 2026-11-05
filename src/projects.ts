@@ -65,7 +65,7 @@ export async function readProjectDetail(client: TaigaClient, slug: string, manif
     names('type'),
     names('severity'),
     names('priority'),
-    client.listStoryStatuses(project.id),
+    client.listStatuses('story', project.id),
   ]);
   return {
     project: { id: project.id, slug: project.slug, name: project.name, admin: project.iAmAdmin, manifest: await isDirectory(join(manifestsRoot, project.slug)) },

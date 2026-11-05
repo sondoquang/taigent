@@ -1,7 +1,7 @@
 // `taigent status` and `taigent comment`: edit one ticket (GLOSSARY.md) of the authenticated user, named by its ref in
 // one project. Only the user's own tickets can be edited: a story assigned to someone else is not found.
 
-import { type TaigaAssignedStory, type TaigaClient, TaigaConflictError, type TaigaStoryStatus } from './taiga/client.ts';
+import { type TaigaAssignedStory, type TaigaClient, TaigaConflictError, type TaigaStatus } from './taiga/client.ts';
 
 /** The ticket, status or ref the user named does not exist (for them). Maps to ExitCode.Usage. */
 export class TicketError extends Error {}
@@ -49,7 +49,7 @@ async function findOwnTicket(client: TaigaClient, slug: string, ref: number): Pr
 }
 
 /** The status named `name` (trimmed, any case; its slug works too), or a TicketError listing the valid ones. */
-function findStatus(statuses: TaigaStoryStatus[], name: string, slug: string): TaigaStoryStatus {
+function findStatus(statuses: TaigaStatus[], name: string, slug: string): TaigaStatus {
   const wanted = name.trim().toLowerCase();
   const status = statuses.find((candidate) => candidate.name.trim().toLowerCase() === wanted || candidate.slug === wanted);
   if (!status) throw new TicketError(`unknown user story status "${name}" in ${slug}; use one of: ${statuses.map((s) => s.name).join(', ')}`);
@@ -69,7 +69,7 @@ async function withTicketKey<T>(ref: number, write: () => Promise<T>): Promise<T
 /** Moves the user's ticket `#ref` of `slug` to the status named `statusName`; writes nothing when it already has it. */
 export async function setTicketStatus(client: TaigaClient, slug: string, ref: number, statusName: string): Promise<StatusChange> {
   const story = await findOwnTicket(client, slug, ref);
-  const status = findStatus(await client.listStoryStatuses(story.project.id), statusName, slug);
+  const status = findStatus(await client.listStatuses('story', story.project.id), statusName, slug);
   const changed = status.name !== story.status;
   if (changed) await withTicketKey(ref, () => client.editStory(story.id, { status: status.id }, story.version));
   return { ticket: { id: story.id, ref: story.ref, subject: story.subject, project: story.project }, from: story.status, to: status.name, isClosed: status.isClosed, changed };

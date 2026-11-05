@@ -290,6 +290,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   project; read-only. See [Projects](#projects).
 - `taigent report --project <slug> [--json]`: the project's progress by sprint and by epic, and its stories in no
   sprint; read-only. See [Report](#report).
+- `taigent metrics --project <slug> [--json]`: the dashboards' metrics of the project (Taigent Desktop's Dashboard);
+  read-only. See [Metrics](#metrics).
 - `taigent login [--application <id>]`, `taigent logout`, `taigent whoami [--json]`, `taigent mcp`: see
   [Login and the MCP server](#login-and-the-mcp-server).
 
@@ -347,7 +349,8 @@ in the legacy format (rule `story-format`) and an issue value the project does n
 With `TAIGENT_READ_ONLY=1` (environment or `.env`), every command that would write to Taiga refuses before it
 contacts Taiga, with exit 2 and `error.kind` `read-only` under `--json`: `apply --yes`, `upload --yes` and
 `bootstrap --yes` (without `--dry-run`), `status` and `comment`. `validate`, `preview`, `plan`, every `--dry-run`, the
-writing commands without `--yes` (they print the plan and exit 2 as usual) and the read-only commands still work.
+writing commands without `--yes` (they print the plan and exit 2 as usual) and the read-only commands (`metrics`
+among them) still work.
 Taigent Desktop sets it on its headless skill runs, so the agent's shell and every `npx taigent` it runs inherit it:
 the guard does not depend on the agent following its prompt ([docs/headless.md](headless.md#taigent-desktop-buttons)).
 Any other value, or none, changes nothing.
@@ -592,6 +595,98 @@ missed. `--json` prints:
 
 Read-only, with the errors of every command that reads Taiga (exit 2 when not logged in, 5 when Taiga refuses the
 login or cannot be reached).
+
+## Metrics
+
+`taigent metrics --project <slug> [--json]` computes the metrics of the dashboards (`GLOSSARY.md`, section Dashboards)
+from what Taiga holds now about one project. It only reads: the project (`GET /projects/by_slug`, whose Backlog module
+flag decides the cadence), the user it logs in as (`GET /users/me`), the sprints (`GET /milestones?project=<id>`, not
+read for a kanban project), the user story and task statuses (`GET /userstory-statuses?project=<id>`,
+`GET /task-statuses?project=<id>`), and every user story and task (`GET /userstories?project=<id>`,
+`GET /tasks?project=<id>`), each list read with pagination disabled so no page is missed. The metrics are computed by a
+pure module from that snapshot and the local day (TZ); nothing is written anywhere.
+
+- **Periods**: with the Backlog module on (`cadence: "sprint"`), the last 6 sprints that have started, by first day;
+  `current` is the open sprint holding today. With it off (a kanban project, `cadence: "week"`), the last 6 weeks,
+  Monday to Sunday in local time, ending with this week, and a `kanban` warning: there are no sprint metrics. Oldest
+  first.
+- **Closed** always means the closed flag of the item's status in the project's status list (Taiga's `is_closed`),
+  never the status's name: `Ready for test` is open in the default templates. The closing day is the story's
+  `finish_date` or the task's `finished_date`, in local time.
+- User stories and tasks are always counted apart. A story is assigned to each of its `assigned_users` (and
+  `assigned_to`), a task to its `assigned_to`. `me` is the user the CLI logs in as, as in [Tickets](#tickets).
+
+`developer` holds, for the whole team (`all`) and for `me` (`mine`):
+
+- `periods`: per period, the stories and the tasks **assigned** (open at some time in the period, created on or before
+  its last day and not closed before its first, and assigned to someone) and **completed** (closed in the period).
+- `leadTime`: the median **Lead time** in days, from the local day an item was created to the day it was closed, of
+  the stories and of the tasks closed in the periods, with the number of items (`count`); `medianDays` is null without
+  any.
+- `workload`: the **Workload** of each assignee with open work (open stories, open tasks, points of those stories), by
+  username, then the unassigned row (`assignee: null`, always present). A story with two assignees counts for both.
+- `blocked`: the open stories, then tasks, that are blocked (`is_blocked`), by ref; `overdue`: the open ones whose due
+  day is before today, compared by calendar day like the **Due status** (due today is not overdue), earliest first.
+  Each item carries its `assignees` (user ids; `people` names the project's members), so a client narrows the lists
+  to `me` itself.
+
+`unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
+Taiga history of each item (`reason: "history"`: cycle time, bug reopen rate, planned points at sprint start, scope
+change, the reopened part of the bug trend, requirement change), which `metrics` does not read yet. `warnings` holds
+the `kanban` warning. `--json` prints:
+
+```json
+{
+  "project": { "id": 7, "slug": "vigo-auth", "name": "Vigo - Auth" },
+  "generatedAt": "2026-11-05T03:12:45.120Z",
+  "today": "2026-11-05",
+  "cadence": "sprint",
+  "periods": [
+    { "id": "sprint:30", "name": "Sprint 1", "start": "2026-10-15", "finish": "2026-10-28", "current": false },
+    { "id": "sprint:31", "name": "Sprint 2", "start": "2026-10-29", "finish": "2026-11-11", "current": true }
+  ],
+  "developer": {
+    "me": { "id": 5, "username": "son" },
+    "people": [{ "id": 5, "username": "son" }, { "id": 6, "username": "lan" }],
+    "periods": [
+      { "period": "sprint:30", "all": { … }, "mine": { … } },
+      { "period": "sprint:31",
+        "all": { "stories": { "assigned": 4, "completed": 1 }, "tasks": { "assigned": 6, "completed": 3 } },
+        "mine": { "stories": { "assigned": 2, "completed": 1 }, "tasks": { "assigned": 3, "completed": 2 } } }
+    ],
+    "leadTime": {
+      "all": { "stories": { "medianDays": 9, "count": 5 }, "tasks": { "medianDays": 2.5, "count": 8 } },
+      "mine": { "stories": { "medianDays": 7, "count": 2 }, "tasks": { "medianDays": 2, "count": 4 } }
+    },
+    "workload": [
+      { "assignee": 6, "username": "lan", "stories": 2, "tasks": 3, "points": 8 },
+      { "assignee": null, "username": null, "stories": 5, "tasks": 1, "points": 13 }
+    ],
+    "blocked": [
+      { "type": "story", "id": 812, "ref": 6, "subject": "SSO", "status": "In progress", "assignees": [6, 5],
+        "dueDate": "2026-11-04", "blocked": true, "points": 3 }
+    ],
+    "overdue": [
+      { "type": "task", "id": 951, "ref": 14, "subject": "Migrate", "status": "In progress", "assignees": [],
+        "dueDate": "2026-11-02", "blocked": false, "points": null },
+      { "type": "story", "id": 812, "ref": 6, "subject": "SSO", … }
+    ]
+  },
+  "warnings": [],
+  "unavailable": [
+    { "metric": "developer.cycleTime", "reason": "history",
+      "message": "needs the Taiga history of each item, which metrics does not read yet" },
+    { "metric": "developer.bugs.reopenRate", "reason": "history", "message": "…" }
+  ]
+}
+```
+
+Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`), the workload, the blocked
+and overdue items, the warnings and the metrics not available yet.
+
+Read-only, so it runs under `TAIGENT_READ_ONLY=1`. Errors: exit 2 when not logged in (kind `login`), without
+`--project` (kind `usage`), or when the project is not on Taiga or not visible to the user (kind `project`; unlike
+`report`, which exits 5); exit 5 when Taiga refuses the login or a read, or cannot be reached (kind `taiga`).
 
 ## Tickets
 
@@ -898,10 +993,10 @@ skill checks all of it and names each fix.
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
 | 3 | `plan` or `--dry-run` found changes (`init --dry-run`: a file would change); `skills check` found differing copies |
 | 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
-| 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
+| 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project (except for `metrics`: exit 2), version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
 
 ## Code map
 
@@ -914,7 +1009,7 @@ skill checks all of it and names each fix.
 | Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
 | MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`, `listStatuses(type, projectId)`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`, and `listProjectTasks` for `metrics`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links, issue values (when the backlog has issues) and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)` |
 | Story template | `src/story-template.ts` | pure `storyDescription(story)`: the description apply writes for a story, shared by the planner, `preview` and Taigent Desktop's story form (bundled into its renderer, so the module imports nothing from Node) |
@@ -929,6 +1024,8 @@ skill checks all of it and names each fix.
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command |
+| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2); pure `computeMetrics(snapshot, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`); periods (`periods.ts`), work items closed by status flag (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
+| Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify` and `metrics` |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |

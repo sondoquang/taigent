@@ -165,6 +165,9 @@ export interface FakeUserStory {
   status_name: string | null;
   /** Sum of the points of every role, null when none is estimated; read-only on Taiga, set it directly. */
   total_points: number | null;
+  /** When the story was created and last modified (ISO 8601): the time it was added; override them to seed dates. */
+  created_date: string;
+  modified_date: string;
 }
 
 export interface FakeTask {
@@ -180,6 +183,15 @@ export interface FakeTask {
   assigned_to: number | null;
   milestone: number | null;
   is_closed: boolean;
+  is_blocked: boolean;
+  /** When the task was closed (ISO 8601; Taiga names it `finished_date` on tasks), null while open. */
+  finished_date: string | null;
+  /** Due day (YYYY-MM-DD, no time), null when the task has none. */
+  due_date: string | null;
+  /** Name of the task's status in list responses; null for the template default (`Closed` closed, `New` open). */
+  status_name: string | null;
+  created_date: string;
+  modified_date: string;
 }
 
 /** A sprint ("milestone detail" in the Taiga API docs); its stories and tasks point at it with `milestone`. */
@@ -243,6 +255,16 @@ export interface FakeStoryStatus {
   order: number;
   is_closed: boolean;
   is_archived: boolean;
+}
+
+/** A task status of a project ("task status detail" in the Taiga API docs). */
+export interface FakeTaskStatus {
+  id: number;
+  project: number;
+  name: string;
+  slug: string;
+  order: number;
+  is_closed: boolean;
 }
 
 /** A comment added with `PATCH /userstories/{id}` (`comment` field); taiga-back keeps it in the item's history. */
@@ -322,6 +344,7 @@ export interface FakeState {
   priorities: FakeIssueValue[];
   epicRelatedUserStories: FakeEpicRelatedUserStory[];
   storyStatuses: FakeStoryStatus[];
+  taskStatuses: FakeTaskStatus[];
   comments: FakeComment[];
   templates: FakeTemplate[];
   roles: FakeRole[];
@@ -412,6 +435,8 @@ export interface FakeTaiga {
   intercept(rule: InterceptRule): void;
   addUserStory(input: FakeItemInput): FakeUserStory;
   addTask(input: FakeItemInput & { user_story?: number }): FakeTask;
+  /** Adds a user story or task status to a project, after the template's own ones. */
+  addStatus(kind: 'userstory' | 'task', input: { project: number; name: string; is_closed: boolean }): FakeStoryStatus | FakeTaskStatus;
   /** Adds a sprint; set `milestone` on stories and tasks to put them in it. */
   addMilestone(input: { project: number; name: string; estimated_start: string; estimated_finish: string; closed?: boolean }): FakeMilestone;
   /** Adds an issue; values left out get the project's defaults, like an issue created on Taiga. */
@@ -625,6 +650,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     priorities: [],
     epicRelatedUserStories: [],
     storyStatuses: [],
+    taskStatuses: [],
     comments: [],
     templates: [
       {
@@ -709,9 +735,12 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return state.roles.find((r) => r.project === projectId && (r.name === nameOrSlug || r.slug === nameOrSlug));
   }
 
-  /** The user story statuses of the default templates (scrum and kanban alike), as taiga-back creates them with a project. */
-  function addStoryStatuses(project: FakeProject): void {
-    const statuses: [name: string, slug: string, closed: boolean][] = [
+  /**
+   * The user story and task statuses of the default templates (scrum and kanban alike: taiga-back's
+   * fixtures/initial_project_templates.json), as taiga-back creates them with a project.
+   */
+  function addTemplateStatuses(project: FakeProject): void {
+    const storyStatuses: [name: string, slug: string, closed: boolean][] = [
       ['New', 'new', false],
       ['Ready', 'ready', false],
       ['In progress', 'in-progress', false],
@@ -719,9 +748,32 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       ['Done', 'done', true],
       ['Archived', 'archived', true],
     ];
-    statuses.forEach(([name, slug, closed], index) => {
+    storyStatuses.forEach(([name, slug, closed], index) => {
       state.storyStatuses.push({ id: ++nextId, project: project.id, name, slug, order: index + 1, is_closed: closed, is_archived: slug === 'archived' });
     });
+    const taskStatuses: [name: string, slug: string, closed: boolean][] = [
+      ['New', 'new', false],
+      ['In progress', 'in-progress', false],
+      ['Ready for test', 'ready-for-test', false],
+      ['Closed', 'closed', true],
+      ['Needs Info', 'needs-info', false],
+    ];
+    taskStatuses.forEach(([name, slug, closed], index) => {
+      state.taskStatuses.push({ id: ++nextId, project: project.id, name, slug, order: index + 1, is_closed: closed });
+    });
+  }
+
+  function addStatus(kind: 'userstory' | 'task', input: { project: number; name: string; is_closed: boolean }): FakeStoryStatus | FakeTaskStatus {
+    const statuses: { project: number; order: number }[] = kind === 'userstory' ? state.storyStatuses : state.taskStatuses;
+    const order = Math.max(0, ...statuses.filter((s) => s.project === input.project).map((s) => s.order)) + 1;
+    const status: FakeTaskStatus = { id: ++nextId, slug: input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), order, ...input };
+    if (kind === 'task') {
+      state.taskStatuses.push(status);
+      return status;
+    }
+    const storyStatus: FakeStoryStatus = { ...status, is_archived: false };
+    state.storyStatuses.push(storyStatus);
+    return storyStatus;
   }
 
   /**
@@ -767,7 +819,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     };
     state.projects.push(project);
     addRoles(project, SCRUM_ROLES);
-    addStoryStatuses(project);
+    addTemplateStatuses(project);
     for (const member of members) addMembership({ project: project.id, role: 'product-owner', user: member });
     return project;
   }
@@ -841,6 +893,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   function addUserStory(input: FakeItemInput): FakeUserStory {
+    const now = new Date().toISOString();
     return addItem<FakeUserStory>('userstory', input, {
       assigned_users: [],
       milestone: null,
@@ -851,11 +904,24 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       due_date: null,
       status_name: null,
       total_points: null,
+      created_date: now,
+      modified_date: now,
     });
   }
 
   function addTask(input: FakeItemInput & { user_story?: number }): FakeTask {
-    return addItem<FakeTask>('task', input, { user_story: input.user_story ?? null, milestone: null, is_closed: false });
+    const now = new Date().toISOString();
+    return addItem<FakeTask>('task', input, {
+      user_story: input.user_story ?? null,
+      milestone: null,
+      is_closed: false,
+      is_blocked: false,
+      finished_date: null,
+      due_date: null,
+      status_name: null,
+      created_date: now,
+      modified_date: now,
+    });
   }
 
   function addMilestone(input: Parameters<FakeTaiga['addMilestone']>[0]): FakeMilestone {
@@ -1035,7 +1101,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     };
     state.projects.push(project);
     addRoles(project, template!.roles);
-    addStoryStatuses(project);
+    addTemplateStatuses(project);
     addMembership({ project: project.id, role: template!.roles[0]!.slug, user: userId });
     return { status: 201, body: projectJson(project, userId) };
   }
@@ -1565,9 +1631,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   function routeStoriesAndTasks(req: IncomingMessage, method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
-    if (method === 'GET' && path === '/userstory-statuses') {
+    const statusLists: Record<string, { project: number; order: number }[]> = { '/userstory-statuses': state.storyStatuses, '/task-statuses': state.taskStatuses };
+    if (method === 'GET' && statusLists[path]) {
       const projectId = queryNumber(query, 'project');
-      const statuses = state.storyStatuses
+      const statuses = statusLists[path]
         .filter((s) => visibleProject(s.project, userId) && (projectId === undefined || s.project === projectId))
         .sort((a, b) => a.order - b.order);
       return paginate(req, query, statuses);
@@ -1996,6 +2063,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     intercept: (rule) => void intercepts.push({ ...rule }),
     addUserStory,
     addTask,
+    addStatus,
     addMilestone,
     addIssue,
     addEpicRelatedUserStory,
