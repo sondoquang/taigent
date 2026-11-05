@@ -3,8 +3,8 @@
 
 import type { ReactNode } from 'react';
 import { toast as sonner } from 'sonner';
-import { type Failure, HEADLESS_AGENTS, type ProjectView, type RepoInfo, type Result } from '../shared/api.ts';
-import { api, findNode, type Filter, type Section, useApp, visibleNodes } from './store.ts';
+import { type Failure, HEADLESS_AGENTS, type ProjectView, type RepoInfo, type Result, ROLES } from '../shared/api.ts';
+import { api, findNode, type Filter, ROLE_LABEL, type Section, useApp, visibleNodes } from './store.ts';
 
 /** A short confirmation (3 s) or an error (8 s); both are announced by the toaster's live region. */
 export function toast(message: string, kind: 'info' | 'error' = 'info'): void {
@@ -127,5 +127,16 @@ export async function chooseHeadlessAgent(choice: string): Promise<void> {
   if (result.ok) {
     useApp.setState({ headlessAgent: result.value });
     toast(`Nút chạy skill dùng ${result.value}.`);
+  } else toast([result.message, result.detail].filter(Boolean).join(': '), 'error');
+}
+
+/** The Dashboard's Role, saved in settings.json (the Dashboard's first-run choice, its menu and Settings all pick it). */
+export async function chooseRole(choice: string): Promise<void> {
+  const picked = ROLES.find((known) => known === choice);
+  if (!picked) return;
+  const result = await api.setRole(picked);
+  if (result.ok) {
+    useApp.setState({ role: result.value });
+    toast(`Dashboard hiện theo vai trò ${ROLE_LABEL[result.value]}.`);
   } else toast([result.message, result.detail].filter(Boolean).join(': '), 'error');
 }

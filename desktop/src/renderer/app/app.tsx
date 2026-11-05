@@ -13,6 +13,7 @@ import { Toaster } from '@/components/ui/sonner.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip.tsx';
 import { BacklogScreen } from '@/screens/backlog/backlog-screen.tsx';
 import { ChangesScreen } from '@/screens/changes/changes-screen.tsx';
+import { DashboardScreen } from '@/screens/dashboard/dashboard-screen.tsx';
 import { GitScreen } from '@/screens/git/git-screen.tsx';
 import { SettingsScreen } from '@/screens/settings/settings-screen.tsx';
 import { SetupScreen } from '@/screens/setup/setup-screen.tsx';
@@ -22,6 +23,7 @@ import { WikiScreen } from '@/screens/wiki/wiki-screen.tsx';
 import { api, type Section, useApp } from '@/store.ts';
 
 const SCREEN_LABEL: Record<Section, string> = {
+  dashboard: 'Dashboard',
   backlog: 'Backlog',
   wiki: 'Wiki',
   taiga: 'Taiga',
@@ -42,8 +44,8 @@ function Screen({ section, children }: { section: Section; children: ReactNode }
 }
 
 async function start(): Promise<void> {
-  const [initial, headlessAgent] = await Promise.all([api.getState(), api.headlessAgent()]);
-  useApp.setState({ repo: initial.repo, versions: initial.versions, headlessAgent });
+  const [initial, headlessAgent, role] = await Promise.all([api.getState(), api.headlessAgent(), api.role()]);
+  useApp.setState({ repo: initial.repo, versions: initial.versions, headlessAgent, role });
   document.title = `Taigent Desktop ${initial.versions.app}`;
   const only = initial.repo?.projects.length === 1 ? initial.repo.projects[0] : undefined;
   if (only) await openProject(only.slug);
@@ -80,6 +82,9 @@ export function App() {
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar />
           <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <Screen section="dashboard">
+              <DashboardScreen />
+            </Screen>
             <Screen section="backlog">
               <BacklogScreen />
             </Screen>

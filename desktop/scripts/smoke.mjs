@@ -6,7 +6,8 @@
 // use the login only when the app reports one, and "Đẩy wiki lên Taiga" and Ticket của tôi's writes (status, comment)
 // run against an in-process fake Taiga (test/support/fake-taiga.ts; smoke-tickets.mjs for the tickets).
 // Terminal steps: scripts/smoke-terminal.mjs; Git: scripts/smoke-git.mjs; headless skill buttons (run-skill --dry-run,
-// Huỷ): scripts/smoke-headless.mjs; setup wizard (last): scripts/smoke-wizard.mjs.
+// Huỷ): scripts/smoke-headless.mjs; Dashboard (FakeTaiga): scripts/smoke-dashboard.mjs; setup wizard (last):
+// scripts/smoke-wizard.mjs.
 //
 //   node scripts/smoke.mjs [--project <slug> --story <key>] [--exe <packaged app exe>] [--out <screenshot dir>]
 
@@ -24,6 +25,7 @@ import { smokeGit } from './smoke-git.mjs';
 import { smokeWizard } from './smoke-wizard.mjs';
 import { headlessPath, smokeHeadless } from './smoke-headless.mjs';
 import { smokeTickets } from './smoke-tickets.mjs';
+import { smokeDashboard } from './smoke-dashboard.mjs';
 
 const desktop = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = resolve(desktop, '..');
@@ -59,7 +61,7 @@ const check = (condition, message) => {
   if (!condition) throw new Error(`FAILED: ${message}`);
   log('ok -', message);
 };
-const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'setup', 'settings'];
+const SECTIONS = ['dashboard', 'backlog', 'wiki', 'taiga', 'changes', 'git', 'setup', 'settings'];
 /** Switches to a section of the navigation shell and checks that only its screen shows. */
 const goTo = async (page, section) => {
   await page.click(`#nav [data-section="${section}"]`);
@@ -89,12 +91,20 @@ try {
   await page.setViewportSize({ width: 1400, height: 900 }).catch(() => undefined);
   await page.waitForLoadState('domcontentloaded');
   const sections = await page.locator('#nav [data-section]').evaluateAll((buttons) => buttons.map((button) => button.textContent?.trim()));
-  check(sections.join('|') === 'Backlog|Wiki|Taiga|Thay đổi|Git|Setup repo|Settings', `navigation shows ${sections.join(', ')}`);
-  check((await page.isVisible('#screen-backlog')) && !(await page.isVisible('#screen-changes')), 'the app opens on Backlog');
+  check(sections.join('|') === 'Dashboard|Backlog|Wiki|Taiga|Thay đổi|Git|Setup repo|Settings', `navigation shows ${sections.join(', ')}`);
+  check((await page.isVisible('#screen-dashboard')) && !(await page.isVisible('#screen-backlog')), 'the app opens on Dashboard');
+  await page.waitForSelector('#dashboard-empty[data-reason="no-repo"]');
+  await page.waitForSelector('#dashboard-role-choice');
+  const roles = await page.locator('#dashboard-role-choice button[data-role]').evaluateAll((buttons) => buttons.map((button) => button.dataset.role));
+  check(roles.join('|') === 'developer|productOwner|businessAnalyst', `without a Role, the Dashboard offers the three in the page (${roles.join(', ')}), before any repository`);
   await page.waitForSelector('#setup-banner[data-state="no-repo"]');
   log('ok - without a repository, the app points to Setup repo');
 
   await page.click('#open-repo');
+  // The Dashboard shows the project of the repository: its step runs while it is the shown section.
+  await page.waitForSelector(`#dashboard[data-slug="${project}"]`);
+  await smokeDashboard({ app, page, work, project, shots, check, log, goTo });
+  await goTo(page, 'backlog');
   await page.waitForSelector('#tree .node');
   const select = await page.inputValue('#project-select');
   check(select === project, `project ${project} opened (select = ${select})`);
@@ -237,6 +247,8 @@ try {
       window.taigent.openProject('..'),
       window.taigent.readBacklog('taiga\\..\\..'),
       window.taigent.readTaigaReport('Upper'),
+      window.taigent.readMetrics('../x'),
+      window.taigent.cachedMetrics('..'),
       window.taigent.saveProjectSettings({ slug: '../x', settings: {}, baseDigest: null }),
     ]),
   );

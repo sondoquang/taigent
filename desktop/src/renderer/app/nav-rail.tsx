@@ -1,4 +1,4 @@
-import { BookOpen, ChartColumnBig, CloudUpload, GitBranch, ListChecks, LogIn, LogOut, SlidersHorizontal, Wrench, type LucideIcon } from 'lucide-react';
+import { BookOpen, ChartColumnBig, CloudUpload, GitBranch, LayoutDashboard, ListChecks, LogIn, LogOut, SlidersHorizontal, Wrench, type LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { openLogin, showSection } from '@/actions.ts';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip.tsx';
@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils.ts';
 import { type Section, useApp } from '@/store.ts';
 
 const ITEMS: { section: Section; label: string; icon: LucideIcon }[] = [
+  { section: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { section: 'backlog', label: 'Backlog', icon: ListChecks },
   { section: 'wiki', label: 'Wiki', icon: BookOpen },
   { section: 'taiga', label: 'Taiga', icon: ChartColumnBig },

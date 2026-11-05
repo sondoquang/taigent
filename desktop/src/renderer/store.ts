@@ -1,11 +1,11 @@
 // The renderer's shared state: the opened repository and project, the Backlog selection, the Taiga login, the shown
-// section and the result dialog. Everything it knows comes through `window.taigent` (preload); it never reaches the
-// file system or the network itself. Screen-local state (forms, Git, Wiki…) lives in the screens, which stay mounted
-// while hidden, so switching sections keeps every draft.
+// section, the Dashboard's Role and the result dialog. Everything it knows comes through `window.taigent` (preload);
+// it never reaches the file system or the network itself. Screen-local state (forms, Git, Wiki, Dashboard…) lives in
+// the screens, which stay mounted while hidden, so switching sections keeps every draft.
 
 import type { ReactNode } from 'react';
 import { create } from 'zustand';
-import type { AppState, Failure, HeadlessAgent, LoginStatus, PreviewEpic, PreviewItem, PreviewStory, ProjectView, RepoInfo, TaigentApi } from '../shared/api.ts';
+import type { AppState, Failure, HeadlessAgent, LoginStatus, PreviewEpic, PreviewItem, PreviewStory, ProjectView, RepoInfo, Role, TaigentApi } from '../shared/api.ts';
 
 declare global {
   interface Window {
@@ -15,8 +15,11 @@ declare global {
 
 export const api: TaigentApi = window.taigent;
 
-export const SECTIONS = ['backlog', 'wiki', 'taiga', 'changes', 'git', 'setup', 'settings'] as const;
+export const SECTIONS = ['dashboard', 'backlog', 'wiki', 'taiga', 'changes', 'git', 'setup', 'settings'] as const;
 export type Section = (typeof SECTIONS)[number];
+
+/** How the Dashboard menu, its first-run choice and Settings name each Role. */
+export const ROLE_LABEL: Record<Role, string> = { developer: 'Developer', productOwner: 'Product Owner', businessAnalyst: 'Business Analyst' };
 
 export type Filter = 'all' | 'unreviewed' | 'changes' | 'stale';
 
@@ -51,10 +54,12 @@ export interface AppStore {
   account?: 'login' | 'logout';
   /** The agent of the headless skill buttons (Backlog agent bar, Settings); read from settings.json at start. */
   headlessAgent: HeadlessAgent;
+  /** The Dashboard's Role (Dashboard menu and Settings): undefined until settings.json is read, null while unset. */
+  role?: Role | null;
 }
 
 export const useApp = create<AppStore>(() => ({
-  section: 'backlog',
+  section: 'dashboard',
   filter: 'all',
   busy: false,
   headlessAgent: 'omp',

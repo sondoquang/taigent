@@ -117,7 +117,9 @@ Bố cục gồm bốn phần, từ trên xuống:
   trong repo cũ hơn ứng dụng; xem [Setup repo](#setup-repo-wizard)), bật/tắt **Terminal**, đăng nhập/đăng xuất Taiga.
   Các phần này dùng chung cho mọi mục.
 - **Thanh điều hướng bên trái** và màn hình của mục đang chọn:
-  - **Backlog**: review backlog (xem bên dưới). Ứng dụng mở vào mục này.
+  - **Dashboard**: số liệu của dự án đang mở theo vai trò của bạn (xem [Dashboard](#dashboard)). Ứng dụng mở vào mục
+    này.
+  - **Backlog**: review backlog (xem bên dưới).
   - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)), **Ticket của tôi** (xem
     [Ticket của tôi](#ticket-của-tôi)) và **Báo cáo** (xem [Báo cáo tiến độ](#báo-cáo-tiến-độ)).
   - **Wiki**: các trang của `docs.yaml`, form tạo/sửa trang và nút **Đẩy wiki lên Taiga** (xem [Wiki](#wiki)).
@@ -126,10 +128,10 @@ Bố cục gồm bốn phần, từ trên xuống:
   - **Setup repo**: tạo, clone hoặc mở repo, cài Taigent vào repo, `npm install` và checklist công cụ (xem
     [Setup repo](#setup-repo-wizard)).
   - **Settings**: **Giao diện** (*Theo hệ thống*, đổi theo chế độ sáng/tối của Windows hoặc macOS; *Sáng*; *Tối*, mặc
-    định), agent cho các nút chạy skill headless (`omp`, `claude` hoặc `codex`), cả hai lưu trong `settings.json` của
-    ứng dụng, và phiên bản của ứng dụng, taigent, Electron và Node. Giao diện đổi ngay khi chọn, cả thanh tiêu đề của
-    cửa sổ (main process đặt `nativeTheme.themeSource`, trang đổi theo `prefers-color-scheme`); terminal giữ nền tối ở
-    cả hai giao diện.
+    định), **Vai trò trên Dashboard** (xem [Dashboard](#dashboard)), agent cho các nút chạy skill headless (`omp`,
+    `claude` hoặc `codex`), cả ba lưu trong `settings.json` của ứng dụng, và phiên bản của ứng dụng, taigent, Electron
+    và Node. Giao diện đổi ngay khi chọn, cả thanh tiêu đề của cửa sổ (main process đặt `nativeTheme.themeSource`, trang
+    đổi theo `prefers-color-scheme`); terminal giữ nền tối ở cả hai giao diện.
 
   Chuyển qua lại giữa các mục không đổi dự án đang mở, mục đang chọn trong cây, bộ lọc và góp ý đang viết dở.
 - **Panel dưới đáy**: terminal (xem [Terminal](#terminal)), ẩn mặc định.
@@ -158,9 +160,52 @@ Giao diện viết bằng React với component của shadcn/ui trên Tailwind C
 riêng terminal dùng Geist Mono; cả hai đóng gói sẵn trong `desktop/src/renderer/fonts/` (giấy phép SIL OFL 1.1,
 `OFL.txt`) nên không tải gì từ mạng.
 
-Các mục Wiki, Taiga, Thay đổi, Git, Setup repo và Settings có cùng bố cục: đầu trang có tiêu đề và mô tả ở bên trái,
-các nút của mục ở bên phải; nội dung chia thành các card. Git (nhánh và ô commit) và Setup repo (bước 4 Kiểm tra) đặt
-nội dung phụ thành cột bên phải, Settings xếp các card thành hai cột.
+Các mục Dashboard, Wiki, Taiga, Thay đổi, Git, Setup repo và Settings có cùng bố cục: đầu trang có tiêu đề và mô tả ở
+bên trái, các nút của mục ở bên phải; nội dung chia thành các card. Git (nhánh và ô commit) và Setup repo (bước 4 Kiểm
+tra) đặt nội dung phụ thành cột bên phải, Settings xếp các card thành hai cột.
+
+## Dashboard
+
+Mục đầu tiên của thanh điều hướng, và là mục ứng dụng mở vào. Dashboard hiện số liệu của dự án đang mở ở thanh trên
+cùng (repo có nhiều dự án mà chưa chọn thì Dashboard nhắc chọn, không tự đoán), theo **vai trò** của bạn: Developer,
+Product Owner hoặc Business Analyst (thuật ngữ trong `GLOSSARY.md`, mục Dashboards). Dashboard chỉ đọc Taiga, không
+bao giờ ghi.
+
+- **Vai trò.** Lần đầu, Dashboard hiện ba lựa chọn ngay trong trang (không có hộp thoại, nên các mục khác vẫn dùng
+  được khi chưa chọn). Đổi vai trò bằng menu **Vai trò: …** ở đầu Dashboard, hoặc ở Settings › **Vai trò trên
+  Dashboard**. Vai trò lưu trong `settings.json` của ứng dụng (khoá `role`), giữ qua các lần mở.
+- **Số liệu.** Main process chạy `taigent metrics --project <slug> --json` (xem `docs/cli.md` §Metrics) trong repo
+  đang mở, nên `.env` của repo (`TAIGA_*`) được dùng như mọi lệnh đọc khác. Mỗi lần đọc xong, kết quả được lưu vào
+  `metrics-cache/latest-<slug>.json` trong thư mục dữ liệu của ứng dụng. Lần sau mở, Dashboard hiện ngay số liệu đã
+  lưu kèm thời điểm đọc (*Cập nhật lúc …*), trong khi lần đọc mới chạy ở nền.
+- **Khi nào đọc.** Lần đầu mục Dashboard hiện ra trong phiên, và mỗi lần đổi dự án (Dashboard đang ẩn thì đọc khi nó
+  hiện ra). Nút **Làm mới** đọc lại.
+- **Lỗi.** Không đọc được (chưa đăng nhập, đăng nhập hết hạn hoặc bị từ chối, project không có trên Taiga hoặc bạn
+  không xem được, mạng hay URL API) thì lỗi hiện bằng tiếng Việt kèm cách sửa, chi tiết của CLI để bên dưới. Số liệu
+  đang hiện vẫn giữ nguyên.
+
+**Developer** (từ phần `developer` của `taigent metrics`):
+
+- **Kỳ hiện tại** (sprint đang chạy, hoặc tuần này với project kanban): số story và số task được giao và hoàn thành,
+  đếm riêng;
+- **Thời gian xử lý**: lead time trung vị của story và của task (Ready for test chưa tính là đóng);
+- **Xu hướng hoàn thành**: biểu đồ cột story và task đóng trong từng kỳ;
+- **Bug**: số bug resolved và số bug Rejected (đếm riêng) trong kỳ hiện tại, resolution time trung vị, và bảng theo
+  từng kỳ;
+- **Workload**: story mở, task mở và point của từng người, cộng một hàng *Chưa giao*;
+- **Bị block** và **Quá hạn**: story và task đang mở, kèm status, người làm và hạn (hạn hôm nay chưa tính là quá hạn).
+
+Công tắc **Chỉ tôi** thu mọi số liệu về việc được giao cho bạn (người dùng mà CLI đăng nhập): số của bạn, hàng
+workload của bạn, các item block và quá hạn của bạn. Công tắc lọc ngay trong ứng dụng, không chạy lại lệnh. Chỉ số mà
+`taigent metrics` chưa tính được (danh sách `unavailable`, ví dụ cycle time và reopen rate cần history của Taiga) hiện
+ô **Chưa có** kèm lý do.
+
+**Product Owner** và **Business Analyst** hiện tại là khung tạm, ghi ticket sẽ lấp đầy: #71 (sprint progress,
+velocity, planned vs completed, release burndown, bug trend, sức khoẻ project, bảng theo sprint và theo epic) và #72
+(phân bố status, độ phủ yêu cầu, acceptance criteria, mục chờ review và chờ làm rõ).
+
+Biểu đồ dùng component Chart của shadcn/ui (Recharts, đóng gói cùng renderer), màu lấy từ token `--chart-1`…`--chart-5`
+của `globals.css`. Mỗi widget có `id` ổn định (`#dashboard-throughput`, `#dashboard-workload`…) cho smoke.
 
 ## Duyệt và góp ý
 
@@ -579,8 +624,9 @@ hay upload nó lên Taiga thật. Muốn smoke trên manifest của mình thì t
 `taiga/<slug>`); khi đó script bỏ qua phần issue, phần form và phần wiki, vì chúng dùng các key và trang của fixture.
 
 Script chép fixture sang thư mục tạm, trỏ ứng dụng vào đó bằng `TAIGENT_MANIFESTS_DIR` và dùng user-data tạm, nên
-không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng, ứng dụng mở vào mục Backlog và gợi ý *Chưa mở
-repo* trên thanh trên cùng, mở repo, chụp
+không đụng tới file của bạn. Script lần lượt: kiểm tra thanh điều hướng (Dashboard đứng đầu), ứng dụng mở vào mục
+Dashboard với ba lựa chọn vai trò ngay trong trang và gợi ý *Chưa mở repo* trên thanh trên cùng, mở repo, chạy phần
+**Dashboard** (`scripts/smoke-dashboard.mjs`, xem bên dưới), sang Backlog chụp
 cây và chi tiết story `REVIEW-COMMENT`, góp ý, đặt *Cần sửa*, kiểm tra `review.yaml`, sang mục Thay đổi kiểm tra nút
 đẩy bị chặn, đi qua Settings (phím `j` không đổi
 mục đang chọn), quay về Backlog kiểm tra dự án và story vẫn được chọn, đặt *Đạt*, sửa mô tả rồi chờ trạng thái *Đã
@@ -633,6 +679,20 @@ trong `taiga/` và một file ngoài, kiểm tra danh sách chỉ có file trong
 nhận file đó; sửa `docs/huong-dan.md` và kiểm tra nó vào danh sách; tạo lịch sử tách nhánh (một commit của "đồng đội"
 trên remote, một commit ở máy) rồi bấm Pull, kiểm tra ứng dụng giải thích, mở một tab shell ở repo trong panel terminal,
 và HEAD, trạng thái cùng nội dung working tree không đổi. Ảnh chụp lưu ở `tmp/desktop-smoke/`.
+
+Phần **Dashboard** (`scripts/smoke-dashboard.mjs`) chạy ngay sau khi mở repo, khi Dashboard đang hiện. Lần đọc đầu
+(bằng đăng nhập của bạn, hoặc lỗi nếu chưa đăng nhập) chạy xong trước, rồi script trỏ CLI của ứng dụng vào FakeTaiga
+(như phần Ticket của tôi) với một project cùng slug với fixture: hai sprint, story và task của người dùng giả và một
+đồng đội, hai bug. Script kiểm tra: *Làm mới* đọc số liệu (Taiga giả chỉ nhận request đọc) và kết quả được lưu trong
+`metrics-cache/` của user-data; chưa có vai trò thì số liệu chờ lựa chọn, chọn Developer trong trang thì
+`settings.json` lưu `role`; số story/task của kỳ hiện tại, bug resolved và Rejected, ô *Chưa có* kèm lý do của cycle
+time và reopen rate, biểu đồ xu hướng, workload (kèm *Chưa giao*), danh sách quá hạn và bị block; *Chỉ tôi* chỉ giữ
+hàng workload và item của người dùng mà không chạy lại lệnh; menu vai trò chuyển sang khung Product Owner (#71) và
+Business Analyst (#72) và lưu lựa chọn; Settings hiện vai trò đó và đổi lại được; *Làm mới* thấy story vừa đóng trên
+Taiga giả, kèm thời điểm mới. Sau đó script trỏ CLI vào một server không bao giờ trả lời rồi tải lại cửa sổ (như mở
+lại ứng dụng): vai trò còn giữ, số liệu đã lưu hiện kèm thời điểm trong khi lần đọc mới còn chạy. Server ngắt kết nối,
+rồi đăng nhập bị từ chối (sai mật khẩu): cả hai lần đều hiện lỗi tiếng Việt kèm cách sửa mà số liệu cũ vẫn trên màn
+hình. Xong thì trả lại biến môi trường.
 
 Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form và phần wiki, trước *Xem thay đổi*: panel ẩn lúc mở, bật/tắt bằng
 `` Ctrl+` `` và nút; mở tab shell, gõ lệnh và thấy output, in tiếng Việt, in chữ đỏ bằng mã ANSI, kéo panel cao lên rồi

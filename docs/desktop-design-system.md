@@ -72,6 +72,7 @@ Component chỉ dùng tên token, không bao giờ dùng mã màu.
 | `highlight` | `#172554` | `#eff6ff` | `bg-highlight` | hàng bảng đang chọn |
 | `success`, `warning`, `danger`, `info`, `neutral` (+ `-bg`, `-border`, `-icon`) | màu tag của Medusa | | `tag-*` | badge, hộp cảnh báo, số thống kê |
 | `destructive` | `#fb7185` | `#e11d48` | `fg-error` | chữ lỗi |
+| `chart-1` … `chart-5` | theo `info-icon`, `success-icon`, `warning-icon`, `danger-icon`, `neutral-icon` | | — | chuỗi số liệu của biểu đồ (Chart) |
 
 `fg-muted` của Medusa (`#71717a`) không dùng cho chữ: chỉ đạt khoảng 3.7:1. Control bị vô hiệu hoá dùng `opacity-50`.
 
@@ -126,6 +127,7 @@ Trạng thái bắt buộc của mọi component tương tác:
 | Form | `FieldGroup` > `Field` > `FieldLabel` + control + `FieldDescription`/`FieldError` | mọi input có nhãn; Enter gửi form một dòng; Ctrl+Enter gửi góp ý | lỗi đặt ngay dưới input |
 | Select | `NativeSelect` (giữ select gốc, dùng được với bàn phím và trình đọc màn hình) | mũi tên chọn | tuỳ chọn dài: `truncate` |
 | Toast | `toast()` trong `actions.ts` (sonner): thông tin 3 giây, lỗi 8 giây | có nút đóng; vùng live của sonner đọc nội dung | một câu |
+| Chart | `ChartContainer` của shadcn (Recharts) với `ChartConfig` có `color: 'var(--chart-N)'`, lưới ngang, trục không viền, `ChartTooltip` và `ChartLegend`; đặt trong card, cao cố định (`aspect-auto h-56`) | `role="img"` và `aria-label` tóm tắt số liệu (biểu đồ không đọc được bằng trình đọc màn hình) | rỗng: câu `text-muted-foreground` thay cho biểu đồ |
 | Terminal | xterm.js, nền tối ở cả hai giao diện | Ctrl+` bật hoặc tắt; thanh tab dùng được bằng bàn phím | cuộn trong xterm |
 
 Bố cục và responsive:
@@ -194,7 +196,7 @@ Lỗi nói rõ chuyện gì xảy ra và cách sửa, kèm chi tiết của CLI 
 ## 8. Checklist QA
 
 - [ ] Chỉ dùng component trong `components/ui` và `components/`; không thêm file CSS mới.
-- [ ] `grep -rE "#[0-9a-fA-F]{3,8}\b|rgb\(|text-\[|p-\[|m-\[|gap-\[" desktop/src/renderer --include=*.tsx` không ra kết quả mới (trừ theme của xterm).
+- [ ] `grep -rE "#[0-9a-fA-F]{3,8}\b|rgb\(|text-\[|p-\[|m-\[|gap-\[" desktop/src/renderer --include=*.tsx` không ra kết quả mới (trừ theme của xterm, và selector `[stroke='#ccc']`/`[stroke='#fff']` của `ui/chart.tsx` dùng để đè màu mặc định của Recharts bằng token).
 - [ ] Mỗi control mới có đủ các trạng thái ở mục 3, gồm loading và error.
 - [ ] Tab qua màn hình: thứ tự hợp lý, focus luôn thấy được, Esc đóng dialog.
 - [ ] Mọi input có nhãn, mọi nút chỉ có icon có `aria-label`.

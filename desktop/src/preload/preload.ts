@@ -56,6 +56,10 @@ const api: TaigentApi = {
   readMyTickets: (from, to) => ipcRenderer.invoke(CHANNELS.readMyTickets, from, to),
   setTicketStatus: (request) => ipcRenderer.invoke(CHANNELS.setTicketStatus, request),
   commentTicket: (request) => ipcRenderer.invoke(CHANNELS.commentTicket, request),
+  role: () => ipcRenderer.invoke(CHANNELS.role),
+  setRole: (role) => ipcRenderer.invoke(CHANNELS.setRole, role),
+  cachedMetrics: (slug) => ipcRenderer.invoke(CHANNELS.cachedMetrics, slug),
+  readMetrics: (slug) => ipcRenderer.invoke(CHANNELS.readMetrics, slug),
   terminal: {
     shells: () => ipcRenderer.invoke(CHANNELS.terminalShells),
     open: (kind, shell) => ipcRenderer.invoke(CHANNELS.terminalOpen, kind, shell),

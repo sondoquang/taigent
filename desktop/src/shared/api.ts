@@ -7,6 +7,10 @@ import type { InitFile, InitReport } from '../../../src/init.ts';
 import type { ItemType } from '../../../src/items.ts';
 import type { CustomAttributeSpec } from '../../../src/manifest/project.ts';
 import type { ProjectSettings, ProjectSettingsFile, SaveProjectSettingsResult } from '../../../src/project-settings.ts';
+import type { MetricsReport } from '../../../src/metrics/compute.ts';
+import type { UnavailableMetric } from '../../../src/metrics/context.ts';
+import type { DeveloperItem, LeadTime, WorkloadRow } from '../../../src/metrics/developer.ts';
+import type { Period } from '../../../src/metrics/periods.ts';
 import type { StaleLink } from '../../../src/planner.ts';
 import type { ProjectDetailReport, StoryStatusEntry } from '../../../src/projects.ts';
 import type { ProjectReport } from '../../../src/report.ts';
@@ -22,6 +26,7 @@ export type { ProjectDetailReport, ProjectSettings, ProjectSettingsFile, SavePro
 export type { InitFile, InitReport };
 export type { CommentAdded, DueStatus, StatusChange, StoryStatusEntry, Ticket, TicketsReport };
 export type { ProjectReport };
+export type { DeveloperItem, LeadTime, MetricsReport, Period, UnavailableMetric, WorkloadRow };
 
 /** A failure the UI shows as is: `message` is already in Vietnamese, `detail` is the CLI's own text when there is one. */
 export interface Failure {
@@ -178,6 +183,10 @@ export type HeadlessAgent = (typeof HEADLESS_AGENTS)[number];
 /** The app's colours (Settings): follow the OS, or light or dark whatever it says. */
 export const THEMES = ['system', 'light', 'dark'] as const;
 export type Theme = (typeof THEMES)[number];
+
+/** The Role whose dashboard the Dashboard section shows (GLOSSARY.md, Dashboards); unset until the user picks one. */
+export const ROLES = ['developer', 'productOwner', 'businessAnalyst'] as const;
+export type Role = (typeof ROLES)[number];
 
 /**
  * The headless buttons, each a `run-skill` of one skill: plan the backlog from a spec file (`taiga-plan-backlog`),
@@ -475,6 +484,13 @@ export interface TaigentApi {
   setTicketStatus(request: TicketStatusRequest): Promise<Result<TicketWriteOutcome<StatusChange>>>;
   /** A native confirmation, then `comment --project <slug> --json <ref> -- <text>`. */
   commentTicket(request: TicketCommentRequest): Promise<Result<TicketWriteOutcome<CommentAdded>>>;
+  /** The Role of the Dashboard, from the app settings; null until the user picks one. */
+  role(): Promise<Role | null>;
+  setRole(role: Role): Promise<Result<Role>>;
+  /** The last metrics read of project `slug` that the app saved (shown at once, with its `generatedAt`); null without one. */
+  cachedMetrics(slug: string): Promise<Result<MetricsReport | null>>;
+  /** Dashboard: `taigent metrics --project <slug> --json` (read-only); a success replaces the saved read. */
+  readMetrics(slug: string): Promise<Result<MetricsReport>>;
 }
 
 export const CHANNELS = {
@@ -532,4 +548,8 @@ export const CHANNELS = {
   readMyTickets: 'taigent:read-my-tickets',
   setTicketStatus: 'taigent:set-ticket-status',
   commentTicket: 'taigent:comment-ticket',
+  role: 'taigent:role',
+  setRole: 'taigent:set-role',
+  cachedMetrics: 'taigent:cached-metrics',
+  readMetrics: 'taigent:read-metrics',
 } as const;
