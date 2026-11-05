@@ -83,9 +83,12 @@ const UNAVAILABLE_LABEL: Record<string, string> = {
   'businessAnalyst.requirementChange': 'Requirement change',
 };
 
-function unavailableReason(entry: UnavailableMetric): string {
-  return entry.reason === 'history' ? 'cần lịch sử thay đổi (history) của từng item trên Taiga, mà taigent metrics chưa đọc' : entry.message;
-}
+/** Why a metric is missing, in Vietnamese; the CLI's own message stays in the cell's title. */
+const UNAVAILABLE_REASON: Record<UnavailableMetric['reason'], string> = {
+  history: 'cần lịch sử thay đổi (history) của từng item trên Taiga, mà taigent metrics chưa đọc',
+  'backlog-missing': 'dự án chưa có backlog manifest (taiga/<slug>/backlog.yaml) trong repo',
+  'backlog-invalid': 'backlog manifest của dự án đang lỗi (xem taigent validate)',
+};
 
 /** A "Chưa có" cell, with its reason, for each of `metrics` the report lists as unavailable; nothing for the others. */
 export function UnavailableCells({ unavailable, metrics }: { unavailable: UnavailableMetric[]; metrics: string[] }) {
@@ -93,7 +96,7 @@ export function UnavailableCells({ unavailable, metrics }: { unavailable: Unavai
     .filter((entry) => metrics.includes(entry.metric))
     .map((entry) => (
       <div key={entry.metric} className="unavailable min-w-0" data-metric={entry.metric} title={entry.message}>
-        <StatCell label={`${UNAVAILABLE_LABEL[entry.metric] ?? entry.metric}: ${unavailableReason(entry)}`} value="Chưa có" />
+        <StatCell label={`${UNAVAILABLE_LABEL[entry.metric] ?? entry.metric}: ${UNAVAILABLE_REASON[entry.reason] ?? entry.message}`} value="Chưa có" />
       </div>
     ));
 }

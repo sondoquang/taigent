@@ -142,7 +142,8 @@ export async function smokeHeadless(page, { app, repo, project, work, shots, log
     }
     if (run.agent === 'codex') {
       await goTo(page, 'settings');
-      await page.check('#settings-agent [role="radio"][value="codex"]');
+      // A click, not check(): the radio follows settings.json once the main process saved it, after check() looks.
+      await page.click('#settings-agent [role="radio"][value="codex"]');
       await page.waitForFunction(() => document.getElementById('agent-select')?.value === 'codex');
       const saved = JSON.parse(await readFile(settingsFile, 'utf8'));
       check(saved.headlessAgent === 'codex' && typeof saved.lastRepo === 'string', `Settings: codex saved in settings.json, next to lastRepo, and shown in the agent bar (${JSON.stringify(saved)})`);

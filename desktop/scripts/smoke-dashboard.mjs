@@ -193,9 +193,11 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
     await page.click('#dashboard-mine');
 
     // 3. The Role menu, and Settings.
+    /** Opens the Role menu (once the previous one has closed: its items leave with an animation) and picks `role`. */
     const pickFromMenu = async (role) => {
+      await page.waitForSelector('[role="menu"]', { state: 'detached' });
       await page.click('#dashboard-role-menu');
-      await page.click(`[role="menuitemradio"][data-role="${role}"]`);
+      await page.click(`[role="menu"][data-state="open"] [role="menuitemradio"][data-role="${role}"]`);
       await page.waitForSelector(`#dashboard[data-role="${role}"]`);
     };
     await pickFromMenu('productOwner');
@@ -206,7 +208,8 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
     check(JSON.parse(await readFile(settingsFile, 'utf8')).role === 'businessAnalyst', 'dashboard: the Role picked from the menu is saved');
     await goTo(page, 'settings');
     check(await page.isChecked('#settings-role [role="radio"][value="businessAnalyst"]'), 'Settings shows the Role picked on the Dashboard');
-    await page.check('#settings-role [role="radio"][value="developer"]');
+    await page.click('#settings-role [role="radio"][value="developer"]');
+    await page.waitForSelector('#settings-role [role="radio"][value="developer"][aria-checked="true"]');
     await goTo(page, 'dashboard');
     await page.waitForSelector('#dashboard-developer');
     check(JSON.parse(await readFile(settingsFile, 'utf8')).role === 'developer', 'dashboard: the Role picked in Settings shows on the Dashboard and is saved');
