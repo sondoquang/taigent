@@ -135,6 +135,8 @@ function addTask(fake: FakeTaiga, project: number, subject: string, fields: Work
 test('metrics of a scrum project: periods are the started sprints, phase 2 metrics are unavailable, nothing is written', async (t) => {
   const h = await startHarness(t);
   const { alpha, past, current } = seedSprints(h.fake);
+  // With a backlog manifest, the Business Analyst's metrics of the manifest are available.
+  await h.writeManifest('alpha', 'backlog.yaml', 'epics: []\n');
 
   const result = await h.taigent(['metrics', '--project', 'alpha', '--json'], { env: { TZ } });
 
@@ -153,9 +155,9 @@ test('metrics of a scrum project: periods are the started sprints, phase 2 metri
     report.unavailable.map(({ metric, reason }) => [metric, reason]),
     [
       ['developer.cycleTime', 'history'],
-      ['developer.bugs.reopenRate', 'history'],
       ['productOwner.planned.sprintStart', 'history'],
       ['productOwner.scopeChange', 'history'],
+      ['developer.bugs.reopenRate', 'history'],
       ['productOwner.bugTrend.reopened', 'history'],
       ['businessAnalyst.requirementChange', 'history'],
     ],
@@ -267,7 +269,7 @@ test('metrics of a kanban project counts by week, Monday to Sunday, with a warni
     report.developer.periods.slice(-2).map(({ all }) => [all.stories.completed, all.tasks.completed]),
     [[0, 1], [1, 0]],
   );
-  assert.deepEqual(report.warnings.map(({ code }) => code), ['kanban']);
+  assert.deepEqual(report.warnings.map(({ code }) => code), ['kanban', 'backlog-missing']);
   assert.ok(!h.fake.requests.some((request) => request.path.startsWith('/milestones')), 'a kanban project has no sprints to read');
 });
 

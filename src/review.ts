@@ -9,7 +9,7 @@ import { stringify } from 'yaml';
 import { sha256, writeAtomic } from './files.ts';
 import { isRecord } from './guards.ts';
 import type { IssueValueField, ItemType } from './items.ts';
-import { type AttributeValue, type Backlog, backlogKeys, type StorySpec } from './manifest/backlog.ts';
+import { type AttributeValue, type Backlog, backlogKeys, type Scenario, type StorySpec } from './manifest/backlog.ts';
 import { checkKeyReference, KEY_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { loadManifests } from './manifest/manifests.ts';
@@ -269,6 +269,8 @@ export interface PreviewStory extends PreviewItem {
   type: 'story';
   /** `legacy` stories are only allowed when already on Taiga; plan/apply refuse to create them. */
   format: StorySpec['format'];
+  /** The story's Gherkin scenarios, as in the manifest; none for a `legacy` story. */
+  scenarios: Scenario[];
   spec: string;
   tasks: PreviewItem[];
 }
@@ -406,7 +408,7 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
         summary.tasks++;
         return previewItem('task', task, task.description, { parent: story.key });
       });
-      return { ...storyItem, format: story.format, spec: story.spec, tasks };
+      return { ...storyItem, format: story.format, scenarios: story.format === 'user-story' ? story.scenarios : [], spec: story.spec, tasks };
     });
     return { ...item, stories };
   });

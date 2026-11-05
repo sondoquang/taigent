@@ -100,16 +100,45 @@ Manifest chỉ dùng tag có tiền tố. Taiga tự đổi tag sang chữ thư�
 | `type:` | `feature`, `bug`, `chore` | `type:feature` `#2E7D32`, `type:bug` `#C62828`, `type:chore` `#757575` | Người viết manifest |
 | `area:` | kebab-case chữ thường, tên module/mảng, ví dụ `area:auth`, `area:user-profile` | `#1565C0` (mọi `area:*`) | Người viết manifest |
 | `src:` | `src:<key>` viết thường, ví dụ `src:auth-login` | không màu | **Chỉ `taigent`** |
+| `release:` | `release:<version>`, version kebab-case chữ thường, ví dụ `release:v1-2-0` | không quy định | **Người dùng gắn tay trên Taiga**, không có trong manifest |
 
 | Rule | Quy tắc |
 |---|---|
-| `tag-prefix` | Tag phải bắt đầu bằng `type:` hoặc `area:`. |
+| `tag-prefix` | Tag phải bắt đầu bằng `type:` hoặc `area:`. `release:` cũng bị từ chối: tag này gắn tay trên Taiga, còn release khai báo trong `releases` của `project.yaml` (mục 4.1). |
 | `tag-format` | `type:` chỉ nhận `feature`/`bug`/`chore`; giá trị `area:` là kebab-case chữ thường. |
 | `tag-reserved` | Không viết `src:` trong manifest. `apply` tự gắn `src:<key>`, và tag này là danh tính của item trên Taiga. |
 | `tag-color` | Tag khai báo trong `project.yaml` dùng đúng màu chuẩn ở bảng trên. |
 
 Bootstrap tạo các tag khai báo trong `project.yaml` với màu chuẩn, nên `project.yaml` khai báo đủ ba tag
 `type:*` và các tag `area:*` của project. Tag người dùng tự gắn trên Taiga được giữ nguyên, `apply` không gỡ.
+
+### 4.1 Releases
+
+Taiga không có khái niệm release. Một **Release** là các user story mang tag `release:<version>` mà người dùng gắn
+tay trên Taiga, giống cách gán sprint ([ADR 0005](../adr/0005-release-tag-on-taiga.md)).
+Backlog manifest không dùng tag này, vì `apply` gộp tag: story chuyển release sẽ mang cả tag cũ lẫn tag mới.
+
+`project.yaml` khai báo danh sách releases (tuỳ chọn) để dashboard vẽ release burndown với đường lý tưởng:
+
+```yaml
+releases:
+  - version: v1-2-0       # phần sau `release:` của tag
+    target: 2026-12-01    # ngày đích, YYYY-MM-DD
+```
+
+| Rule | Quy tắc |
+|---|---|
+| `release-version` | `version` bắt buộc, kebab-case chữ thường, khớp với phần sau `release:` của tag (ví dụ `v1-2-0`). |
+| `release-target` | `target` bắt buộc, là một ngày có thật dạng `YYYY-MM-DD`. |
+| `release-unique` | Không khai báo một version hai lần. |
+
+`taigent metrics` không đoán khi Taiga và `project.yaml` lệch nhau, mà báo cảnh báo:
+
+- `release-undeclared`: tag `release:<version>` có trên Taiga nhưng `project.yaml` không khai báo. Release vẫn được
+  vẽ, nhưng không có ngày đích và đường lý tưởng.
+- `release-empty`: release đã khai báo nhưng chưa có user story nào mang tag của nó.
+- `release-multiple`: user story mang từ hai tag `release:` trở lên. Story bị loại khỏi mọi burndown và được liệt kê
+  ra để người sửa tay trên Taiga.
 
 ## 5. Key của item
 
