@@ -238,8 +238,12 @@ bug trend) hiện ô **Chưa có** kèm lý do.
 
 - **Pipeline phân tích**: số story trên Taiga theo từng status, theo thứ tự status của project, dạng biểu đồ và bảng.
   Dashboard đọc *New* là *đang phân tích* và *Ready* là *đủ AC* (tên status trên Taiga giữ nguyên). Thêm nhóm **Chưa
-  apply**: story của backlog chưa có trên Taiga (mới, hoặc story đã ghi trong `state.json` không còn trên Taiga).
-  Requirement change (sửa mô tả story sau khi vào Ready) cần history của Taiga nên hiện ô *Chưa có* kèm lý do;
+  apply**: story của backlog chưa có trên Taiga (mới, hoặc story đã ghi trong `state.json` không còn trên Taiga);
+- **Requirement change**: số lần sửa mô tả (description) của story trên Taiga sau lần đầu story vào *Ready* (theo
+  history trên Taiga, status so theo id nên tên status trong history có dịch sang tiếng khác vẫn đúng), theo từng kỳ:
+  số lần sửa và số story bị sửa trong kỳ hiện tại, biểu đồ cột mỗi kỳ, và bảng mỗi kỳ kèm các story bị sửa. Lấy từ
+  Taiga nên vẫn hiện khi chưa có backlog manifest. Số liệu lưu từ phiên bản taigent cũ chưa có requirement change thì
+  widget chờ lần đọc sau;
 - **Độ phủ yêu cầu**: số epic có ít nhất một story đủ acceptance criteria trên tổng số epic, và danh sách epic chưa
   được phủ;
 - **Acceptance criteria**: số story đủ AC (có ít nhất một scenario đủ Given, When và Then) trên tổng số story, và các
@@ -735,12 +739,13 @@ hình. Xong thì trả lại biến môi trường.
 Phần **Business Analyst** (`scripts/smoke-dashboard-ba.mjs`) chạy khi menu vừa chuyển sang Business Analyst. Script
 trỏ CLI vào một bản chép riêng của fixture (ứng dụng và mục Backlog không thấy các sửa đổi này): story `SMOKE-FIXTURE`
 mất Then, `review.yaml` có một verdict đã cũ, một góp ý chưa xử lý và một góp ý đã xử lý, `state.json` ghi một story
-có trên Taiga giả và một story không còn. Script kiểm tra: số story theo status, *New* đọc là *đang phân tích* và
-*Ready* là *đủ AC*, nhóm *Chưa apply*, biểu đồ; độ phủ yêu cầu và epic `SMOKE` chưa được phủ; tỉ lệ đủ AC và hai story
-chưa đủ kèm lý do (legacy, thiếu Then); ô *Chưa có* của requirement change; 15 item chờ review (có item đã đổi sau khi
-duyệt); chỉ item còn góp ý chưa xử lý ở *Chờ làm rõ*. Rồi trỏ CLI vào một thư mục không có manifest: phân bố status
-vẫn còn, không còn *Chưa apply*, ghi chú thiếu backlog manifest thay cho các widget kia. Xong thì trả lại biến môi
-trường.
+có trên Taiga giả và một story không còn; history của story đó trên Taiga giả có lần vào *Ready* và bốn lần sửa mô tả
+(một lần trước khi vào Ready). Script kiểm tra: số story theo status, *New* đọc là *đang phân tích* và *Ready* là *đủ
+AC*, nhóm *Chưa apply*, biểu đồ; requirement change chỉ đếm các lần sửa sau Ready, theo sprint (số liệu kỳ hiện tại,
+biểu đồ, story trong bảng), không còn ô *Chưa có*; độ phủ yêu cầu và epic `SMOKE` chưa được phủ; tỉ lệ đủ AC và hai
+story chưa đủ kèm lý do (legacy, thiếu Then); 15 item chờ review (có item đã đổi sau khi duyệt); chỉ item còn góp ý
+chưa xử lý ở *Chờ làm rõ*. Rồi trỏ CLI vào một thư mục không có manifest: phân bố status và requirement change vẫn
+còn, không còn *Chưa apply*, ghi chú thiếu backlog manifest thay cho các widget kia. Xong thì trả lại biến môi trường.
 
 Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form và phần wiki, trước *Xem thay đổi*: panel ẩn lúc mở, bật/tắt bằng
 `` Ctrl+` `` và nút; mở tab shell, gõ lệnh và thấy output, in tiếng Việt, in chữ đỏ bằng mã ANSI, kéo panel cao lên rồi

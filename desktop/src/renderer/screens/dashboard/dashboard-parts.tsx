@@ -77,7 +77,6 @@ export function WidgetTable({ head, rows, empty }: { head: string[]; rows: Widge
 const UNAVAILABLE_LABEL: Record<string, string> = {
   'developer.bugs.reopenRate': 'Reopen rate của bug',
   'productOwner.bugTrend.reopened': 'Bug reopen trong bug trend',
-  'businessAnalyst.requirementChange': 'Requirement change',
 };
 
 /** Why a metric is missing, in Vietnamese; the CLI's own message stays in the cell's title. */

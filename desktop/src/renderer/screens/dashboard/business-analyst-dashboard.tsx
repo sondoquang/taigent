@@ -1,8 +1,9 @@
 // Business Analyst dashboard: the `businessAnalyst` section of `taigent metrics` (GLOSSARY.md, Dashboards). The
 // stories on Taiga by status, New read as "đang phân tích" and Ready as "đủ AC" (spec #64, story 42; the CLI keeps
-// Taiga's names), with the backlog's stories not on Taiga as "Chưa apply"; then, from the backlog manifest and
-// review.yaml, requirements coverage, complete acceptance criteria, the items awaiting review and those pending
-// clarification. Without a valid backlog manifest those give way to a note that says why.
+// Taiga's names), with the backlog's stories not on Taiga as "Chưa apply"; the requirement change trend (edits of a
+// story's description after it reached Ready, per period); then, from the backlog manifest and review.yaml,
+// requirements coverage, complete acceptance criteria, the items awaiting review and those pending clarification.
+// Without a valid backlog manifest those give way to a note that says why.
 
 import type { ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
@@ -10,7 +11,7 @@ import type { MetricsReport } from '../../../shared/api.ts';
 import { Code, formatTime, StatCell, StatusBadge, TYPE_LABEL } from '@/components/common.tsx';
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart.tsx';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty.tsx';
-import { Stats, UnavailableCells, Widget, type WidgetRow, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
+import { periodLabel, Stats, Widget, type WidgetRow, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
 
 type BusinessAnalyst = MetricsReport['businessAnalyst'];
 type BacklogRef = NonNullable<BusinessAnalyst['requirementsCoverage']>['uncovered'][number];
@@ -21,6 +22,8 @@ type BacklogState = 'ok' | 'backlog-missing' | 'backlog-invalid';
 const STATUS_READING: Record<string, string> = { New: 'đang phân tích', Ready: 'đủ AC' };
 
 const STATUS_CONFIG = { count: { label: 'Story', color: 'var(--chart-1)' } } satisfies ChartConfig;
+
+const CHANGE_CONFIG = { changes: { label: 'Lần sửa', color: 'var(--chart-2)' } } satisfies ChartConfig;
 
 const PART_NAME = { given: 'Given', when: 'When', then: 'Then' } as const;
 
@@ -76,6 +79,69 @@ function BacklogNote({ slug, state, message }: { slug: string; state: Exclude<Ba
   );
 }
 
+/** The requirement changes of each period: a chart, and a table with the stories edited. */
+function RequirementChangeWidget({ report }: { report: MetricsReport }) {
+  // A read saved by an older taigent has no requirement change: the widget waits for the next read.
+  const entries = report.businessAnalyst.requirementChange as BusinessAnalyst['requirementChange'] | undefined;
+  const periodOf = new Map(report.periods.map((period) => [period.id, period]));
+  const label = (id: string) => {
+    const period = periodOf.get(id);
+    return period ? periodLabel(period) : id;
+  };
+  const current = report.periods.find((period) => period.current) ?? report.periods.at(-1);
+  const now = entries?.find((entry) => entry.period === current?.id);
+  const trend = (entries ?? []).map((entry) => ({ label: label(entry.period), changes: entry.changes }));
+  return (
+    <Widget
+      id="dashboard-ba-requirement-change"
+      title="Requirement change"
+      description="Số lần sửa mô tả (description) của story trên Taiga sau lần đầu story vào Ready, theo từng kỳ. Nhiều lần sửa là yêu cầu chưa ổn định."
+    >
+      {entries === undefined ? (
+        <p className="empty text-muted-foreground">Lần đọc này từ phiên bản taigent cũ, chưa có requirement change. Bấm Làm mới để đọc lại.</p>
+      ) : trend.length === 0 ? (
+        <p className="empty text-muted-foreground">Chưa có kỳ nào.</p>
+      ) : (
+        <>
+          <Stats>
+            <StatCell label={current ? `Lần sửa trong kỳ ${periodLabel(current)}` : 'Lần sửa trong kỳ hiện tại'} value={now?.changes ?? 0} />
+            <StatCell label="Story bị sửa trong kỳ" value={now?.stories.length ?? 0} />
+          </Stats>
+          <ChartContainer
+            id="dashboard-ba-requirement-change-chart"
+            config={CHANGE_CONFIG}
+            className="aspect-auto h-56 w-full"
+            role="img"
+            aria-label={`Requirement change mỗi kỳ: ${trend.map((row) => `${row.label} ${row.changes} lần sửa`).join('; ')}`}
+            data-series={trend.map((row) => row.changes).join(',')}
+          >
+            <BarChart accessibilityLayer data={trend}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} />
+              <YAxis allowDecimals={false} tickLine={false} axisLine={false} width={32} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Bar dataKey="changes" fill="var(--color-changes)" radius={4} />
+            </BarChart>
+          </ChartContainer>
+          <WidgetTable
+            head={['Kỳ', 'Lần sửa', 'Story bị sửa']}
+            empty="Chưa có kỳ nào."
+            rows={entries.map((entry) => ({
+              key: entry.period,
+              data: { 'data-period': entry.period },
+              cells: [
+                label(entry.period),
+                String(entry.changes),
+                entry.stories.length === 0 ? '—' : entry.stories.map((story) => `#${story.ref} ${story.subject}${story.changes > 1 ? ` (${story.changes} lần)` : ''}`).join(', '),
+              ],
+            }))}
+          />
+        </>
+      )}
+    </Widget>
+  );
+}
+
 export function BusinessAnalystDashboard({ report }: { report: MetricsReport }) {
   const { businessAnalyst: ba, unavailable } = report;
   const { acceptanceCriteria: criteria, requirementsCoverage: coverage, awaitingReview, pendingClarification } = ba;
@@ -113,7 +179,6 @@ export function BusinessAnalystDashboard({ report }: { report: MetricsReport }) 
         <Stats>
           <StatCell label="Story trên Taiga" value={onTaiga} />
           {notApplied !== undefined && <StatCell label="Chưa apply (story của backlog chưa có trên Taiga)" value={notApplied} tone="new" />}
-          <UnavailableCells unavailable={unavailable} metrics={['businessAnalyst.requirementChange']} />
         </Stats>
         <ChartContainer
           id="dashboard-ba-statuses-chart"
@@ -134,6 +199,8 @@ export function BusinessAnalystDashboard({ report }: { report: MetricsReport }) 
         </ChartContainer>
         <WidgetTable head={['Status', 'Story']} empty="Project chưa có status nào cho user story." rows={statusRows} />
       </Widget>
+
+      <RequirementChangeWidget report={report} />
 
       {coverage && criteria && (
         <div className="grid min-w-0 items-start gap-6 lg:grid-cols-2">
