@@ -17,6 +17,7 @@ import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/
 import { initRepository, InitError, type InitStatus } from './init.ts';
 import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
 import { serveMcp, startProxy } from './mcp.ts';
+import { readBacklogData } from './metrics/backlog.ts';
 import { computeMetrics } from './metrics/compute.ts';
 import { ProjectNotFoundError, readSnapshot } from './metrics/snapshot.ts';
 import { formatMetricsText } from './metrics/text.ts';
@@ -53,6 +54,8 @@ Commands:
             stories in no sprint (read-only)
   metrics   Dashboard metrics of --project for every Role, from what Taiga holds now: per period (sprint, or week on
             a kanban project) throughput, lead time, workload, blocked and overdue work (read-only)
+            Business Analyst: stories by status, and from backlog.yaml and review.yaml complete acceptance
+            criteria, requirements coverage, items awaiting review or pending clarification
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
@@ -633,10 +636,13 @@ async function runReport(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `metrics`: the dashboards' metrics of the project, computed from one read of Taiga. Read-only. */
+/** `metrics`: the dashboards' metrics of the project, from one read of Taiga and its manifests. Read-only. */
 async function runMetrics(run: Run): Promise<number> {
-  const snapshot = await readSnapshot(await connectTaiga(run), run.options.project!);
-  const report = computeMetrics(snapshot, new Date());
+  const { options, env, cwd } = run;
+  const slug = options.project!;
+  const snapshot = await readSnapshot(await connectTaiga(run), slug);
+  const backlog = await readBacklogData(projectLayout(slug, env, cwd).dir, slug);
+  const report = computeMetrics(snapshot, { backlog }, new Date());
   emit(run, report, () => formatMetricsText(report));
   return ExitCode.Ok;
 }
