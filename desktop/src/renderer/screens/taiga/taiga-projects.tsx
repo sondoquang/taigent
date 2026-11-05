@@ -1,8 +1,7 @@
 // Taiga > Project: the user's Taiga projects and the repository's manifest directories, one project's detail (its
 // issue values on Taiga), the project.yaml form and bootstrap. Reads go through `taigent projects`; the form writes
 // project.yaml only (taigent's project-settings API); Taiga is written only by `bootstrap --yes`, after the main
-// process's native confirmation. The list loads when the section shows for a repository it has not listed yet; each
-// read is handed to `onListed` (Taiga > Báo cáo's project choice follows it).
+// process's native confirmation. The list loads when the section shows for a repository it has not listed yet.
 
 import { useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { PROJECT_MODULES, PROJECT_TEMPLATES, projectSlug, REQUIRED_MODULES } from '../../../../../src/manifest/conventions.ts';
@@ -293,7 +292,7 @@ function ProjectForm({
   );
 }
 
-export function ProjectsCard({ onListed }: { onListed(overview: TaigaProjectsOverview): void }) {
+export function ProjectsCard() {
   const section = useApp((s) => s.section);
   const repo = useApp((s) => s.repo);
   const [overview, setOverview] = useState<TaigaProjectsOverview>();
@@ -327,7 +326,6 @@ export function ProjectsCard({ onListed }: { onListed(overview: TaigaProjectsOve
     if (loadedFor.current !== root) return;
     if (!result.ok) return setListFailure(result);
     setOverview(result.value);
-    onListed(result.value);
   }
 
   async function openDetail(slug: string): Promise<void> {

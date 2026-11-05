@@ -13,10 +13,11 @@ import { FailureBlock } from '@/components/failure-block.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu.tsx';
-import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty.tsx';
+import { Empty, EmptyDescription } from '@/components/ui/empty.tsx';
 import { Spinner } from '@/components/ui/spinner.tsx';
 import { BusinessAnalystDashboard } from '@/screens/dashboard/business-analyst-dashboard.tsx';
 import { DeveloperDashboard } from '@/screens/dashboard/developer-dashboard.tsx';
+import { ProductOwnerDashboard } from '@/screens/dashboard/product-owner-dashboard.tsx';
 import { api, ROLE_LABEL, useApp } from '@/store.ts';
 
 const ROLE_PURPOSE: Record<Role, string> = {
@@ -94,26 +95,9 @@ function RoleMenu({ role }: { role: Role }) {
   );
 }
 
-/** A Role whose dashboard another ticket of spec #64 fills: what it will show, and which ticket. */
-function Placeholder({ id, ticket, children }: { id: string; ticket: number; children: ReactNode }) {
-  return (
-    <Empty id={id} className="border" data-placeholder={ticket}>
-      <EmptyTitle>Dashboard này đang được làm (ticket #{ticket})</EmptyTitle>
-      <EmptyDescription>{children}</EmptyDescription>
-    </Empty>
-  );
-}
-
 function RoleDashboard({ role, report }: { role: Role; report: MetricsReport }) {
   if (role === 'developer') return <DeveloperDashboard report={report} />;
-  if (role === 'productOwner') {
-    return (
-      <Placeholder id="dashboard-product-owner" ticket={71}>
-        Ticket #71 lấp đầy khung này: tiến độ sprint hiện tại, velocity, planned vs completed, release burndown, bug trend,
-        sức khoẻ project, và bảng theo sprint, theo epic (hiện ở mục Taiga &gt; Báo cáo).
-      </Placeholder>
-    );
-  }
+  if (role === 'productOwner') return <ProductOwnerDashboard report={report} />;
   return <BusinessAnalystDashboard report={report} />;
 }
 
