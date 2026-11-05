@@ -3,7 +3,8 @@
 // is done when Taiga closed it, a task when its status is closed), points from the sprint itself, epics from their
 // related stories. The client disables Taiga's pagination, so every list is complete.
 
-import type { TaigaClient, TaigaStory } from './taiga/client.ts';
+import type { TaigaClient, TaigaItem, TaigaMilestone, TaigaMilestoneStats, TaigaStory } from './taiga/client.ts';
+import { mapLimited, TAIGA_CONCURRENCY } from './taiga/concurrency.ts';
 
 /** Done out of total. */
 export interface Progress {
@@ -48,8 +49,8 @@ export interface EpicReport {
   stories: StoryCounts;
 }
 
-export interface ProjectReport {
-  project: { id: number; slug: string; name: string };
+/** The report's tables: the project report without its project. `metrics` carries them in its PO section too. */
+export interface ReportTables {
   /** Newest sprint first. */
   sprints: SprintReport[];
   epics: EpicReport[];
@@ -57,6 +58,21 @@ export interface ProjectReport {
   noEpic: StoryCounts;
   /** Stories in no sprint, in Taiga's order. */
   outsideSprints: StoryCounts & { stories: ReportStory[] };
+}
+
+export interface ProjectReport extends ReportTables {
+  project: { id: number; slug: string; name: string };
+}
+
+/** What the tables are computed from. */
+export interface ReportSource {
+  milestones: TaigaMilestone[];
+  /** The stats of each sprint, in the order of `milestones`. */
+  stats: TaigaMilestoneStats[];
+  stories: TaigaStory[];
+  epics: TaigaItem[];
+  /** The ids of each epic's related stories, in the order of `epics`. */
+  epicStories: number[][];
 }
 
 function reportStory(story: TaigaStory): ReportStory {
@@ -68,14 +84,27 @@ function countStories(stories: TaigaStory[]): StoryCounts {
   return { done, open: stories.length - done };
 }
 
+/**
+ * What the tables need beyond the sprints and the stories: each sprint's stats, the epics and their stories. One
+ * request per sprint and per epic, TAIGA_CONCURRENCY at a time.
+ */
+export async function readReportExtras(client: TaigaClient, projectId: number, milestones: TaigaMilestone[]): Promise<Pick<ReportSource, 'stats' | 'epics' | 'epicStories'>> {
+  const stats = await mapLimited(milestones, TAIGA_CONCURRENCY, (milestone) => client.getMilestoneStats(milestone.id));
+  const epics = await client.listItems('epic', projectId);
+  const epicStories = await mapLimited(epics, TAIGA_CONCURRENCY, (epic) => client.listEpicUserStories(epic.id));
+  return { stats, epics, epicStories };
+}
+
 /** The report of one visible project; exit 5 (TaigaError) when it is not visible. */
 export async function readProjectReport(client: TaigaClient, slug: string): Promise<ProjectReport> {
   const project = await client.getProjectBySlug(slug);
-  const [milestones, stories, epics] = await Promise.all([client.listMilestones(project.id), client.listStories(project.id), client.listItems('epic', project.id)]);
-  const [stats, epicStories] = await Promise.all([
-    Promise.all(milestones.map((milestone) => client.getMilestoneStats(milestone.id))),
-    Promise.all(epics.map((epic) => client.listEpicUserStories(epic.id))),
-  ]);
+  const [milestones, stories] = await Promise.all([client.listMilestones(project.id), client.listStories(project.id)]);
+  const extras = await readReportExtras(client, project.id, milestones);
+  return { project: { id: project.id, slug: project.slug, name: project.name }, ...reportTables({ milestones, stories, ...extras }) };
+}
+
+/** The tables, computed without I/O. */
+export function reportTables({ milestones, stats, stories, epics, epicStories }: ReportSource): ReportTables {
   const byId = new Map(stories.map((story) => [story.id, story]));
   const inEpic = new Set(epicStories.flat());
   const outside = stories.filter((story) => story.milestone === null);
@@ -94,7 +123,6 @@ export async function readProjectReport(client: TaigaClient, slug: string): Prom
     };
   });
   return {
-    project: { id: project.id, slug: project.slug, name: project.name },
     sprints: sprints.sort((a, b) => b.start.localeCompare(a.start) || b.id - a.id),
     epics: epics.map((epic, index) => ({
       id: epic.id,
@@ -108,8 +136,13 @@ export async function readProjectReport(client: TaigaClient, slug: string): Prom
 }
 
 export function formatProjectReportText(report: ProjectReport): string {
-  const { project, sprints, epics, noEpic, outsideSprints } = report;
-  const lines = [`Project ${project.name} (${project.slug})`, ''];
+  const { project } = report;
+  return `${[`Project ${project.name} (${project.slug})`, '', ...formatReportTablesText(report)].join('\n')}\n`;
+}
+
+/** The tables in text form: sprints, epics, stories in no sprint. */
+export function formatReportTablesText({ sprints, epics, noEpic, outsideSprints }: ReportTables): string[] {
+  const lines: string[] = [];
   if (sprints.length === 0) lines.push('No sprints.');
   else lines.push(`Sprints (${sprints.length}):`);
   for (const sprint of sprints) {
@@ -125,5 +158,5 @@ export function formatProjectReportText(report: ProjectReport): string {
   lines.push(`  No epic: ${noEpic.done} done, ${noEpic.open} open`, '');
   lines.push(`Stories in no sprint (${outsideSprints.stories.length}): ${outsideSprints.done} done, ${outsideSprints.open} open`);
   for (const story of outsideSprints.stories) lines.push(`  #${story.ref} ${story.subject} (${story.blocked ? `${story.status}, blocked` : story.status})`);
-  return `${lines.join('\n')}\n`;
+  return lines;
 }

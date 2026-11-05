@@ -1,4 +1,4 @@
-// The CLI's Taiga errors as the Taiga screens (Project, Ticket của tôi, Báo cáo) say them: in Vietnamese, with how
+// The CLI's Taiga errors as the Taiga screens (Project, Ticket của tôi, Dashboard) say them: in Vietnamese, with how
 // to fix them. The CLI's own message stays in the Failure's detail.
 
 import type { Failure } from '../shared/api.ts';
@@ -23,7 +23,7 @@ export function networkFix(retry = 'Làm mới'): string {
 export function taigaFailure(error: CliError | undefined, { failed, retry = 'Làm mới', nothing = '' }: TaigaFailureText): Failure {
   const detail = error?.message;
   if (error?.kind === 'login') {
-    return failure(`Chưa đăng nhập Taiga.${nothing} Cách sửa: bấm “Đăng nhập” ở thanh trên cùng (hoặc chạy npx taigent login trong terminal), rồi bấm ${retry}.`, {
+    return failure(`Chưa đăng nhập Taiga.${nothing} Cách sửa: bấm “Đăng nhập” ở cuối thanh bên trái (hoặc chạy npx taigent login trong terminal), rồi bấm ${retry}.`, {
       detail,
     });
   }

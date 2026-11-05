@@ -290,6 +290,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   project; read-only. See [Projects](#projects).
 - `taigent report --project <slug> [--json]`: the project's progress by sprint and by epic, and its stories in no
   sprint; read-only. See [Report](#report).
+- `taigent metrics --project <slug> [--cache-dir <dir>] [--json]`: the dashboards' metrics of the project (Taigent
+  Desktop's Dashboard); read-only on Taiga, `--cache-dir` keeps the items' history between runs. See [Metrics](#metrics).
 - `taigent login [--application <id>]`, `taigent logout`, `taigent whoami [--json]`, `taigent mcp`: see
   [Login and the MCP server](#login-and-the-mcp-server).
 
@@ -347,7 +349,8 @@ in the legacy format (rule `story-format`) and an issue value the project does n
 With `TAIGENT_READ_ONLY=1` (environment or `.env`), every command that would write to Taiga refuses before it
 contacts Taiga, with exit 2 and `error.kind` `read-only` under `--json`: `apply --yes`, `upload --yes` and
 `bootstrap --yes` (without `--dry-run`), `status` and `comment`. `validate`, `preview`, `plan`, every `--dry-run`, the
-writing commands without `--yes` (they print the plan and exit 2 as usual) and the read-only commands still work.
+writing commands without `--yes` (they print the plan and exit 2 as usual) and the read-only commands (`metrics`
+among them) still work.
 Taigent Desktop sets it on its headless skill runs, so the agent's shell and every `npx taigent` it runs inherit it:
 the guard does not depend on the agent following its prompt ([docs/headless.md](headless.md#taigent-desktop-buttons)).
 Any other value, or none, changes nothing.
@@ -367,9 +370,10 @@ requested, not reviewed, stale, open comments), then each epic → story → tas
 issue's type, severity and priority; every item with its tags, custom attributes, Taiga ref (from `state.json`),
 review status and comments, and its description exactly as apply writes it (a story's includes its acceptance
 criteria and spec link). `--json` prints the `Preview` object of `src/review.ts`
-(`{ project: { slug, name? }, summary, epics: [{ …item, stories: [{ …item, format, spec, tasks }] }], issues: [{ …item,
-values: { type, severity, priority } }] }`, `format` being `user-story` or `legacy`, `values` the names as in the
-manifest,
+(`{ project: { slug, name? }, summary, epics: [{ …item, stories: [{ …item, format, scenarios, spec, tasks }] }], issues:
+[{ …item, values: { type, severity, priority } }] }`, `format` being `user-story` or `legacy`, `scenarios` the story's
+Gherkin scenarios as in the manifest (`[{ scenario, given: [..], when, then }]`, empty for a legacy story), `values`
+the names as in the manifest,
 each item `{ type, key, subject, description, tags, customAttributes, parent?, applied?: { id, ref }, digest,
 review: { verdict?, stale, by?, at?, comments, openComments } }`; `summary` counts `epics`, `stories`, `tasks` and
 `issues`, and the review states over all of them). `--out <file>` writes the page (or the JSON) to
@@ -443,6 +447,9 @@ members:                            # optional
     role: Front
 wiki_home: |                        # optional Markdown for the wiki page `home`
   # Acme Portal
+releases:                           # optional, read only by `metrics` (release burndown); bootstrap ignores it
+  - version: v1-2-0                 # required, kebab-case, unique: the stories tagged release:v1-2-0 on Taiga
+    target: 2026-12-01              # required, target day YYYY-MM-DD
 ```
 
 Steps, in order (each is `create`, `update` or `skip` in the plan):
@@ -592,6 +599,335 @@ missed. `--json` prints:
 
 Read-only, with the errors of every command that reads Taiga (exit 2 when not logged in, 5 when Taiga refuses the
 login or cannot be reached).
+
+## Metrics
+
+`taigent metrics --project <slug> [--cache-dir <dir>] [--json]` computes the metrics of the dashboards (`GLOSSARY.md`,
+section Dashboards) from what Taiga holds now about one project. It only reads: the project (`GET /projects/by_slug`,
+whose Backlog module flag decides the cadence), the user it logs in as (`GET /users/me`), the sprints
+(`GET /milestones?project=<id>`, not read for a kanban project), the user story, task and issue statuses
+(`GET /userstory-statuses?project=<id>`, `GET /task-statuses?project=<id>`, `GET /issue-statuses?project=<id>`), the
+issue types (`GET /issue-types?project=<id>`), and every user story, task and issue (`GET /userstories?project=<id>`,
+`GET /tasks?project=<id>`, `GET /issues?project=<id>`), each list read with pagination disabled so no page is missed;
+then, like `report`, each sprint's stats (`GET /milestones/<id>/stats`), the epics (`GET /epics?project=<id>`) and each
+epic's stories (`GET /epics/<id>/related_userstories`), 8 requests at a time; then the history
+(`GET /history/userstory/<id>`, `GET /history/task/<id>`, `GET /history/issue/<id>`: one request per item, 8 at a time)
+of every user story, task and bug; no metric reads the history of an issue that is not a bug. An item is never
+skipped for an old `modified_date`: Taiga's board and sprint drags record the move in the history but leave
+`modified_date` as it was (below). When a history read fails no other one starts, the command fails (exit 5), and
+with `--cache-dir` the histories read so far are kept for the next run.
+Locally it reads the `releases` of `taiga/<slug>/project.yaml` (none when the file does not exist), and, for the
+Business Analyst's metrics, the project's `backlog.yaml`, `state.json` and `review.yaml` through the same preview as
+[`preview`](#review); a missing or invalid backlog manifest never fails the command (see below). The metrics are
+computed by a pure module from that snapshot and the local day (TZ).
+
+**History cache.** Without `--cache-dir` every history is read on each run and nothing is written anywhere. With
+`--cache-dir <dir>` (created when missing; relative to the working directory) the histories are kept in
+`<dir>/history-<slug>-<hash>.json`, one file per Taiga instance and project (the hash is of the API URL and the
+project id), each history under its item type and id with the item's fingerprint when it was read: its
+`modified_date`, status id, sprint (stories and tasks), closed flag and closing date (`finish_date` /
+`finished_date`). The next run reads Taiga's history again only for the items whose fingerprint changed or that are
+new. `modified_date` alone would miss moves: dragging a story on the Kanban board or into a sprint updates its row
+without moving `modified_date`, though Taiga records the change in the history (taiga-back
+`update_userstories_kanban_order_in_bulk`, `update_userstories_milestone_in_bulk`); such a move always changes its
+status, sprint, closed flag or closing date. The file is rewritten with the items the project still has, atomically
+(a temporary file next to it, renamed over it, removed when the write fails). It keeps only what the metrics use:
+status and sprint changes, and that the description changed, not its text. A file that cannot be parsed, of another
+format version, or of another instance or project is ignored: every history is read again and the command still
+succeeds. A directory where the file cannot be written is a usage error (exit 2, below).
+Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`).
+
+- **Periods**: with the Backlog module on (`cadence: "sprint"`), the last 6 sprints that have started, by first day;
+  `current` is the open sprint holding today. With it off (a kanban project, `cadence: "week"`), the last 6 weeks,
+  Monday to Sunday in local time, ending with this week, and a `kanban` warning: there are no sprint metrics. Oldest
+  first.
+- **Closed** always means the closed flag of the item's status in the project's status list (Taiga's `is_closed`),
+  never the status's name: `Ready for test` is open in the default templates. The closing day is the story's
+  `finish_date` or the task's `finished_date`, in local time.
+- User stories and tasks are always counted apart. A story is assigned to each of its `assigned_users` (and
+  `assigned_to`), a task to its `assigned_to`. `me` is the user the CLI logs in as, as in [Tickets](#tickets).
+- A **Bug** is an issue whose type is named `Bug`; a story tagged `type:bug` is not one. A bug is **resolved** when its
+  status is named `Ready for test` or `Closed`, and **rejected** when it is named `Rejected`: the only place the
+  metrics go by a status's name, because the glossary defines a resolved bug by it. The day it was resolved or rejected
+  comes from its history (below), else its `finished_date` (set when it closes), in local time; open at a day means not
+  closed by the status flag then.
+
+`developer` holds, for the whole team (`all`) and for `me` (`mine`):
+
+- `periods`: per period, the stories and the tasks **assigned** (open at some time in the period, created on or before
+  its last day and not closed before its first, and assigned to someone) and **completed** (closed in the period).
+- `leadTime`: the median **Lead time** in days, from the local day an item was created to the day it was closed, of
+  the stories and of the tasks closed in the periods, with the number of items (`count`); `medianDays` is null without
+  any.
+- `cycleTime`: the median **Cycle time** in days, likewise, from the local day an item first entered the status named
+  `In progress` to the day it was closed. The start comes from the item's history: its first status change into
+  `In progress`, or its creation when its first status change leaves `In progress` (Taiga records no change for the
+  status an item is created in). A status goes by its name in the project's status list (the history's own name only
+  for a status no longer in it). Items that never entered `In progress` are left out; `Ready for test` is not closed.
+- `workload`: the **Workload** of each assignee with open work (open stories, open tasks, points of those stories), by
+  username, then the unassigned row (`assignee: null`, always present). A story with two assignees counts for both.
+- `blocked`: the open stories, then tasks, that are blocked (`is_blocked`), by ref; `overdue`: the open ones whose due
+  day is before today, compared by calendar day like the **Due status** (due today is not overdue), earliest first.
+  Each item carries its `assignees` (user ids; `people` names the project's members), so a client narrows the lists
+  to `me` itself.
+- `bugs.periods`: per period, the bugs **resolved** in it (moved into `Ready for test` or `Closed` in it, by the
+  issue's history; once each, however often) and the bugs **rejected** in it (moved into `Rejected` in it, likewise,
+  so a bug rejected and reopened later stays rejected in that period; counted apart: a rejected bug has no
+  resolution time), the median **Resolution time** (`resolutionTime.medianDays`, from the local day a bug was created
+  to its last resolution in the period) over the resolved ones created on a known day (`count`), the bugs
+  **reopened** in it (moved from `Ready for test` or `Closed` back to an open status; out of `Rejected` is not a
+  reopen) and the **reopen rate** (`reopenRate`: reopened over resolved in the period, null when none was resolved;
+  it can exceed 1). A bug whose history records no status change is resolved, or rejected, on the day it was closed
+  when its status is now resolved, or `Rejected`. `mine` counts the bugs assigned to `me`.
+
+`productOwner` holds:
+
+- `currentSprint`: the open sprint holding today (the latest, if two do), or null: its `id`, `name`, `start`, `finish`,
+  `stories`, `tasks` and `points` done out of total (the figures of its row in `report`), `days` (`elapsed`: days from
+  its first day to today; `total`: to its last day) and `ideal`: every day from first to last with the points left on
+  the ideal line, linear from all of them on the first day to 0 on the last (2 decimals).
+- `velocity`: the points closed (`closed_points`) in each of the last 6 closed sprints, oldest first, with the sprint's
+  `sprint` id (`sprint:<id>`, as in `periods`), `name`, `start` and `finish`.
+- `planned`: per sprint of `periods`, the points **planned** and **completed**, with `basis: "sprint-start"`: planned
+  is the points of the stories in the sprint at the end of its first day (local time), rebuilt from the milestone
+  changes of each story's history (a story created right in a sprint counts from the day it was created; one without
+  a sprint change has been in its sprint since then); completed is the sprint's closed points now (`closed_points`).
+  Points are each story's points now: the history of points is not read.
+- `scopeChange`: per sprint of `periods`, the **Scope change**: the stories `added` to it and `removed` from it after
+  its first day, up to its last (a move after the sprint finished, such as carrying a story over, is not one), each
+  with `id`, `ref`, `subject`, `points` (now; null when not estimated) and the local `day` of the move, by day then
+  ref, and the sum of their `points`. A story added and taken out again is listed on both sides.
+- `health`: four signals, each with a `level` (`green`, `yellow`, `red`) and a `reason` with the figures; the
+  thresholds are fixed:
+  - `sprintPace`: how far the current sprint's points left stand above its ideal line today, in points
+    (`behindPoints`, negative when ahead) and in % of its points (`behindPercent`): more than 10% is yellow, more than
+    25% red. Green with `sprint`, `behindPoints` and `behindPercent` null when no open sprint holds today.
+  - `overdue`: the open `stories` and `tasks` of `developer.overdue`: 1 or 2 is yellow, 3 or more red.
+  - `openBugs`: `risingPeriods`, how many periods in a row, ending with the current one, ended with more open bugs
+    than the period before (`bugTrend`'s `open`, counted up to 2): 1 is yellow, 2 red.
+  - `blocked`: the open blocked user `stories` (blocked tasks do not count): 1 is yellow, 2 or more red.
+- `report`: the tables of [`taigent report --json`](#report) (`sprints`, `epics`, `noEpic`, `outsideSprints`), without
+  its `project`, computed by the same code from the same reads.
+- `bugTrend`: per period, the bugs **created** in it, **resolved** in it, **rejected** in it and **reopened** in it
+  (as in `developer.bugs`), and the bugs **open** at its last day: created by then and, by the issue's history, in an
+  open status at the end of that day, so a bug reopened and closed again counts as open in between. A bug whose
+  history records no status change is open until the day it was closed.
+- `releaseBurndown`: the **Release burndown** ([conventions §4.1](taiga/conventions.md#41-releases), ADR 0005). A
+  release is the user stories carrying exactly one tag `release:<version>` on Taiga; its target day comes from
+  `releases` in `project.yaml`. `releases` lists the declared releases in the manifest's order, then the undeclared
+  tags by version; each has its `version`, `tag`, `declared`, `target` (null when undeclared), `start` (the local day
+  its earliest story was created, null without stories), `stories` (`total`, `closed`), `points` (`total`, `closed`,
+  `remaining`; unestimated stories count 0) and `days`: every day from `start` to today, or to the target when later,
+  with `remaining` (points of its current stories not yet closed at the end of that day, by `finish_date`; null after
+  today) and `ideal` (linear from `points.total` on `start` to 0 on the target day, 0 after it; null for an undeclared
+  release). `multiTagged` lists the stories carrying two release tags or more (`id`, `ref`, `subject`, `releases`),
+  left out of every burndown.
+
+A kanban project has no `currentSprint`, `velocity`, `planned`, `scopeChange` or `health.sprintPace`, and its `report.sprints` is
+empty (its sprints are not read).
+
+`businessAnalyst` holds:
+
+- `statuses.stories`: how many user stories on Taiga are in each status (`{ status, closed, count }`), every status of
+  the project in its order: `New` is a story still being analysed, `Ready` one with complete acceptance criteria.
+  `statuses.notApplied`: the backlog's stories not on Taiga ("Chưa apply"): not in `state.json` yet, or recorded there
+  with a story Taiga no longer has.
+- `requirementChange`: per period, the **Requirement changes**: edits of a user story's description on Taiga after the
+  story first reached the status `Ready`, from each story's history: `changes` (the edits whose local day falls in the
+  period) and `stories`, the stories edited in it by ref (`ref`, `subject`, `changes`). A story reached `Ready` at its
+  first status change into it, or at its creation when its first status change leaves `Ready` (or it has none and is in
+  `Ready`); an edit saved together with the move into `Ready` does not count, later edits do whatever the status then.
+  A status goes by its id in the project's status list (the history may name it in another language). Taken from
+  Taiga, so it is there without a backlog manifest too.
+- `acceptanceCriteria`: how many of the backlog's stories (`stories`) have **Complete acceptance criteria**
+  (`complete`, and `rate` = complete / stories rounded to 3 decimals, null without any story), and the others
+  (`incomplete`) with their `epic` and `reason`: `legacy` (the legacy format never counts), `no-scenario`, or
+  `incomplete-scenarios`: every scenario misses its Given, When or Then, a blank text (only spaces) counting as missing;
+  `scenarios` then lists each one's `missing` parts (`given`, `when`, `then`).
+- `requirementsCoverage`: how many epics (`epics`) have at least one story with complete acceptance criteria
+  (`covered`, `rate`), and the epics without any (`uncovered`).
+- `awaitingReview`: the backlog items (epics, stories, tasks, issues, in manifest order) with no verdict
+  (`reason: "unreviewed"`) or a stale one (`reason: "stale"`), whoever reviewed; `changes` is a verdict, not awaiting.
+- `pendingClarification`: the backlog items with an open review comment, with those comments (`id`, `by`, `at`,
+  `text`); a resolved comment no longer counts.
+
+Each backlog item there is `{ type, key, subject, ref }`, `ref` being its Taiga ref from `state.json` (null while new).
+Without `backlog.yaml` only `statuses.stories` and `requirementChange` are there: the other metrics are listed in
+`unavailable` with `reason: "backlog-missing"`, with a `backlog-missing` warning. When a manifest of the project or
+`review.yaml` is invalid, likewise with `reason: "backlog-invalid"` (and that warning); the message names the first
+issue and says to run `taigent validate --project <slug>`. The command still exits 0.
+
+`unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
+backlog manifest (`backlog-missing`, `backlog-invalid`). `warnings` holds
+the `kanban` warning, the release warnings: `release-undeclared` (a `release:` tag `project.yaml` does not declare;
+drawn without an ideal line), `release-empty` (a declared release no story carries) and `release-multiple` (one per
+story with two release tags or more), and the `backlog-missing` and `backlog-invalid` warnings. `--json` prints:
+
+```json
+{
+  "project": { "id": 7, "slug": "vigo-auth", "name": "Vigo - Auth" },
+  "generatedAt": "2026-11-05T03:12:45.120Z",
+  "today": "2026-11-05",
+  "cadence": "sprint",
+  "periods": [
+    { "id": "sprint:30", "name": "Sprint 1", "start": "2026-10-15", "finish": "2026-10-28", "current": false },
+    { "id": "sprint:31", "name": "Sprint 2", "start": "2026-10-29", "finish": "2026-11-11", "current": true }
+  ],
+  "developer": {
+    "me": { "id": 5, "username": "son" },
+    "people": [{ "id": 5, "username": "son" }, { "id": 6, "username": "lan" }],
+    "periods": [
+      { "period": "sprint:30", "all": { … }, "mine": { … } },
+      { "period": "sprint:31",
+        "all": { "stories": { "assigned": 4, "completed": 1 }, "tasks": { "assigned": 6, "completed": 3 } },
+        "mine": { "stories": { "assigned": 2, "completed": 1 }, "tasks": { "assigned": 3, "completed": 2 } } }
+    ],
+    "leadTime": {
+      "all": { "stories": { "medianDays": 9, "count": 5 }, "tasks": { "medianDays": 2.5, "count": 8 } },
+      "mine": { "stories": { "medianDays": 7, "count": 2 }, "tasks": { "medianDays": 2, "count": 4 } }
+    },
+    "cycleTime": {
+      "all": { "stories": { "medianDays": 5, "count": 4 }, "tasks": { "medianDays": 1.5, "count": 8 } },
+      "mine": { "stories": { "medianDays": 4, "count": 2 }, "tasks": { "medianDays": 1, "count": 4 } }
+    },
+    "workload": [
+      { "assignee": 6, "username": "lan", "stories": 2, "tasks": 3, "points": 8 },
+      { "assignee": null, "username": null, "stories": 5, "tasks": 1, "points": 13 }
+    ],
+    "blocked": [
+      { "type": "story", "id": 812, "ref": 6, "subject": "SSO", "status": "In progress", "assignees": [6, 5],
+        "dueDate": "2026-11-04", "blocked": true, "points": 3 }
+    ],
+    "overdue": [
+      { "type": "task", "id": 951, "ref": 14, "subject": "Migrate", "status": "In progress", "assignees": [],
+        "dueDate": "2026-11-02", "blocked": false, "points": null },
+      { "type": "story", "id": 812, "ref": 6, "subject": "SSO", … }
+    ],
+    "bugs": {
+      "periods": [
+        { "period": "sprint:30", "all": { … }, "mine": { … } },
+        { "period": "sprint:31",
+          "all": { "resolved": 3, "rejected": 1, "resolutionTime": { "medianDays": 4, "count": 3 }, "reopened": 1, "reopenRate": 0.3333333333333333 },
+          "mine": { "resolved": 1, "rejected": 0, "resolutionTime": { "medianDays": 2, "count": 1 }, "reopened": 0, "reopenRate": 0 } }
+      ]
+    }
+  },
+  "productOwner": {
+    "currentSprint": {
+      "id": 31, "name": "Sprint 2", "start": "2026-10-29", "finish": "2026-11-11",
+      "stories": { "done": 1, "total": 5 }, "tasks": { "done": 3, "total": 9 }, "points": { "done": 5, "total": 21 },
+      "days": { "elapsed": 7, "total": 13 },
+      "ideal": [
+        { "day": "2026-10-29", "points": 21 },
+        { "day": "2026-10-30", "points": 19.38 },
+        …
+        { "day": "2026-11-11", "points": 0 }
+      ]
+    },
+    "velocity": [{ "sprint": "sprint:30", "name": "Sprint 1", "start": "2026-10-15", "finish": "2026-10-28", "points": 13 }],
+    "planned": {
+      "basis": "sprint-start",
+      "sprints": [
+        { "period": "sprint:30", "planned": 15, "completed": 13 },
+        { "period": "sprint:31", "planned": 18, "completed": 5 }
+      ]
+    },
+    "scopeChange": [
+      { "period": "sprint:30", "added": { "points": 0, "stories": [] }, "removed": { "points": 0, "stories": [] } },
+      { "period": "sprint:31",
+        "added": { "points": 3, "stories": [{ "id": 812, "ref": 14, "subject": "Export CSV", "points": 3, "day": "2026-11-02" }] },
+        "removed": { "points": 0, "stories": [] } }
+    ],
+    "health": {
+      "sprintPace": { "level": "red", "sprint": "sprint:31", "behindPoints": 6.31, "behindPercent": 30,
+        "reason": "Sprint 2 is 6.31 points (30%) behind the ideal line: 16 of 21 points left on day 7 of 13, ideally 9.69" },
+      "overdue": { "level": "yellow", "reason": "1 open story and 1 open task overdue", "stories": 1, "tasks": 1 },
+      "openBugs": { "level": "green", "risingPeriods": 0,
+        "reason": "open bugs at the end of the periods did not rise in the last one (7 → 5)" },
+      "blocked": { "level": "yellow", "reason": "1 open user story is blocked", "stories": 1 }
+    },
+    "report": { "sprints": [ … ], "epics": [ … ], "noEpic": { … }, "outsideSprints": { … } },
+    "bugTrend": [
+      { "period": "sprint:30", "created": 5, "resolved": 2, "rejected": 0, "reopened": 0, "open": 7 },
+      { "period": "sprint:31", "created": 2, "resolved": 3, "rejected": 1, "reopened": 1, "open": 5 }
+    ],
+    "releaseBurndown": {
+      "releases": [
+        { "version": "v1-2-0", "tag": "release:v1-2-0", "declared": true, "target": "2026-11-07",
+          "start": "2026-11-03", "stories": { "total": 3, "closed": 1 },
+          "points": { "total": 8, "closed": 3, "remaining": 5 },
+          "days": [
+            { "day": "2026-11-03", "remaining": 8, "ideal": 8 },
+            { "day": "2026-11-04", "remaining": 5, "ideal": 6 },
+            { "day": "2026-11-05", "remaining": 5, "ideal": 4 },
+            { "day": "2026-11-06", "remaining": null, "ideal": 2 },
+            { "day": "2026-11-07", "remaining": null, "ideal": 0 }
+          ] },
+        { "version": "v1-3", "tag": "release:v1-3", "declared": false, "target": null, "start": "2026-11-05",
+          "stories": { "total": 1, "closed": 0 }, "points": { "total": 2, "closed": 0, "remaining": 2 },
+          "days": [{ "day": "2026-11-05", "remaining": 2, "ideal": null }] }
+      ],
+      "multiTagged": [{ "id": 830, "ref": 9, "subject": "Export", "releases": ["v1-2-0", "v2-0-0"] }]
+    }
+  },
+  "businessAnalyst": {
+    "statuses": {
+      "stories": [
+        { "status": "New", "closed": false, "count": 3 }, { "status": "Ready", "closed": false, "count": 2 },
+        { "status": "In progress", "closed": false, "count": 4 }, { "status": "Ready for test", "closed": false, "count": 1 },
+        { "status": "Done", "closed": true, "count": 9 }, { "status": "Archived", "closed": true, "count": 0 }
+      ],
+      "notApplied": 2
+    },
+    "requirementChange": [
+      { "period": "sprint:30", "changes": 1, "stories": [{ "ref": 41, "subject": "Reset password", "changes": 1 }] },
+      { "period": "sprint:31", "changes": 3, "stories": [
+        { "ref": 41, "subject": "Reset password", "changes": 2 }, { "ref": 44, "subject": "SSO", "changes": 1 }
+      ] }
+    ],
+    "acceptanceCriteria": {
+      "stories": 12, "complete": 9, "rate": 0.75,
+      "incomplete": [
+        { "type": "story", "key": "AUTH-RESET", "subject": "Reset password", "ref": 41, "epic": "AUTH",
+          "reason": "legacy", "scenarios": [] },
+        { "type": "story", "key": "BILL-PAY", "subject": "Pay", "ref": null, "epic": "BILL",
+          "reason": "incomplete-scenarios", "scenarios": [{ "scenario": "No receipt", "missing": ["then"] }] }
+      ]
+    },
+    "requirementsCoverage": {
+      "epics": 4, "covered": 3, "rate": 0.75,
+      "uncovered": [{ "type": "epic", "key": "BILL", "subject": "Billing", "ref": null }]
+    },
+    "awaitingReview": [
+      { "type": "story", "key": "AUTH-RESET", "subject": "Reset password", "ref": 41, "reason": "stale" },
+      { "type": "epic", "key": "BILL", "subject": "Billing", "ref": null, "reason": "unreviewed" }
+    ],
+    "pendingClarification": [
+      { "type": "story", "key": "AUTH-SSO", "subject": "SSO", "ref": 6,
+        "comments": [{ "id": "c1", "by": "Lan", "at": "2026-11-02T09:30:00.000Z", "text": "Which providers?" }] }
+    ]
+  },
+  "warnings": [
+    { "code": "release-undeclared", "message": "user stories carry the tag release:v1-3 but project.yaml declares no release v1-3: …" },
+    { "code": "release-multiple", "message": "user story #9 Export carries release:v1-2-0, release:v2-0-0: …" }
+  ],
+  "unavailable": []
+}
+```
+
+Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`; lead time, then cycle
+time), the workload, the blocked and overdue items, the bug resolution per period, the product owner figures (current
+sprint, velocity, completed/planned points, scope change per sprint with the stories added and removed, health, then
+`report`'s tables as `report` prints them), the bug trend, one line per release, the Business Analyst's figures
+(stories by status, the requirement changes per period, the stories with incomplete acceptance criteria and why, the
+uncovered epics, the items awaiting review and pending clarification), the warnings and the metrics not available yet.
+
+Read-only on Taiga, so it runs under `TAIGENT_READ_ONLY=1`; it writes only the history cache of `--cache-dir`. Errors:
+exit 2 when not logged in (kind `login`), without `--project` (kind `usage`), with `--cache-dir` on another command or
+empty (kind `usage`), when the history cache cannot be written in `--cache-dir` (a file, or no permission; kind
+`usage`, the message names the directory: give a writable one), or when the project is not on Taiga or not visible to
+the user (kind `project`; unlike `report`, which exits 5); exit 4 when `project.yaml` is invalid (its issues, as
+`validate` reports them); exit 5 when Taiga refuses the login or a read, or cannot be reached (kind `taiga`).
 
 ## Tickets
 
@@ -898,10 +1234,10 @@ skill checks all of it and names each fix.
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
 | 3 | `plan` or `--dry-run` found changes (`init --dry-run`: a file would change); `skills check` found differing copies |
 | 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
-| 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project, version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
+| 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project (except for `metrics`: exit 2), version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
 
 ## Code map
 
@@ -914,7 +1250,7 @@ skill checks all of it and names each fix.
 | Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
 | MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `listStoryStatuses`/`editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`, `listStatuses(type, projectId)`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`, and `listProjectTasks` for `metrics`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links, issue values (when the backlog has issues) and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)` |
 | Story template | `src/story-template.ts` | pure `storyDescription(story)`: the description apply writes for a story, shared by the planner, `preview` and Taigent Desktop's story form (bundled into its renderer, so the module imports nothing from Node) |
@@ -926,9 +1262,12 @@ skill checks all of it and names each fix.
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `prd-to-taiga`, `ask-taigent`), `.agents/skills/` → `.claude/skills/`; `compareSkillDirs(source, target)` (file by file, `same` included) and `copySkills(source, target, comparison)` for any two directories |
 | Init | `src/init.ts` | `initRepository(root, { dryRun })` → `InitReport` (`files: [{ path, status }]`), `InitError` (exit 2): the offline `init` command, copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed) |
-| Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
+| Tickets | `src/tickets.ts` | `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
-| Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command |
+| Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories, `TAIGA_CONCURRENCY` requests at a time) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
+| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug, cacheDir?)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2), with `history`: each story's, task's and bug's `TaigaHistoryEntry[]` (status and sprint changes, whether the description changed, oldest first) read by `readHistories` (`history.ts`: `client.listHistory(type, id)`, 8 at a time and none started after one fails, and the `--cache-dir` file keyed by API URL, project, type and id, hit while the item's fingerprint (`modified_date`, status, sprint, closed flag and date: `fingerprint` in `snapshot.ts`) is unchanged, written with `writeAtomic`; `HistoryCacheError`, exit 2); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); `readBacklogData(dir, slug)` → `BacklogData` (`backlog.ts`: the `buildPreview` of the manifests, or why there is none: `missing`, `invalid` with the issues); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, scope change (`sprint-scope.ts`: each story's sprint over time from its sprint changes), health and `report`'s tables, `business-analyst.ts` for `businessAnalyst`); periods (`periods.ts`), work items closed by status flag, with the day they first entered In progress, and `historyStatusName`, how every metric names a status of a history (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
+| Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `localMinute`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify`, the manifests and `metrics` |
+| Concurrency | `src/taiga/concurrency.ts` | `mapLimited(items, limit, read)` and `TAIGA_CONCURRENCY` (8): one read of Taiga per sprint, epic or item, a few at a time, none started after one fails (`report`, `metrics`) |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |
@@ -968,7 +1307,12 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   name?, members?, admins?, is_private?, modules?, tagsColors? })` (`GET /projects?member=<user id>` lists the projects
   of that member the caller can see, like taiga-back's `member` filter, with `i_am_admin`), `addCustomAttribute`, `addMembership`,
   `addWikiPage`; upload fixtures `addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki",
-  object_id, name, content })`. For `tickets`, set the returned story's `assigned_users`, `is_closed`, `finish_date`,
+  object_id, name, content })`. History of stories, tasks and issues (`GET /history/{userstory|task|issue}/<id>`,
+  newest first, entries shaped like taiga-back's HistoryEntrySerializer: `created_at`, `type: 1`, `key`, raw `diff`,
+  `values`, `values_diff` with names): `addHistory(item, { at, diff?, values?, comment? })` and its helpers
+  `addStatusChange(item, { at, from, to })` (status names of the item's project), `addMilestoneChange(item, { at, from,
+  to })` (sprints or null) and `addDescriptionChange(item, { at, from, to })`; each moves the item's `modified_date` to
+  `at` when later. For `tickets`, set the returned story's `assigned_users`, `is_closed`, `finish_date`,
   `due_date` (YYYY-MM-DD), `total_points` (number or null), `is_blocked` and `status_name` (its status name when open or closed, null
   for the default): list responses embed `project_extra_info` and `status_extra_info` (closed stories `Done`, closed
   tasks `Closed`, otherwise `New`, unless `status_name` is set), and `GET /userstories` filters on `assigned_users`,

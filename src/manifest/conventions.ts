@@ -102,6 +102,9 @@ export const TAG_PREFIXES = ['type', 'area'] as const;
 /** The reserved identity prefix (`src:<key>`), managed by taigent. */
 export const SRC_TAG_PREFIX = 'src';
 
+/** The release prefix (`release:<version>`, ADR 0005): tagged by hand on Taiga, never in a manifest. */
+export const RELEASE_TAG_PREFIX = 'release';
+
 /** Values allowed after `type:`. */
 export const TYPE_TAG_VALUES = ['feature', 'bug', 'chore'] as const;
 
@@ -134,6 +137,10 @@ export function checkTag(tag: unknown, at: string, issue: IssueSink): tag is str
     issue(at, 'tag-reserved', `\`${SRC_TAG_PREFIX}:\` tags are added by taigent from the item key; remove "${tag}"`);
     return false;
   }
+  if (prefix === RELEASE_TAG_PREFIX) {
+    issue(at, 'tag-prefix', `tag "${tag}": \`${RELEASE_TAG_PREFIX}:\` tags are put by hand on Taiga, not in a manifest; declare the release in project.yaml \`releases\``);
+    return false;
+  }
   if (!TAG_PREFIXES.includes(prefix as (typeof TAG_PREFIXES)[number])) {
     issue(at, 'tag-prefix', `tag "${tag}" must start with one of ${TAG_PREFIXES.map((p) => `${p}:`).join(', ')}`);
     return false;
@@ -156,6 +163,25 @@ export function checkTagColor(tag: string, color: unknown, at: string, issue: Is
   if (typeof color !== 'string' || color.toUpperCase() !== expected) {
     issue(at, 'tag-color', `tag "${tag}" must use the standard color ${expected}`);
   }
+}
+
+// ---- Releases -----------------------------------------------------------------------------------
+
+/**
+ * Rules `release-version` and `release-unique` for one release of project.yaml: its version is what follows
+ * `release:` in the tag, lowercase kebab-case (e.g. `v1-2-0`). `seen` holds the versions already declared.
+ */
+export function checkReleaseVersion(version: unknown, at: string, issue: IssueSink, seen: Set<string>): version is string {
+  if (typeof version !== 'string' || !TAG_VALUE_PATTERN.test(version)) {
+    issue(at, 'release-version', 'version is required and must be lowercase kebab-case, as in the tag `release:<version>` (e.g. v1-2-0)');
+    return false;
+  }
+  if (seen.has(version)) {
+    issue(at, 'release-unique', `duplicate release ${version}`);
+    return false;
+  }
+  seen.add(version);
+  return true;
 }
 
 // ---- Item keys ----------------------------------------------------------------------------------

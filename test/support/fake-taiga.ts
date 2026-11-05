@@ -165,6 +165,9 @@ export interface FakeUserStory {
   status_name: string | null;
   /** Sum of the points of every role, null when none is estimated; read-only on Taiga, set it directly. */
   total_points: number | null;
+  /** When the story was created and last modified (ISO 8601): the time it was added; override them to seed dates. */
+  created_date: string;
+  modified_date: string;
 }
 
 export interface FakeTask {
@@ -180,6 +183,15 @@ export interface FakeTask {
   assigned_to: number | null;
   milestone: number | null;
   is_closed: boolean;
+  is_blocked: boolean;
+  /** When the task was closed (ISO 8601; Taiga names it `finished_date` on tasks), null while open. */
+  finished_date: string | null;
+  /** Due day (YYYY-MM-DD, no time), null when the task has none. */
+  due_date: string | null;
+  /** Name of the task's status in list responses; null for the template default (`Closed` closed, `New` open). */
+  status_name: string | null;
+  created_date: string;
+  modified_date: string;
 }
 
 /** A sprint ("milestone detail" in the Taiga API docs); its stories and tasks point at it with `milestone`. */
@@ -210,6 +222,11 @@ export interface FakeIssue {
   severity: number | null;
   priority: number | null;
   is_closed: boolean;
+  /** When the issue was closed (ISO 8601; Taiga names it `finished_date`), null while open. */
+  finished_date: string | null;
+  /** When the issue was created and last modified (ISO 8601): the time it was added; override them to seed dates. */
+  created_date: string;
+  modified_date: string;
 }
 
 /** An issue type, severity or priority of a project ("issue type detail", "severity detail", "priority detail"). */
@@ -245,6 +262,16 @@ export interface FakeStoryStatus {
   is_archived: boolean;
 }
 
+/** A task status of a project ("task status detail" in the Taiga API docs). */
+export interface FakeTaskStatus {
+  id: number;
+  project: number;
+  name: string;
+  slug: string;
+  order: number;
+  is_closed: boolean;
+}
+
 /** A comment added with `PATCH /userstories/{id}` (`comment` field); taiga-back keeps it in the item's history. */
 export interface FakeComment {
   itemType: FakeCustomAttributeType;
@@ -252,6 +279,30 @@ export interface FakeComment {
   user: number;
   comment: string;
 }
+
+/** Items with a history on Taiga (`GET /history/{kind}/{id}`) that the fake models. */
+export type FakeHistoryKind = 'userstory' | 'task' | 'issue';
+
+/**
+ * A change in an item's history as taiga-back stores it (`history.HistoryEntry`, type 1 "change";
+ * taiga/projects/history/models.py): `diff` holds the raw value before and after of each changed field (ids for
+ * `status` and `milestone`), `values` the names of those ids (`{ status: { "<id>": "<name>" } }`), from which taiga-back
+ * renders `values_diff`. A comment is an entry too, usually with an empty `diff`.
+ */
+export interface FakeHistoryEntry {
+  id: string;
+  kind: FakeHistoryKind;
+  item: number;
+  user: number;
+  /** ISO 8601. */
+  created_at: string;
+  diff: Record<string, [unknown, unknown]>;
+  values: Record<string, Record<string, string>>;
+  comment: string;
+}
+
+/** An item with a history: a user story, task or issue. */
+export type FakeHistoryItem = FakeUserStory | FakeTask | FakeIssue;
 
 /** An Application (taiga-back `external_apps.Application`), created by an instance admin in Django admin. */
 export interface FakeApplication {
@@ -322,7 +373,10 @@ export interface FakeState {
   priorities: FakeIssueValue[];
   epicRelatedUserStories: FakeEpicRelatedUserStory[];
   storyStatuses: FakeStoryStatus[];
+  taskStatuses: FakeTaskStatus[];
   comments: FakeComment[];
+  /** Changes of items' histories, in the order they were added (seed them with `addHistory` and its helpers). */
+  history: FakeHistoryEntry[];
   templates: FakeTemplate[];
   roles: FakeRole[];
   customAttributes: FakeCustomAttribute[];
@@ -412,6 +466,8 @@ export interface FakeTaiga {
   intercept(rule: InterceptRule): void;
   addUserStory(input: FakeItemInput): FakeUserStory;
   addTask(input: FakeItemInput & { user_story?: number }): FakeTask;
+  /** Adds a user story or task status to a project, after the template's own ones. */
+  addStatus(kind: 'userstory' | 'task', input: { project: number; name: string; is_closed: boolean }): FakeStoryStatus | FakeTaskStatus;
   /** Adds a sprint; set `milestone` on stories and tasks to put them in it. */
   addMilestone(input: { project: number; name: string; estimated_start: string; estimated_finish: string; closed?: boolean }): FakeMilestone;
   /** Adds an issue; values left out get the project's defaults, like an issue created on Taiga. */
@@ -419,6 +475,18 @@ export interface FakeTaiga {
   addEpicRelatedUserStory(epic: number, userStory: number): FakeEpicRelatedUserStory;
   /** Edits an item like a Taiga user would: bumps `version` and records the fields for OCC checks. */
   editItem<T extends FakeItem>(item: T, changes: Partial<Omit<T, 'id' | 'ref' | 'version' | 'project'>>): void;
+  /**
+   * Records a change in the history of a user story, task or issue (`GET /history/{userstory|task|issue}/{id}`), made
+   * by the default user at `at`. The item's `modified_date` moves to `at` when that is later; nothing else changes:
+   * set the fields of the item's current state yourself.
+   */
+  addHistory(item: FakeHistoryItem, change: { at: string; diff?: FakeHistoryEntry['diff']; values?: FakeHistoryEntry['values']; comment?: string }): FakeHistoryEntry;
+  /** `addHistory` of a status change, by the names of statuses of the item's project (`from` null: none). */
+  addStatusChange(item: FakeHistoryItem, change: { at: string; from: string | null; to: string }): FakeHistoryEntry;
+  /** `addHistory` of a sprint change (`null`: in no sprint). */
+  addMilestoneChange(item: FakeHistoryItem, change: { at: string; from: FakeMilestone | null; to: FakeMilestone | null }): FakeHistoryEntry;
+  /** `addHistory` of a description edit. */
+  addDescriptionChange(item: FakeHistoryItem, change: { at: string; from: string; to: string }): FakeHistoryEntry;
   /** Run a callback before the next matching request(s) are handled. */
   onRequest(hook: RequestHook): void;
   close(): Promise<void>;
@@ -625,6 +693,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     priorities: [],
     epicRelatedUserStories: [],
     storyStatuses: [],
+    taskStatuses: [],
     comments: [],
     templates: [
       {
@@ -650,6 +719,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     attachments: [],
     applications: [],
     applicationTokens: [],
+    history: [],
   };
   const settings: FakeTaiga['settings'] = { projectSlugPrefix: false };
   const requests: RecordedRequest[] = [];
@@ -709,9 +779,12 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return state.roles.find((r) => r.project === projectId && (r.name === nameOrSlug || r.slug === nameOrSlug));
   }
 
-  /** The user story statuses of the default templates (scrum and kanban alike), as taiga-back creates them with a project. */
-  function addStoryStatuses(project: FakeProject): void {
-    const statuses: [name: string, slug: string, closed: boolean][] = [
+  /**
+   * The user story and task statuses of the default templates (scrum and kanban alike: taiga-back's
+   * fixtures/initial_project_templates.json), as taiga-back creates them with a project.
+   */
+  function addTemplateStatuses(project: FakeProject): void {
+    const storyStatuses: [name: string, slug: string, closed: boolean][] = [
       ['New', 'new', false],
       ['Ready', 'ready', false],
       ['In progress', 'in-progress', false],
@@ -719,9 +792,32 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       ['Done', 'done', true],
       ['Archived', 'archived', true],
     ];
-    statuses.forEach(([name, slug, closed], index) => {
+    storyStatuses.forEach(([name, slug, closed], index) => {
       state.storyStatuses.push({ id: ++nextId, project: project.id, name, slug, order: index + 1, is_closed: closed, is_archived: slug === 'archived' });
     });
+    const taskStatuses: [name: string, slug: string, closed: boolean][] = [
+      ['New', 'new', false],
+      ['In progress', 'in-progress', false],
+      ['Ready for test', 'ready-for-test', false],
+      ['Closed', 'closed', true],
+      ['Needs Info', 'needs-info', false],
+    ];
+    taskStatuses.forEach(([name, slug, closed], index) => {
+      state.taskStatuses.push({ id: ++nextId, project: project.id, name, slug, order: index + 1, is_closed: closed });
+    });
+  }
+
+  function addStatus(kind: 'userstory' | 'task', input: { project: number; name: string; is_closed: boolean }): FakeStoryStatus | FakeTaskStatus {
+    const statuses: { project: number; order: number }[] = kind === 'userstory' ? state.storyStatuses : state.taskStatuses;
+    const order = Math.max(0, ...statuses.filter((s) => s.project === input.project).map((s) => s.order)) + 1;
+    const status: FakeTaskStatus = { id: ++nextId, slug: input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), order, ...input };
+    if (kind === 'task') {
+      state.taskStatuses.push(status);
+      return status;
+    }
+    const storyStatus: FakeStoryStatus = { ...status, is_archived: false };
+    state.storyStatuses.push(storyStatus);
+    return storyStatus;
   }
 
   /**
@@ -767,7 +863,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     };
     state.projects.push(project);
     addRoles(project, SCRUM_ROLES);
-    addStoryStatuses(project);
+    addTemplateStatuses(project);
     for (const member of members) addMembership({ project: project.id, role: 'product-owner', user: member });
     return project;
   }
@@ -841,6 +937,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   function addUserStory(input: FakeItemInput): FakeUserStory {
+    const now = new Date().toISOString();
     return addItem<FakeUserStory>('userstory', input, {
       assigned_users: [],
       milestone: null,
@@ -851,11 +948,24 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       due_date: null,
       status_name: null,
       total_points: null,
+      created_date: now,
+      modified_date: now,
     });
   }
 
   function addTask(input: FakeItemInput & { user_story?: number }): FakeTask {
-    return addItem<FakeTask>('task', input, { user_story: input.user_story ?? null, milestone: null, is_closed: false });
+    const now = new Date().toISOString();
+    return addItem<FakeTask>('task', input, {
+      user_story: input.user_story ?? null,
+      milestone: null,
+      is_closed: false,
+      is_blocked: false,
+      finished_date: null,
+      due_date: null,
+      status_name: null,
+      created_date: now,
+      modified_date: now,
+    });
   }
 
   function addMilestone(input: Parameters<FakeTaiga['addMilestone']>[0]): FakeMilestone {
@@ -919,13 +1029,18 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     const project = state.projects.find((p) => p.id === input.project);
     if (!project) throw new Error(`fake taiga: no project ${input.project}`);
     const status = input.status ?? project.default_issue_status;
+    const now = new Date().toISOString();
+    const isClosed = state.issueStatuses.find((s) => s.id === status)?.is_closed ?? false;
     return addItem<FakeIssue>('issue', input, {
       milestone: null,
       type: input.type ?? project.default_issue_type,
       severity: input.severity ?? project.default_severity,
       priority: input.priority ?? project.default_priority,
-      is_closed: state.issueStatuses.find((s) => s.id === status)?.is_closed ?? false,
+      is_closed: isClosed,
       status,
+      finished_date: isClosed ? now : null,
+      created_date: now,
+      modified_date: now,
     } as Omit<FakeIssue, keyof FakeEpic>);
   }
 
@@ -1035,7 +1150,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     };
     state.projects.push(project);
     addRoles(project, template!.roles);
-    addStoryStatuses(project);
+    addTemplateStatuses(project);
     addMembership({ project: project.id, role: template!.roles[0]!.slug, user: userId });
     return { status: 201, body: projectJson(project, userId) };
   }
@@ -1309,6 +1424,116 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return link;
   }
 
+  function historyKind(item: FakeHistoryItem): FakeHistoryKind {
+    if (state.userStories.includes(item as FakeUserStory)) return 'userstory';
+    if (state.tasks.includes(item as FakeTask)) return 'task';
+    if (state.issues.includes(item as FakeIssue)) return 'issue';
+    throw new Error('fake taiga: addHistory takes a user story, task or issue of the fake');
+  }
+
+  function addHistory(item: FakeHistoryItem, change: { at: string; diff?: FakeHistoryEntry['diff']; values?: FakeHistoryEntry['values']; comment?: string }): FakeHistoryEntry {
+    const entry: FakeHistoryEntry = {
+      id: randomUUID(),
+      kind: historyKind(item),
+      item: item.id,
+      user: user.id,
+      created_at: change.at,
+      diff: change.diff ?? {},
+      values: change.values ?? {},
+      comment: change.comment ?? '',
+    };
+    state.history.push(entry);
+    if (Date.parse(change.at) > Date.parse(item.modified_date)) item.modified_date = change.at;
+    return entry;
+  }
+
+  function addStatusChange(item: FakeHistoryItem, change: { at: string; from: string | null; to: string }): FakeHistoryEntry {
+    const kind = historyKind(item);
+    const statuses: { id: number; project: number; name: string }[] =
+      kind === 'userstory' ? state.storyStatuses : kind === 'task' ? state.taskStatuses : state.issueStatuses;
+    const byName = (name: string | null) => {
+      if (name === null) return null;
+      const status = statuses.find((s) => s.project === item.project && s.name === name);
+      if (!status) throw new Error(`fake taiga: no ${kind} status "${name}" in project ${item.project}`);
+      return status;
+    };
+    const from = byName(change.from);
+    const to = byName(change.to)!;
+    const names = Object.fromEntries([from, to].filter((s) => s !== null).map((s) => [String(s.id), s.name]));
+    return addHistory(item, { at: change.at, diff: { status: [from?.id ?? null, to.id] }, values: { status: names } });
+  }
+
+  function addMilestoneChange(item: FakeHistoryItem, change: { at: string; from: FakeMilestone | null; to: FakeMilestone | null }): FakeHistoryEntry {
+    const names = Object.fromEntries([change.from, change.to].filter((m) => m !== null).map((m) => [String(m.id), m.name]));
+    return addHistory(item, { at: change.at, diff: { milestone: [change.from?.id ?? null, change.to?.id ?? null] }, values: { milestone: names } });
+  }
+
+  function addDescriptionChange(item: FakeHistoryItem, change: { at: string; from: string; to: string }): FakeHistoryEntry {
+    const html = (text: string) => (text === '' ? '' : `<p>${text}</p>`);
+    return addHistory(item, { at: change.at, diff: { description: [change.from, change.to], description_html: [html(change.from), html(change.to)] } });
+  }
+
+  /**
+   * `values_diff` as taiga-back renders it from `diff` and `values` (HistoryEntry.values_diff): an id field listed in
+   * `values` becomes its names, a description becomes `description_diff` (null, an HTML diff), other fields stay raw.
+   */
+  function historyValuesDiff(entry: FakeHistoryEntry): Json {
+    const result: Json = {};
+    for (const [key, [before, after]] of Object.entries(entry.diff)) {
+      if (['watchers', 'description_diff', 'content_diff', 'blocked_note_diff'].includes(key)) continue;
+      if (['description', 'content', 'blocked_note'].includes(key)) {
+        if (before !== after) result[`${key}_diff`] = [null, `<del>${String(before ?? '')}</del><ins>${String(after ?? '')}</ins>`];
+      } else if (entry.values[key]) {
+        result[key] = [before, after].map((id) => entry.values[key]![String(id)] ?? null);
+      } else {
+        result[key] = [before, after];
+      }
+    }
+    return result;
+  }
+
+  /** An entry as taiga-back's HistoryEntrySerializer renders it (taiga/projects/history/serializers.py). */
+  function historyJson(entry: FakeHistoryEntry): Json {
+    const author = state.users.find((u) => u.id === entry.user)!;
+    const model = { userstory: 'userstories.userstory', task: 'tasks.task', issue: 'issues.issue' }[entry.kind];
+    return {
+      id: entry.id,
+      user: { pk: author.id, username: author.username, name: author.username, photo: null, is_active: true, gravatar_id: '' },
+      created_at: entry.created_at,
+      type: 1,
+      key: `${model}:${entry.item}`,
+      diff: entry.diff,
+      snapshot: null,
+      values: entry.values,
+      values_diff: historyValuesDiff(entry),
+      comment: entry.comment,
+      comment_html: entry.comment === '' ? '' : `<p>${entry.comment}</p>`,
+      delete_comment_date: null,
+      delete_comment_user: null,
+      edit_comment_date: null,
+      is_hidden: false,
+      is_snapshot: false,
+    };
+  }
+
+  /**
+   * GET /history/{userstory|task|issue}/{id}: taiga-back's HistoryViewSet.retrieve (taiga/projects/history/api.py), the
+   * item's "change" entries (comments included), newest first; 404 when the item is not visible.
+   */
+  function routeHistory(req: IncomingMessage, method: string, path: string, query: URLSearchParams, userId: number): Reply | undefined {
+    const match = /^\/history\/(userstory|task|issue)\/(\d+)$/.exec(path);
+    if (method !== 'GET' || !match) return undefined;
+    const kind = match[1] as FakeHistoryKind;
+    const id = Number(match[2]);
+    const items: FakeHistoryItem[] = kind === 'userstory' ? state.userStories : kind === 'task' ? state.tasks : state.issues;
+    const item = items.find((candidate) => candidate.id === id);
+    if (!item || !visibleProject(item.project, userId)) throw notFound();
+    const entries = state.history
+      .filter((entry) => entry.kind === kind && entry.item === id)
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+    return paginate(req, query, entries.map(historyJson));
+  }
+
   /** Applies changes, records the fields that really changed and bumps the version, like a Taiga save. */
   function saveEdit(item: FakeItem | FakeWikiPage, changes: Json): void {
     const target = item as unknown as Json;
@@ -1497,7 +1722,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       checkVersion(issue, data);
       const { version: _version, ...changes } = data;
       if (tags !== undefined) changes.tags = tags;
-      if (typeof data.status === 'number') changes.is_closed = state.issueStatuses.find((s) => s.id === data.status)!.is_closed;
+      if (typeof data.status === 'number') {
+        const closed = state.issueStatuses.find((s) => s.id === data.status)!.is_closed;
+        Object.assign(changes, { is_closed: closed, finished_date: closed ? (issue.is_closed ? issue.finished_date : new Date().toISOString()) : null });
+      }
       saveEdit(issue, changes);
       return { status: 200, body: issueJson(issue) };
     }
@@ -1565,9 +1793,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   function routeStoriesAndTasks(req: IncomingMessage, method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
-    if (method === 'GET' && path === '/userstory-statuses') {
+    const statusLists: Record<string, { project: number; order: number }[]> = { '/userstory-statuses': state.storyStatuses, '/task-statuses': state.taskStatuses };
+    if (method === 'GET' && statusLists[path]) {
       const projectId = queryNumber(query, 'project');
-      const statuses = state.storyStatuses
+      const statuses = statusLists[path]
         .filter((s) => visibleProject(s.project, userId) && (projectId === undefined || s.project === projectId))
         .sort((a, b) => a.order - b.order);
       return paginate(req, query, statuses);
@@ -1812,6 +2041,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       routeStoriesAndTasks(req, method, path, query, body, userId) ??
       routeMilestones(req, method, path, query, userId) ??
       routeIssues(req, method, path, query, body, userId) ??
+      routeHistory(req, method, path, query, userId) ??
       routeApplicationTokens(req, method, path, query, body, userId);
     if (reply) return reply;
     throw notFound();
@@ -1996,9 +2226,14 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     intercept: (rule) => void intercepts.push({ ...rule }),
     addUserStory,
     addTask,
+    addStatus,
     addMilestone,
     addIssue,
     addEpicRelatedUserStory,
+    addHistory,
+    addStatusChange,
+    addMilestoneChange,
+    addDescriptionChange,
     editItem,
     editWikiPage,
     onRequest: (hook) => void hooks.push({ ...hook }),

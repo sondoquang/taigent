@@ -207,8 +207,8 @@ function parseIssue(raw: unknown): TaigaIssue {
 
 /**
  * Taiga's names for each item type: its REST collection (`/userstories`, also used under attachments and custom
- * attribute values), its custom attribute prefix (`/userstory-custom-attributes`, `userstory_custom_attributes`
- * of a project) and how messages name it.
+ * attribute values), its custom attribute and status prefix (`/userstory-custom-attributes`,
+ * `userstory_custom_attributes` of a project, `/userstory-statuses`) and how messages name it.
  */
 const TAIGA_ITEM: Record<ItemType, { collection: string; attributes: string; what: string }> = {
   epic: { collection: 'epics', attributes: 'epic', what: 'epic' },
@@ -365,17 +365,69 @@ export interface TaigaAssignedStory {
   totalPoints: number | null;
 }
 
-/** A user story of a project as `report` reads it (`GET /userstories?project=`). */
+/** A user story of a project as `report` and `metrics` read it (`GET /userstories?project=`). */
 export interface TaigaStory {
   id: number;
   ref: number;
   subject: string;
+  /** Its status's id, and the status's name and closed flag as the story embeds them. */
+  statusId: number | null;
   status: string;
   isClosed: boolean;
   isBlocked: boolean;
   /** The sprint (milestone) id, null for a story in no sprint. */
   milestone: number | null;
   totalPoints: number | null;
+  /** User ids of every assignee (`assigned_users`), and the main one (`assigned_to`), which is normally among them. */
+  assignedUsers: number[];
+  assignedTo: number | null;
+  /** Due day (YYYY-MM-DD, a plain date without time), or null. */
+  dueDate: string | null;
+  /** ISO 8601 instants: created, closed (`finish_date`; null while open) and last modified. */
+  createdAt: string | null;
+  closedAt: string | null;
+  modifiedAt: string | null;
+  /** Lowercase tag names (Taiga's [name, color] pairs), e.g. `release:v1-2-0`. */
+  tags: string[];
+}
+
+/** A task of a project as `metrics` reads it (`GET /tasks?project=`). */
+export interface TaigaProjectTask {
+  id: number;
+  ref: number;
+  subject: string;
+  /** Its status's id, and the status's name and closed flag as the task embeds them. */
+  statusId: number | null;
+  status: string;
+  isClosed: boolean;
+  isBlocked: boolean;
+  /** The parent user story and the sprint, null when none. */
+  userStory: number | null;
+  milestone: number | null;
+  assignedTo: number | null;
+  /** Due day (YYYY-MM-DD, a plain date without time), or null. */
+  dueDate: string | null;
+  /** ISO 8601 instants: created, closed (`finished_date`; null while open) and last modified. */
+  createdAt: string | null;
+  closedAt: string | null;
+  modifiedAt: string | null;
+}
+
+/** An issue of a project as `metrics` reads it (`GET /issues?project=`). */
+export interface TaigaProjectIssue {
+  id: number;
+  ref: number;
+  subject: string;
+  /** Its type's id (null when none is set), its status's id, and the status's name and closed flag as the issue embeds them. */
+  typeId: number | null;
+  statusId: number | null;
+  status: string;
+  isClosed: boolean;
+  assignedTo: number | null;
+  /** ISO 8601 instants: created, closed (`finished_date`; null while open) and last modified. */
+  createdAt: string | null;
+  closedAt: string | null;
+  modifiedAt: string | null;
 }
 
 /** A sprint (`GET /milestones?project=`): its days, whether it is closed, and its stories' points. */
@@ -399,12 +451,35 @@ export interface TaigaMilestoneStats {
   doneTasks: number;
 }
 
-/** A user story status of one project (`GET /userstory-statuses?project=`), e.g. `Done` with `is_closed`. */
-export interface TaigaStoryStatus {
+/** A status of one project's epics, user stories, tasks or issues (`GET /userstory-statuses?project=`, …), e.g. `Done` with `is_closed`. */
+export interface TaigaStatus {
   id: number;
   name: string;
   slug: string;
   isClosed: boolean;
+}
+
+/** A status in an item's history: its id and its name when the change was recorded. */
+export interface TaigaHistoryStatus {
+  id: number;
+  name: string | null;
+}
+
+/**
+ * One change of a user story, task or issue (`GET /history/{userstory|task|issue}/{id}`; taiga-back's
+ * HistoryEntrySerializer, type 1 "change"): when, and what it changed among the fields `metrics` reads, each null
+ * (false) when the change left it alone. Taiga takes the before and after values from the entry's `diff` (raw ids)
+ * and the status names from its `values_diff`.
+ */
+export interface TaigaHistoryEntry {
+  /** When (`created_at`, ISO 8601). */
+  at: string;
+  /** The status before and after (null: none). */
+  status: { from: TaigaHistoryStatus | null; to: TaigaHistoryStatus | null } | null;
+  /** The sprint (milestone) id before and after (null: in no sprint). */
+  milestone: { from: number | null; to: number | null } | null;
+  /** Whether it changed the description (its text is not kept: only the edit counts). */
+  description: boolean;
 }
 
 /** What `taigent status` and `taigent comment` change on a story: its status (by id), and/or a comment. */
@@ -445,11 +520,58 @@ function parseStory(raw: unknown): TaigaStory {
     id: field(r, 'id', 'number', what),
     ref: field(r, 'ref', 'number', what),
     subject: field(r, 'subject', 'string', what),
+    statusId: typeof r.status === 'number' ? r.status : null,
     status: field(record(r.status_extra_info, `${what}.status_extra_info`), 'name', 'string', `${what} status`),
     isClosed: field(r, 'is_closed', 'boolean', what),
     isBlocked: r.is_blocked === true,
     milestone: typeof r.milestone === 'number' ? r.milestone : null,
     totalPoints: typeof r.total_points === 'number' ? r.total_points : null,
+    assignedUsers: list(r.assigned_users ?? [], `${what}.assigned_users`).filter((id): id is number => typeof id === 'number'),
+    assignedTo: typeof r.assigned_to === 'number' ? r.assigned_to : null,
+    dueDate: typeof r.due_date === 'string' ? r.due_date : null,
+    createdAt: typeof r.created_date === 'string' ? r.created_date : null,
+    closedAt: typeof r.finish_date === 'string' ? r.finish_date : null,
+    modifiedAt: typeof r.modified_date === 'string' ? r.modified_date : null,
+    tags: Array.isArray(r.tags) ? r.tags.map((tag) => String(Array.isArray(tag) ? tag[0] : tag)) : [],
+  };
+}
+
+function parseProjectTask(raw: unknown): TaigaProjectTask {
+  const what = 'task';
+  const r = record(raw, what);
+  return {
+    id: field(r, 'id', 'number', what),
+    ref: field(r, 'ref', 'number', what),
+    subject: field(r, 'subject', 'string', what),
+    statusId: typeof r.status === 'number' ? r.status : null,
+    status: field(record(r.status_extra_info, `${what}.status_extra_info`), 'name', 'string', `${what} status`),
+    isClosed: field(r, 'is_closed', 'boolean', what),
+    isBlocked: r.is_blocked === true,
+    userStory: typeof r.user_story === 'number' ? r.user_story : null,
+    milestone: typeof r.milestone === 'number' ? r.milestone : null,
+    assignedTo: typeof r.assigned_to === 'number' ? r.assigned_to : null,
+    dueDate: typeof r.due_date === 'string' ? r.due_date : null,
+    createdAt: typeof r.created_date === 'string' ? r.created_date : null,
+    closedAt: typeof r.finished_date === 'string' ? r.finished_date : null,
+    modifiedAt: typeof r.modified_date === 'string' ? r.modified_date : null,
+  };
+}
+
+function parseProjectIssue(raw: unknown): TaigaProjectIssue {
+  const what = 'issue';
+  const r = record(raw, what);
+  return {
+    id: field(r, 'id', 'number', what),
+    ref: field(r, 'ref', 'number', what),
+    subject: field(r, 'subject', 'string', what),
+    typeId: typeof r.type === 'number' ? r.type : null,
+    statusId: typeof r.status === 'number' ? r.status : null,
+    status: field(record(r.status_extra_info, `${what}.status_extra_info`), 'name', 'string', `${what} status`),
+    isClosed: field(r, 'is_closed', 'boolean', what),
+    assignedTo: typeof r.assigned_to === 'number' ? r.assigned_to : null,
+    createdAt: typeof r.created_date === 'string' ? r.created_date : null,
+    closedAt: typeof r.finished_date === 'string' ? r.finished_date : null,
+    modifiedAt: typeof r.modified_date === 'string' ? r.modified_date : null,
   };
 }
 
@@ -464,6 +586,33 @@ function parseMilestone(raw: unknown): TaigaMilestone {
     closed: r.closed === true,
     totalPoints: typeof r.total_points === 'number' ? r.total_points : 0,
     closedPoints: typeof r.closed_points === 'number' ? r.closed_points : 0,
+  };
+}
+
+/** `[before, after]` of one field of a history entry's `diff` or `values_diff`, undefined when the entry has none. */
+function historyPair(raw: unknown, name: string): [unknown, unknown] | undefined {
+  const pair = isRecord(raw) ? raw[name] : undefined;
+  return Array.isArray(pair) && pair.length === 2 ? [pair[0], pair[1]] : undefined;
+}
+
+const historyId = (value: unknown) => (typeof value === 'number' ? value : null);
+
+function parseHistoryEntry(raw: unknown): TaigaHistoryEntry {
+  const what = 'history entry';
+  const r = record(raw, what);
+  const status = historyPair(r.diff, 'status');
+  const statusNames = historyPair(r.values_diff, 'status');
+  const statusAt = (index: 0 | 1): TaigaHistoryStatus | null => {
+    const id = historyId(status![index]);
+    const name = statusNames?.[index];
+    return id === null ? null : { id, name: typeof name === 'string' ? name : null };
+  };
+  const milestone = historyPair(r.diff, 'milestone');
+  return {
+    at: field(r, 'created_at', 'string', what),
+    status: status ? { from: statusAt(0), to: statusAt(1) } : null,
+    milestone: milestone ? { from: historyId(milestone[0]), to: historyId(milestone[1]) } : null,
+    description: historyPair(r.diff, 'description') !== undefined,
   };
 }
 
@@ -798,24 +947,43 @@ export class TaigaClient {
     return parseList(await this.#request('GET', `/${collection}`, { query }), what, parseAssignedStory);
   }
 
-  /** The user story statuses of a project, in Taiga's order. */
-  async listStoryStatuses(projectId: number): Promise<TaigaStoryStatus[]> {
-    const raw = await this.#request('GET', '/userstory-statuses', { query: { project: projectId } });
-    return list(raw, 'user story status list').map((item) => {
-      const r = record(item, 'user story status');
+  /** The statuses of a project's epics, user stories, tasks or issues (`GET /userstory-statuses?project=`, …), in Taiga's order. */
+  async listStatuses(type: ItemType, projectId: number): Promise<TaigaStatus[]> {
+    const what = `${TAIGA_ITEM[type].what} status`;
+    const raw = await this.#request('GET', `/${TAIGA_ITEM[type].attributes}-statuses`, { query: { project: projectId } });
+    return parseList(raw, what, (item) => {
+      const r = record(item, what);
       return {
-        id: field(r, 'id', 'number', 'user story status'),
-        name: field(r, 'name', 'string', 'user story status'),
-        slug: field(r, 'slug', 'string', 'user story status'),
-        isClosed: field(r, 'is_closed', 'boolean', 'user story status'),
+        id: field(r, 'id', 'number', what),
+        name: field(r, 'name', 'string', what),
+        slug: field(r, 'slug', 'string', what),
+        isClosed: field(r, 'is_closed', 'boolean', what),
       };
     });
   }
 
-  /** Every user story of a project, open and closed, with its sprint, block flag and points. */
+  /** Every user story of a project, open and closed, with its sprint, block flag, points, assignees and dates. */
   async listStories(projectId: number): Promise<TaigaStory[]> {
     const { collection, what } = TAIGA_ITEM.story;
     return parseList(await this.#request('GET', `/${collection}`, { query: { project: projectId } }), what, parseStory);
+  }
+
+  /** Every task of a project, open and closed, with its status, assignee, sprint, block flag and dates. */
+  async listProjectTasks(projectId: number): Promise<TaigaProjectTask[]> {
+    const { collection, what } = TAIGA_ITEM.task;
+    return parseList(await this.#request('GET', `/${collection}`, { query: { project: projectId } }), what, parseProjectTask);
+  }
+
+  /** Every issue of a project, open and closed, with its type, status, assignee and dates. */
+  async listProjectIssues(projectId: number): Promise<TaigaProjectIssue[]> {
+    const { collection, what } = TAIGA_ITEM.issue;
+    return parseList(await this.#request('GET', `/${collection}`, { query: { project: projectId } }), what, parseProjectIssue);
+  }
+
+  /** The changes of one item (`GET /history/userstory/{id}`, …), oldest first; Taiga sends them newest first. */
+  async listHistory(type: ItemType, id: number): Promise<TaigaHistoryEntry[]> {
+    const entries = parseList(await this.#request('GET', `/history/${TAIGA_ITEM[type].attributes}/${id}`), 'history entry', parseHistoryEntry);
+    return entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   }
 
   /** Every sprint of a project, open and closed, in Taiga's order. */

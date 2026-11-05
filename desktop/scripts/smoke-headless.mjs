@@ -110,7 +110,7 @@ const ended = (page, id) => page.waitForSelector(`.terminal-tab[data-id="${id}"]
 export async function smokeHeadless(page, { app, repo, project, work, shots, log, check, goTo }) {
   const settingsFile = join(work, 'user-data', 'settings.json');
   await goTo(page, 'settings');
-  check((await page.isChecked('input[name="headless-agent"][value="omp"]')) && (await page.inputValue('#agent-select')) === 'omp', 'Settings and the agent bar: the headless buttons use omp by default');
+  check((await page.isChecked('#settings-agent [role="radio"][value="omp"]')) && (await page.inputValue('#agent-select')) === 'omp', 'Settings and the agent bar: the headless buttons use omp by default');
   await goTo(page, 'backlog');
   // A taller panel shows a whole command (the claude one carries the allowlist).
   await page.evaluate(() => document.getElementById('terminal-dock')?.style.setProperty('--terminal-height', '520px'));
@@ -136,13 +136,14 @@ export async function smokeHeadless(page, { app, repo, project, work, shots, log
       // The agent bar's picker switches the agent and Settings follows.
       await page.selectOption('#agent-select', 'claude');
       await goTo(page, 'settings');
-      await page.waitForFunction(() => document.querySelector('input[name="headless-agent"][value="claude"]')?.checked === true);
+      await page.waitForFunction(() => document.querySelector('#settings-agent [role="radio"][value="claude"]')?.getAttribute('aria-checked') === 'true');
       check(JSON.parse(await readFile(settingsFile, 'utf8')).headlessAgent === 'claude', 'agent bar: claude picked there is saved in settings.json and checked in Settings');
       await goTo(page, 'backlog');
     }
     if (run.agent === 'codex') {
       await goTo(page, 'settings');
-      await page.check('input[name="headless-agent"][value="codex"]');
+      // A click, not check(): the radio follows settings.json once the main process saved it, after check() looks.
+      await page.click('#settings-agent [role="radio"][value="codex"]');
       await page.waitForFunction(() => document.getElementById('agent-select')?.value === 'codex');
       const saved = JSON.parse(await readFile(settingsFile, 'utf8'));
       check(saved.headlessAgent === 'codex' && typeof saved.lastRepo === 'string', `Settings: codex saved in settings.json, next to lastRepo, and shown in the agent bar (${JSON.stringify(saved)})`);

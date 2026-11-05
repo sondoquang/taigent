@@ -1,6 +1,7 @@
 // `taigent tickets`: the Period's tickets of the authenticated user (see GLOSSARY.md), each with its Due status and Effort.
 // Read-only. Days are calendar days in the local time zone (TZ); the client knows Taiga's field names.
 
+import { localDay, localMinute, parseDay } from './days.ts';
 import type { TaigaAssignedStory, TaigaClient } from './taiga/client.ts';
 
 /** An inclusive range of days: `from` and `to` as written (YYYY-MM-DD), `start`/`end` the instants bounding it. */
@@ -83,35 +84,11 @@ export interface TicketsSummary {
   projects: { slug: string; name: string; tickets: number }[];
 }
 
-const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-/** Local midnight of a YYYY-MM-DD day, or undefined when `value` is no such calendar day. */
-export function parseDay(value: string): Date | undefined {
-  const match = DAY.exec(value);
-  if (!match) return undefined;
-  const [year, month, day] = match.slice(1).map(Number) as [number, number, number];
-  const date = new Date(year, month - 1, day);
-  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : undefined;
-}
-
 /** The range from `from` to `to` inclusive; both must be calendar days (`parseDay`), `from` not after `to`. */
 export function dayRange(from: string, to: string): DayRange {
   const start = parseDay(from)!;
   const last = parseDay(to)!;
   return { from, to, start, end: new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1) };
-}
-
-const pad = (n: number) => String(n).padStart(2, '0');
-
-/** `YYYY-MM-DD` of an instant in the local time zone. */
-function localDay(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/** `YYYY-MM-DD HH:mm` in the local time zone. */
-function localMinute(iso: string): string {
-  const date = new Date(iso);
-  return `${localDay(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /** Due status by calendar day: a closed ticket's closing day, or an open ticket's `today`, against its due date. */

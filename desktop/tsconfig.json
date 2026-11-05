@@ -11,7 +11,8 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "lib": ["esnext", "dom", "dom.iterable"]
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "paths": { "@/*": ["./src/renderer/*"] }
   },
-  "include": ["src"]
+  "include": ["src/main", "src/preload", "src/shared"]
 }

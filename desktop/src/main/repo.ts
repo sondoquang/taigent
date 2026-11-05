@@ -1,6 +1,6 @@
 // The opened repository: the remembered folder, its environment (`.env` completes process.env, as the CLI does),
 // where its manifests live and which projects they hold. Also the app settings file (userData `settings.json`): the
-// remembered folder, the agent of the headless buttons and the theme.
+// remembered folder, the agent of the headless buttons, the theme and the Role of the Dashboard.
 
 import { readFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -8,7 +8,7 @@ import { userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { app } from 'electron';
-import { HEADLESS_AGENTS, type HeadlessAgent, type ProjectEntry, type RepoInfo, THEMES, type Theme } from '../shared/api.ts';
+import { HEADLESS_AGENTS, type HeadlessAgent, type ProjectEntry, type RepoInfo, type Role, ROLES, THEMES, type Theme } from '../shared/api.ts';
 import { loadCore } from './taigent.ts';
 
 const SETTINGS_FILE = 'settings.json';
@@ -17,6 +17,7 @@ interface Settings {
   lastRepo?: string;
   headlessAgent?: HeadlessAgent;
   theme?: Theme;
+  role?: Role;
 }
 
 async function readSettings(): Promise<Settings> {
@@ -29,6 +30,8 @@ async function readSettings(): Promise<Settings> {
       if (agent) settings.headlessAgent = agent;
       const theme = 'theme' in parsed ? THEMES.find((known) => known === parsed.theme) : undefined;
       if (theme) settings.theme = theme;
+      const role = 'role' in parsed ? ROLES.find((known) => known === parsed.role) : undefined;
+      if (role) settings.role = role;
     }
   } catch {
     // no settings yet
@@ -60,15 +63,27 @@ export async function setHeadlessAgent(agent: unknown): Promise<HeadlessAgent> {
   return known;
 }
 
-/** The app's colours; the OS's until the user picks light or dark. */
+/** The app's colours; dark until the user picks the OS's or light. */
 export async function theme(): Promise<Theme> {
-  return (await readSettings()).theme ?? 'system';
+  return (await readSettings()).theme ?? 'dark';
 }
 
 export async function setTheme(choice: unknown): Promise<Theme> {
   const known = THEMES.find((candidate) => candidate === choice);
   if (!known) throw new Error(`Giao diện không hợp lệ: ${String(choice)} (chỉ ${THEMES.join(', ')}).`);
   await updateSettings({ theme: known });
+  return known;
+}
+
+/** The Role of the Dashboard; null until the user picks one (the Dashboard then offers the three). */
+export async function role(): Promise<Role | null> {
+  return (await readSettings()).role ?? null;
+}
+
+export async function setRole(choice: unknown): Promise<Role> {
+  const known = ROLES.find((candidate) => candidate === choice);
+  if (!known) throw new Error(`Vai trò không hợp lệ: ${String(choice)} (chỉ ${ROLES.join(', ')}).`);
+  await updateSettings({ role: known });
   return known;
 }
 

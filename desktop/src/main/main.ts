@@ -30,17 +30,17 @@ import {
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
 import { handle, handleProject, slugFailure, trustWindow } from './ipc.ts';
 import { killChildren } from './processes.ts';
-import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, setHeadlessAgent, setTheme, theme } from './repo.ts';
+import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, role, setHeadlessAgent, setRole, setTheme, theme } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
-import { readTaigaReport } from './taiga-report.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
 import { cloneRepo, createRepo, openInstall, openNpmInstall, runInit, setupStatus } from './setup.ts';
 import { checkTools } from './tools.ts';
 import { runSkill } from './headless.ts';
 import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
 import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
+import { apiUrlFailure, cachedMetrics, readMetrics } from './metrics.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -109,8 +109,8 @@ function createWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     title: 'Taigent Desktop',
-    // The page's paper (styles.css), so the window shows no flash of the other theme while it loads.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e1e1f' : '#ffffff',
+    // The page's background (--background in src/renderer/globals.css), so the window shows no flash while it loads.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#18181b' : '#fafafa',
     show: false,
     webPreferences: {
       preload: PRELOAD,
@@ -298,7 +298,6 @@ function registerIpc(): void {
     (input.slug === undefined ? undefined : slugFailure(input.slug)) ?? saveProjectFile(requireRepo(), input),
   );
   handleProject(CHANNELS.bootstrapProject, async (slug) => bootstrapProject(requireRepo(), slug, window!));
-  handleProject(CHANNELS.readTaigaReport, async (slug) => readTaigaReport(requireRepo(), slug));
   handle(CHANNELS.gitStatus, async () => gitStatus(requireRepo()));
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));
@@ -341,6 +340,12 @@ function registerIpc(): void {
   handle(CHANNELS.readMyTickets, async (from: string, to: string) => readMyTickets(repoRoot ?? app.getPath('home'), String(from), String(to)));
   handle(CHANNELS.setTicketStatus, async (request: TicketStatusRequest) => setTicketStatus(repoRoot ?? app.getPath('home'), request, window!));
   handle(CHANNELS.commentTicket, async (request: TicketCommentRequest) => commentTicket(repoRoot ?? app.getPath('home'), request, window!));
+  handle(CHANNELS.role, role);
+  handle(CHANNELS.setRole, async (choice: unknown) => ({ ok: true, value: await setRole(choice) }));
+  // The Dashboard shows the open repository's project; its .env (TAIGA_*) applies, as for every read. The API URL the
+  // renderer's whoami reported keys the saved read; without a login it is absent and nothing is saved or shown.
+  handleProject(CHANNELS.cachedMetrics, async (slug, apiUrl: unknown) => apiUrlFailure(apiUrl) ?? { ok: true, value: await cachedMetrics(slug, apiUrl as string | undefined) });
+  handleProject(CHANNELS.readMetrics, async (slug, apiUrl: unknown) => apiUrlFailure(apiUrl) ?? readMetrics(requireRepo(), slug, apiUrl as string | undefined));
 }
 
 app.enableSandbox();

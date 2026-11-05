@@ -62,15 +62,15 @@ function uploadFailure(step: 'dry-run' | 'yes', error: CliError | undefined): Fa
     case 'validation':
       return failure(`docs.yaml chưa hợp lệ.${kept} Cách sửa: sửa các lỗi dưới đây (slug, đường dẫn file) trong mục Wiki hoặc nhờ agent, rồi đẩy lại.`, extra);
     case 'login':
-      return failure(`Chưa đăng nhập Taiga.${kept} Cách sửa: bấm "Đăng nhập" ở góc trên bên phải, rồi đẩy lại.`, extra);
+      return failure(`Chưa đăng nhập Taiga.${kept} Cách sửa: bấm "Đăng nhập" ở cuối thanh bên trái, rồi đẩy lại.`, extra);
     case 'usage':
-      return failure(`taigent từ chối lệnh upload.${kept} Cách sửa: xem chi tiết dưới đây; nếu cần đăng nhập, bấm "Đăng nhập" ở góc trên bên phải.`, extra);
+      return failure(`taigent từ chối lệnh upload.${kept} Cách sửa: xem chi tiết dưới đây; nếu cần đăng nhập, bấm "Đăng nhập" ở cuối thanh bên trái.`, extra);
     case 'taiga':
       if (error.file) {
         return failure(`Taiga từ chối tệp ${error.file} vì quá lớn.${kept} Cách sửa: thu nhỏ tệp hoặc nhờ quản trị Taiga tăng giới hạn upload, rồi đẩy lại.`, extra);
       }
       if (error.status === 401 || error.status === 403) {
-        return failure(`Taiga từ chối đăng nhập hoặc bạn không có quyền trên dự án.${kept} Cách sửa: đăng nhập lại (nút góc trên bên phải) bằng tài khoản là thành viên dự án, rồi đẩy lại.`, extra);
+        return failure(`Taiga từ chối đăng nhập hoặc bạn không có quyền trên dự án.${kept} Cách sửa: đăng nhập lại (nút ở cuối thanh bên trái) bằng tài khoản là thành viên dự án, rồi đẩy lại.`, extra);
       }
       return failure(
         `Taiga báo lỗi khi đẩy wiki.${kept} Cách sửa: kiểm tra kết nối, dự án đã có trên Taiga, và các item mà tệp đính kèm trỏ tới đã được đẩy (Thay đổi → Đẩy lên Taiga); rồi đẩy lại.`,
