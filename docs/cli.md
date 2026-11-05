@@ -607,7 +607,9 @@ flag decides the cadence), the user it logs in as (`GET /users/me`), the sprints
 read for a kanban project), the user story, task and issue statuses (`GET /userstory-statuses?project=<id>`,
 `GET /task-statuses?project=<id>`, `GET /issue-statuses?project=<id>`), the issue types (`GET /issue-types?project=<id>`),
 and every user story, task and issue (`GET /userstories?project=<id>`, `GET /tasks?project=<id>`,
-`GET /issues?project=<id>`), each list read with pagination disabled so no page is missed. Locally it reads only the
+`GET /issues?project=<id>`), each list read with pagination disabled so no page is missed; then, like `report`, each
+sprint's stats (`GET /milestones/<id>/stats`), the epics (`GET /epics?project=<id>`) and each epic's stories
+(`GET /epics/<id>/related_userstories`). Locally it reads only the
 `releases` of `taiga/<slug>/project.yaml` (none when the file does not exist). The metrics are computed by a pure module
 from that snapshot and the local day (TZ); nothing is written anywhere.
 
@@ -645,6 +647,25 @@ from that snapshot and the local day (TZ); nothing is written anywhere.
 
 `productOwner` holds:
 
+- `currentSprint`: the open sprint holding today (the latest, if two do), or null: its `id`, `name`, `start`, `finish`,
+  `stories`, `tasks` and `points` done out of total (the figures of its row in `report`), `days` (`elapsed`: days from
+  its first day to today; `total`: to its last day) and `ideal`: every day from first to last with the points left on
+  the ideal line, linear from all of them on the first day to 0 on the last (2 decimals).
+- `velocity`: the points closed (`closed_points`) in each of the last 6 closed sprints, oldest first, with the sprint's
+  `sprint` id (`sprint:<id>`, as in `periods`), `name`, `start` and `finish`.
+- `planned`: per sprint of `periods`, the points **planned** and **completed**, with `basis: "current"`: planned is the
+  sprint's points now (`total_points`), not the points committed when it started, which needs the history.
+- `health`: four signals, each with a `level` (`green`, `yellow`, `red`) and a `reason` with the figures; the
+  thresholds are fixed:
+  - `sprintPace`: how far the current sprint's points left stand above its ideal line today, in points
+    (`behindPoints`, negative when ahead) and in % of its points (`behindPercent`): more than 10% is yellow, more than
+    25% red. Green with `sprint`, `behindPoints` and `behindPercent` null when no open sprint holds today.
+  - `overdue`: the open `stories` and `tasks` of `developer.overdue`: 1 or 2 is yellow, 3 or more red.
+  - `openBugs`: `risingPeriods`, how many periods in a row, ending with the current one, ended with more open bugs
+    than the period before (`bugTrend`'s `open`, counted up to 2): 1 is yellow, 2 red.
+  - `blocked`: the open blocked user `stories` (blocked tasks do not count): 1 is yellow, 2 or more red.
+- `report`: the tables of [`taigent report --json`](#report) (`sprints`, `epics`, `noEpic`, `outsideSprints`), without
+  its `project`, computed by the same code from the same reads.
 - `bugTrend`: per period, the bugs **created** in it, **resolved** in it and **rejected** in it, and the bugs **open**
   at its last day: created by then and not closed by then, from the days created and closed, for old periods too.
   Without the history only a bug's last close is known: a reopened bug counts as open from its creation until it
@@ -660,12 +681,15 @@ from that snapshot and the local day (TZ); nothing is written anywhere.
   release). `multiTagged` lists the stories carrying two release tags or more (`id`, `ref`, `subject`, `releases`),
   left out of every burndown.
 
+A kanban project has no `currentSprint`, `velocity`, `planned` or `health.sprintPace`, and its `report.sprints` is
+empty (its sprints are not read).
+
 `unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
-Taiga history of each item (`reason: "history"`: cycle time, bug reopen rate, planned points at sprint start, scope
-change, the reopened part of the bug trend, requirement change), which `metrics` does not read yet. `warnings` holds
-the `kanban` warning and the release warnings: `release-undeclared` (a `release:` tag `project.yaml` does not
-declare; drawn without an ideal line), `release-empty` (a declared release no story carries) and `release-multiple`
-(one per story with two release tags or more). `--json` prints:
+Taiga history of each item (`reason: "history"`: cycle time, bug reopen rate, planned points at sprint start and scope
+change (both left out on a kanban project), the reopened part of the bug trend, requirement change), which `metrics`
+does not read yet. `warnings` holds the `kanban` warning and the release warnings: `release-undeclared` (a `release:`
+tag `project.yaml` does not declare; drawn without an ideal line), `release-empty` (a declared release no story
+carries) and `release-multiple` (one per story with two release tags or more). `--json` prints:
 
 ```json
 {
@@ -713,6 +737,34 @@ declare; drawn without an ideal line), `release-empty` (a declared release no st
     }
   },
   "productOwner": {
+    "currentSprint": {
+      "id": 31, "name": "Sprint 2", "start": "2026-10-29", "finish": "2026-11-11",
+      "stories": { "done": 1, "total": 5 }, "tasks": { "done": 3, "total": 9 }, "points": { "done": 5, "total": 21 },
+      "days": { "elapsed": 7, "total": 13 },
+      "ideal": [
+        { "day": "2026-10-29", "points": 21 },
+        { "day": "2026-10-30", "points": 19.38 },
+        …
+        { "day": "2026-11-11", "points": 0 }
+      ]
+    },
+    "velocity": [{ "sprint": "sprint:30", "name": "Sprint 1", "start": "2026-10-15", "finish": "2026-10-28", "points": 13 }],
+    "planned": {
+      "basis": "current",
+      "sprints": [
+        { "period": "sprint:30", "planned": 15, "completed": 13 },
+        { "period": "sprint:31", "planned": 21, "completed": 5 }
+      ]
+    },
+    "health": {
+      "sprintPace": { "level": "red", "sprint": "sprint:31", "behindPoints": 6.31, "behindPercent": 30,
+        "reason": "Sprint 2 is 6.31 points (30%) behind the ideal line: 16 of 21 points left on day 7 of 13, ideally 9.69" },
+      "overdue": { "level": "yellow", "reason": "1 open story and 1 open task overdue", "stories": 1, "tasks": 1 },
+      "openBugs": { "level": "green", "risingPeriods": 0,
+        "reason": "open bugs at the end of the periods did not rise in the last one (7 → 5)" },
+      "blocked": { "level": "yellow", "reason": "1 open user story is blocked", "stories": 1 }
+    },
+    "report": { "sprints": [ … ], "epics": [ … ], "noEpic": { … }, "outsideSprints": { … } },
     "bugTrend": [
       { "period": "sprint:30", "created": 5, "resolved": 2, "rejected": 0, "open": 7 },
       { "period": "sprint:31", "created": 2, "resolved": 3, "rejected": 1, "open": 5 }
@@ -749,8 +801,9 @@ declare; drawn without an ideal line), `release-empty` (a declared release no st
 ```
 
 Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`), the workload, the blocked
-and overdue items, the bug resolution per period, the bug trend, one line per release, the warnings and the metrics
-not available yet.
+and overdue items, the bug resolution per period, the product owner figures (current sprint, velocity,
+completed/planned points, health, then `report`'s tables as `report` prints them), the bug trend, one line per
+release, the warnings and the metrics not available yet.
 
 Read-only, so it runs under `TAIGENT_READ_ONLY=1`. Errors: exit 2 when not logged in (kind `login`), without
 `--project` (kind `usage`), or when the project is not on Taiga or not visible to the user (kind `project`; unlike
@@ -1092,8 +1145,8 @@ skill checks all of it and names each fix.
 | Init | `src/init.ts` | `initRepository(root, { dryRun })` → `InitReport` (`files: [{ path, status }]`), `InitError` (exit 2): the offline `init` command, copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed) |
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
-| Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command |
-| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`); periods (`periods.ts`), work items closed by status flag (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
+| Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
+| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, health and `report`'s tables); periods (`periods.ts`), work items closed by status flag (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
 | Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify` and `metrics` |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
