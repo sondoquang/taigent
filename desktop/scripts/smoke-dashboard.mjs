@@ -222,7 +222,7 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
     await pickFromMenu('productOwner');
     await smokeProductOwner({ page, fake, work, project, shots, check, log, refresh });
     await pickFromMenu('businessAnalyst');
-    await smokeBusinessAnalyst({ app, page, work, project, shots, check, refresh, stats, setEnv, onTaiga: sso });
+    await smokeBusinessAnalyst({ app, page, fake, work, project, shots, check, refresh, stats, setEnv, onTaiga: sso });
     check(JSON.parse(await readFile(settingsFile, 'utf8')).role === 'businessAnalyst', 'dashboard: the Role picked from the menu is saved');
     await goTo(page, 'settings');
     check(await page.isChecked('#settings-role [role="radio"][value="businessAnalyst"]'), 'Settings shows the Role picked on the Dashboard');

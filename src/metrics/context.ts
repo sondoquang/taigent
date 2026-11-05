@@ -17,18 +17,13 @@ export interface MetricsWarning {
   message: string;
 }
 
-/**
- * A metric the run could not compute, and why: `history`, it needs the Taiga history of each item;
- * `backlog-missing` / `backlog-invalid`, it needs the project's backlog manifest, absent or invalid.
- */
+/** A metric the run could not compute, and why: `backlog-missing` / `backlog-invalid`, it needs the project's backlog manifest, absent or invalid. */
 export interface UnavailableMetric {
-  /** Its path in the JSON, e.g. `developer.cycleTime`. */
+  /** Its path in the JSON, e.g. `businessAnalyst.acceptanceCriteria`. */
   metric: string;
-  reason: 'history' | 'backlog-missing' | 'backlog-invalid';
+  reason: 'backlog-missing' | 'backlog-invalid';
   message: string;
 }
-
-export const HISTORY_UNAVAILABLE = 'needs the Taiga history of each item, which metrics reads but does not compute this metric from yet';
 
 /** What metrics reads from the repository rather than Taiga. */
 export interface MetricsLocal {

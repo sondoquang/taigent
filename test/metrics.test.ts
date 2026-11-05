@@ -132,7 +132,7 @@ function addTask(fake: FakeTaiga, project: number, subject: string, fields: Work
   });
 }
 
-test('metrics of a scrum project: periods are the started sprints, phase 2 metrics not computed yet are unavailable, nothing is written', async (t) => {
+test('metrics of a scrum project: periods are the started sprints, every metric is computed, nothing is written', async (t) => {
   const h = await startHarness(t);
   const { alpha, past, current } = seedSprints(h.fake);
   // With a backlog manifest, the Business Analyst's metrics of the manifest are available.
@@ -151,14 +151,7 @@ test('metrics of a scrum project: periods are the started sprints, phase 2 metri
     { id: `sprint:${current.id}`, name: 'Sprint 2', start: day(-6), finish: day(7), current: true },
   ]);
   assert.deepEqual(report.warnings, []);
-  assert.deepEqual(
-    report.unavailable.map(({ metric, reason }) => [metric, reason]),
-    [
-
-      ['businessAnalyst.requirementChange', 'history'],
-    ],
-  );
-  assert.ok(report.unavailable.every(({ message }) => message.length > 0));
+  assert.deepEqual(report.unavailable, []);
   assert.deepEqual(writes(h.fake), []);
 });
 
@@ -303,7 +296,7 @@ test('metrics prints a text summary without --json', async (t) => {
   assert.match(result.stdout, /Unassigned: 0 stories \(0 points\), 0 tasks/);
   assert.match(result.stdout, new RegExp(`Blocked \\(1\\):\\n {4}story #${sso.ref} SSO \\(In progress, due ${day(-1)}; alice, taigent-bot\\)`));
   assert.match(result.stdout, /Overdue \(1\):/);
-  assert.match(result.stdout, /Not available yet:\n {2}businessAnalyst\.requirementChange: needs the Taiga history/);
+  assert.match(result.stdout, /Not available yet:\n {2}businessAnalyst\.statuses\.notApplied: .*backlog\.yaml/);
 });
 
 test('metrics works under TAIGENT_READ_ONLY=1', async (t) => {

@@ -16,7 +16,7 @@ export function formatMetricsText(report: MetricsReport): string {
   lines.push('', ...formatProductOwnerText(report.productOwner, periods));
   lines.push('', ...formatBugTrendText(report.productOwner.bugTrend, periods));
   lines.push('', ...formatReleaseText(report.productOwner.releaseBurndown));
-  lines.push('', ...formatBusinessAnalystText(report.businessAnalyst));
+  lines.push('', ...formatBusinessAnalystText(report.businessAnalyst, periods));
   if (warnings.length > 0) lines.push('', 'Warnings:', ...warnings.map((warning) => `  ${warning.code}: ${warning.message}`));
   if (unavailable.length > 0) lines.push('', 'Not available yet:', ...unavailable.map((metric) => `  ${metric.metric}: ${metric.message}`));
   return `${lines.join('\n')}\n`;
