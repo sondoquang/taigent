@@ -106,8 +106,8 @@ function RemoveDialog() {
               </p>
             )}
             {onTaiga.length > 0 && (
-              <div id="remove-orphans" role="alert" className="warn-box rounded-md border border-warning/30 bg-warning/10 p-3 text-sm break-words text-warning">
-                <strong className="font-semibold">Mục đã có trên Taiga sẽ thành mồ côi. </strong>
+              <div id="remove-orphans" role="alert" className="warn-box rounded-md border border-warning-border bg-warning-bg p-3 text-sm break-words text-warning">
+                <strong className="font-medium">Mục đã có trên Taiga sẽ thành mồ côi. </strong>
                 {`Xoá khỏi manifest không xoá chúng trên Taiga: ${onTaiga.map((candidate) => `${candidate.key} (#${candidate.applied!.ref})`).join(', ')} vẫn còn đó, và “Xem thay đổi trên Taiga” sẽ báo chúng là mồ côi để người quyết định.`}
               </div>
             )}

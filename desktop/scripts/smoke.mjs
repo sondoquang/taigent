@@ -151,11 +151,11 @@ try {
   await page.check(themeRadio('light'));
   await page.waitForFunction(() => !matchMedia('(prefers-color-scheme: dark)').matches);
   const light = await paperOf();
-  check(light.paper === 'rgb(255, 255, 255)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'light', `Sáng: the page turns light and settings.json keeps it (${JSON.stringify(light)})`);
+  check(light.paper === 'rgb(250, 250, 250)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'light', `Sáng: the page turns light and settings.json keeps it (${JSON.stringify(light)})`);
   await page.check(themeRadio('dark'));
   await page.waitForFunction(() => matchMedia('(prefers-color-scheme: dark)').matches);
   const dark = await paperOf();
-  check(dark.paper === 'rgb(0, 0, 0)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'dark', `Tối: the page turns dark and settings.json keeps it (${JSON.stringify(dark)})`);
+  check(dark.paper === 'rgb(24, 24, 27)' && JSON.parse(await readFile(themeFile, 'utf8')).theme === 'dark', `Tối: the page turns dark and settings.json keeps it (${JSON.stringify(dark)})`);
   await page.screenshot({ path: join(shots, 'theme-dark-settings.png') });
   await goTo(page, 'backlog');
   await page.screenshot({ path: join(shots, 'theme-dark-backlog.png') });

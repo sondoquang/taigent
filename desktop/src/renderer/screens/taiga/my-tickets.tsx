@@ -6,7 +6,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { DueStatus, Failure, MyTickets, StoryStatusEntry, Ticket } from '../../../shared/api.ts';
 import { toast } from '@/actions.ts';
-import { StatusBadge, type Tone } from '@/components/common.tsx';
+import { StatusBadge, TableSkeleton, type Tone } from '@/components/common.tsx';
 import { FailureBlock } from '@/components/failure-block.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
@@ -251,7 +251,7 @@ export function TicketsCard() {
       <Fragment key={key}>
         <TableRow data-ticket={key} className={cn(ticket.isClosed && 'closed text-muted-foreground')}>
           <TableCell className="max-w-80 whitespace-normal">
-            <strong className="font-semibold text-foreground">#{ticket.ref} </strong>
+            <strong className="font-medium text-foreground">#{ticket.ref} </strong>
             <span className="break-words">{ticket.subject}</span>
             <div className="text-xs text-muted-foreground">{ticket.project.name}</div>
           </TableCell>
@@ -367,6 +367,8 @@ export function TicketsCard() {
         <div id="tickets-list" className="flex min-w-0 flex-col gap-3" data-period={report ? `${report.range.from}..${report.range.to}` : undefined}>
           {readFailure ? (
             <FailureBlock failure={readFailure} />
+          ) : !report && busy === 'read' ? (
+            <TableSkeleton label="Đang đọc ticket…" className="-mx-6" />
           ) : (
             data &&
             report &&
@@ -375,21 +377,23 @@ export function TicketsCard() {
             ) : (
               <>
                 <p id="tickets-summary">{summaryLine(data)}</p>
-                <Table className="taiga-projects-table tickets-table">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Ticket</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Hạn</TableHead>
-                      <TableHead>Đóng lúc</TableHead>
-                      <TableHead>Effort</TableHead>
-                      <TableHead>
-                        <span className="sr-only">Comment</span>
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>{report.tickets.map((ticket) => ticketRows(ticket, data))}</TableBody>
-                </Table>
+                <div className="-mx-6">
+                  <Table className="taiga-projects-table tickets-table">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Ticket</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Hạn</TableHead>
+                        <TableHead>Đóng lúc</TableHead>
+                        <TableHead>Effort</TableHead>
+                        <TableHead>
+                          <span className="sr-only">Comment</span>
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>{report.tickets.map((ticket) => ticketRows(ticket, data))}</TableBody>
+                  </Table>
+                </div>
                 {report.notes.missingEffort.length > 0 && (
                   <p className="text-xs text-muted-foreground">
                     Chưa có effort (không có Spent Time, không có points): {report.notes.missingEffort.map((t) => `#${t.ref} (${t.project})`).join(', ')}.

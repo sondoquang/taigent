@@ -7,7 +7,7 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import type { ApplyOutcome, Plan, PreviewItem } from '../../../shared/api.ts';
 import { withBusy, toast } from '@/actions.ts';
-import { Code, PageHeader, ScreenBody, StatCell, StatusBadge, TYPE_LABEL } from '@/components/common.tsx';
+import { Code, PageHeader, ScreenBody, StatCell, StatusBadge, TableSkeleton, TYPE_LABEL } from '@/components/common.tsx';
 import { FailureBlock } from '@/components/failure-block.tsx';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -75,7 +75,7 @@ function Overview() {
 
 function WarnBox({ id, title, children }: { id?: string; title: string; children: ReactNode }) {
   return (
-    <Alert id={id} className="warn-box border-warning/30 bg-warning/10">
+    <Alert id={id} className="warn-box border-warning-border bg-warning-bg">
       <TriangleAlert aria-hidden className="text-warning" />
       <AlertTitle className="line-clamp-none whitespace-normal">{title}</AlertTitle>
       <AlertDescription className="text-foreground">{children}</AlertDescription>
@@ -93,36 +93,38 @@ function PlanTable({ plan, subjects }: { plan: Plan; subjects: Map<string, strin
       </p>
       {operations.length === 0 && <p>Không có thay đổi nào cần đẩy.</p>}
       {operations.length > 0 && (
-        <Table className="plan">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Thao tác</TableHead>
-              <TableHead>Loại</TableHead>
-              <TableHead>Mục</TableHead>
-              <TableHead>Chi tiết</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {operations.map((operation, index) => (
-              <TableRow key={`${operation.action}-${operation.key}-${index}`} className={`op-${operation.action}`}>
-                <TableCell>{ACTION[operation.action] ?? operation.action}</TableCell>
-                <TableCell>{typeLabel(operation.type)}</TableCell>
-                <TableCell className="max-w-md truncate" title={operation.fields?.subject ?? subjects.get(operation.key)}>
-                  <Code>{operation.key}</Code> {operation.fields?.subject ?? subjects.get(operation.key) ?? ''}
-                </TableCell>
-                <TableCell className="whitespace-normal text-muted-foreground">
-                  {operation.action === 'update'
-                    ? `Đổi: ${Object.keys(operation.changes ?? {}).join(', ')}${operation.ref ? ` (#${operation.ref})` : ''}`
-                    : operation.action === 'link'
-                      ? `→ ${operation.epic}`
-                      : operation.parent
-                        ? `thuộc ${operation.parent}`
-                        : ''}
-                </TableCell>
+        <div className="-mx-6">
+          <Table className="plan">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Thao tác</TableHead>
+                <TableHead>Loại</TableHead>
+                <TableHead>Mục</TableHead>
+                <TableHead>Chi tiết</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {operations.map((operation, index) => (
+                <TableRow key={`${operation.action}-${operation.key}-${index}`} className={`op-${operation.action}`}>
+                  <TableCell>{ACTION[operation.action] ?? operation.action}</TableCell>
+                  <TableCell>{typeLabel(operation.type)}</TableCell>
+                  <TableCell className="max-w-md truncate" title={operation.fields?.subject ?? subjects.get(operation.key)}>
+                    <Code>{operation.key}</Code> {operation.fields?.subject ?? subjects.get(operation.key) ?? ''}
+                  </TableCell>
+                  <TableCell className="whitespace-normal text-muted-foreground">
+                    {operation.action === 'update'
+                      ? `Đổi: ${Object.keys(operation.changes ?? {}).join(', ')}${operation.ref ? ` (#${operation.ref})` : ''}`
+                      : operation.action === 'link'
+                        ? `→ ${operation.epic}`
+                        : operation.parent
+                          ? `thuộc ${operation.parent}`
+                          : ''}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       )}
       {plan.orphans.length > 0 && (
         <WarnBox title={`${plan.orphans.length} mục trên Taiga không còn trong backlog (taigent không xoá):`}>
@@ -174,30 +176,32 @@ function ApplyContent({ outcome }: { outcome: Exclude<ApplyOutcome, { status: 'c
       <p>
         Tạo {report.summary.created} · Cập nhật {report.summary.updated} · Gắn epic {report.summary.linked} · Không đổi {report.summary.unchanged}
       </p>
-      <Table className="plan">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Kết quả</TableHead>
-            <TableHead>Loại</TableHead>
-            <TableHead>Mục</TableHead>
-            <TableHead>Ref</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {report.operations
-            .filter((operation) => operation.result !== 'unchanged')
-            .map((operation, index) => (
-              <TableRow key={`${operation.key}-${index}`}>
-                <TableCell>{RESULT[operation.result] ?? operation.result}</TableCell>
-                <TableCell>{typeLabel(operation.type)}</TableCell>
-                <TableCell>
-                  <Code>{operation.key}</Code>
-                </TableCell>
-                <TableCell>#{operation.ref}</TableCell>
-              </TableRow>
-            ))}
-        </TableBody>
-      </Table>
+      <div className="-mx-6">
+        <Table className="plan">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Kết quả</TableHead>
+              <TableHead>Loại</TableHead>
+              <TableHead>Mục</TableHead>
+              <TableHead>Ref</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {report.operations
+              .filter((operation) => operation.result !== 'unchanged')
+              .map((operation, index) => (
+                <TableRow key={`${operation.key}-${index}`}>
+                  <TableCell>{RESULT[operation.result] ?? operation.result}</TableCell>
+                  <TableCell>{typeLabel(operation.type)}</TableCell>
+                  <TableCell>
+                    <Code>{operation.key}</Code>
+                  </TableCell>
+                  <TableCell>#{operation.ref}</TableCell>
+                </TableRow>
+              ))}
+          </TableBody>
+        </Table>
+      </div>
     </>
   );
 }
@@ -272,16 +276,21 @@ export function ChangesScreen() {
       <Overview />
       <div id="changes-result" className="changes-result flex min-w-0 flex-col gap-3" aria-live="polite">
         {'note' in result && result.note && <p className="text-muted-foreground">{result.note}</p>}
+        {running === 'plan' && (
+          <div className="rounded-lg bg-card py-4 shadow-elevation-card">
+            <TableSkeleton rows={4} label={'note' in result ? result.note : undefined} />
+          </div>
+        )}
         {'title' in result && (
-          <>
-            <div className="space-y-1">
-              <h2 className="text-lg font-semibold">{result.title}</h2>
+          <div className="flex min-w-0 flex-col gap-4 rounded-lg bg-card px-6 py-4 shadow-elevation-card">
+            <div>
+              <h2 className="text-lg font-medium">{result.title}</h2>
               <p className="text-xs text-muted-foreground">
                 Dự án {result.slug} · {result.time}
               </p>
             </div>
             {result.content}
-          </>
+          </div>
         )}
       </div>
     </ScreenBody>

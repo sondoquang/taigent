@@ -110,7 +110,7 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     title: 'Taigent Desktop',
     // The page's background (--background in src/renderer/globals.css), so the window shows no flash while it loads.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#000000' : '#ffffff',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#18181b' : '#fafafa',
     show: false,
     webPreferences: {
       preload: PRELOAD,

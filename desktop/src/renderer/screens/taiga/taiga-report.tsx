@@ -4,7 +4,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import type { ProjectReport, TaigaProjectsOverview } from '../../../shared/api.ts';
-import { Code } from '@/components/common.tsx';
+import { Code, TableSkeleton } from '@/components/common.tsx';
 import { FailureBlock } from '@/components/failure-block.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
@@ -13,40 +13,43 @@ import { Spinner } from '@/components/ui/spinner.tsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.tsx';
 import { api } from '@/store.ts';
 
+/** A report table, edge to edge in the card as Medusa's tables. */
 function ReportTable({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
   return (
-    <Table className="taiga-projects-table">
-      <TableHeader>
-        <TableRow>
-          {head.map((cell) => (
-            <TableHead key={cell}>{cell}</TableHead>
-          ))}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((row, index) => (
-          <TableRow key={index}>
-            {row.map((cell, column) => (
-              <TableCell key={column} className="whitespace-normal break-words">
-                {cell}
-              </TableCell>
+    <div className="-mx-6">
+      <Table className="taiga-projects-table">
+        <TableHeader>
+          <TableRow>
+            {head.map((cell) => (
+              <TableHead key={cell}>{cell}</TableHead>
             ))}
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row, index) => (
+            <TableRow key={index}>
+              {row.map((cell, column) => (
+                <TableCell key={column} className="whitespace-normal break-words">
+                  {cell}
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
 function Report({ report }: { report: ProjectReport }) {
   const { sprints, epics, noEpic, outsideSprints } = report;
   return (
-    <div id="taiga-report-result" className="taiga-project-card flex flex-col gap-4 rounded-lg border p-4">
-      <h3 className="flex flex-wrap items-center gap-2 text-lg font-semibold">
+    <div id="taiga-report-result" className="taiga-project-card flex flex-col gap-4">
+      <h3 className="flex flex-wrap items-center gap-2 text-lg font-medium">
         {report.project.name}
         <Code>{report.project.slug}</Code>
       </h3>
-      <h4 className="font-semibold">Theo sprint ({sprints.length})</h4>
+      <h4 className="font-medium">Theo sprint ({sprints.length})</h4>
       {sprints.length === 0 ? (
         <p className="text-muted-foreground">Project chưa có sprint.</p>
       ) : (
@@ -71,7 +74,7 @@ function Report({ report }: { report: ProjectReport }) {
           ])}
         />
       )}
-      <h4 className="font-semibold">Theo epic ({epics.length})</h4>
+      <h4 className="font-medium">Theo epic ({epics.length})</h4>
       <ReportTable
         head={['Epic', 'Story xong', 'Story mở']}
         rows={[
@@ -79,7 +82,7 @@ function Report({ report }: { report: ProjectReport }) {
           ['Không thuộc epic nào', String(noEpic.done), String(noEpic.open)],
         ]}
       />
-      <h4 className="font-semibold">{`Story ngoài sprint (${outsideSprints.stories.length}): ${outsideSprints.done} xong, ${outsideSprints.open} mở`}</h4>
+      <h4 className="font-medium">{`Story ngoài sprint (${outsideSprints.stories.length}): ${outsideSprints.done} xong, ${outsideSprints.open} mở`}</h4>
       {outsideSprints.stories.length > 0 && (
         <ReportTable
           head={['Story', 'Trạng thái', 'Point', 'Block']}
@@ -144,7 +147,7 @@ export function ReportCard({ overview }: { overview: TaigaProjectsOverview | und
           {status}
         </p>
         <div id="taiga-report-body" className="min-w-0" aria-live="polite">
-          {body}
+          {running ? <TableSkeleton label="Đang đọc báo cáo…" className="-mx-6" /> : body}
         </div>
       </CardContent>
     </Card>

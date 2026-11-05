@@ -637,7 +637,7 @@ export function TerminalDock() {
       <div ref={views} id="terminal-views" className="terminal-views relative min-h-0 flex-1 bg-background">
         {tabs.length === 0 && (
           <p id="terminal-empty" className="terminal-empty px-6 py-4 text-sm text-muted-foreground">
-            Chưa có tab nào. Bấm <b className="font-semibold text-foreground">+</b> trên thanh tab để mở terminal hoặc agent (<Code>claude</Code>,{' '}
+            Chưa có tab nào. Bấm <b className="font-medium text-foreground">+</b> trên thanh tab để mở terminal hoặc agent (<Code>claude</Code>,{' '}
             <Code>codex</Code>, <Code>omp</Code>), hoặc bấm đúp vào chỗ trống của thanh để mở shell mặc định. Tab chạy ở thư mục repo đang mở.
           </p>
         )}

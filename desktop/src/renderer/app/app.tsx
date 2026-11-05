@@ -75,11 +75,11 @@ export function App() {
 
   return (
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-full flex-col">
-        <Topbar />
-        <div className="shell flex min-h-0 flex-1">
-          <NavRail />
-          <main className="min-w-0 flex-1 overflow-hidden">
+      <div className="shell flex h-full">
+        <NavRail />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Topbar />
+          <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
             <Screen section="backlog">
               <BacklogScreen />
             </Screen>
@@ -102,9 +102,9 @@ export function App() {
               <SettingsScreen />
             </Screen>
           </main>
+          <TerminalDock />
+          <Statusbar />
         </div>
-        <TerminalDock />
-        <Statusbar />
       </div>
       <ResultDialog />
       <AccountDialogs />

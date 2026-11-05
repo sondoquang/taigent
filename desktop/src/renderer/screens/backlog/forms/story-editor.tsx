@@ -197,7 +197,7 @@ export function StoryEditor({ draft, onChange, errors }: { draft: StoryDraft; on
   return (
     <div id="story-format" data-format="user-story" className="flex flex-col gap-6">
       {draft.converted && (
-        <p id="story-converted" role="status" className="warn-box rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+        <p id="story-converted" role="status" className="warn-box rounded-md border border-warning-border bg-warning-bg p-3 text-sm text-warning">
           Đã chuyển sang user story format: điền As a / I want to / so that và Given/When/Then của từng scenario (tên scenario lấy từ tiêu chí cũ). Khi
           lưu, acceptance_criteria được thay bằng use_case + scenarios, và Xem thay đổi trên Taiga sẽ báo cập nhật description của story.
         </p>
@@ -228,7 +228,7 @@ export function StoryEditor({ draft, onChange, errors }: { draft: StoryDraft; on
             return (
               <div key={card.id} className="scenario flex flex-col gap-3 rounded-md border bg-background p-3" data-path={`scenarios[${i}]`}>
                 <div className="scenario-head flex items-center gap-1">
-                  <strong className="scenario-title mr-auto text-sm font-semibold">Scenario {i + 1}</strong>
+                  <strong className="scenario-title mr-auto text-sm font-medium">Scenario {i + 1}</strong>
                   <IconButton action="up" label="Chuyển lên" disabled={i === 0} onClick={() => moveCard(i, -1)}>
                     <ArrowUp aria-hidden />
                   </IconButton>

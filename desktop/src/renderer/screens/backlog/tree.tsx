@@ -57,7 +57,7 @@ function Tree() {
   const nodes = visibleNodes(view, filter);
   // The Issues group follows the epic tree, with its "+ Issue" button even when the project has no issue yet.
   const group = (
-    <div key="tree-group" className="tree-group mt-2 flex items-center justify-between gap-2 px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+    <div key="tree-group" className="tree-group mt-2 flex items-center justify-between gap-2 px-2 py-1 text-xs font-medium text-muted-foreground">
       <span>Issues ({view.preview.issues.length})</span>
       <AddIssueButton />
     </div>
@@ -73,12 +73,12 @@ function Tree() {
         data-key={node.item.key}
         aria-current={isSelected ? 'true' : undefined}
         className={cn(
-          'node relative flex w-full min-w-0 items-center gap-2 rounded-md py-1 pr-2 text-left outline-none transition-colors hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/50',
+          'node relative flex min-h-7 w-full min-w-0 items-center gap-2 rounded-md py-1 pr-2 text-left outline-none transition-[color,background-color,box-shadow] hover:bg-sidebar-accent focus-visible:shadow-borders-focus',
           `depth-${node.depth}`,
           DEPTH_INDENT[node.depth],
-          node.depth === 0 && 'mt-2 font-semibold',
+          node.depth === 0 && 'mt-2 font-medium',
           node.depth === 2 && 'text-muted-foreground',
-          isSelected && 'selected bg-accent text-accent-foreground before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:rounded-full before:bg-primary',
+          isSelected && 'selected bg-card text-foreground shadow-elevation-card hover:bg-card',
           context && 'context text-muted-foreground',
         )}
         onClick={() => select(node.item.key)}

@@ -308,7 +308,7 @@ export function ItemForm({ form }: { form: OpenForm }) {
           <div className="grid gap-6 lg:grid-cols-2">
             <FieldGroup className="form-fields min-w-0 gap-6">
               {form.stale && (
-                <p id="form-stale" role="status" className="warn-box rounded-md border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+                <p id="form-stale" role="status" className="warn-box rounded-md border border-warning-border bg-warning-bg p-3 text-sm text-warning">
                   backlog.yaml vừa đổi từ lúc mở form (có thể do agent). Khi lưu, bạn sẽ được xem thay đổi đó rồi áp lại phần của mình.
                 </p>
               )}
@@ -484,7 +484,7 @@ export function ItemForm({ form }: { form: OpenForm }) {
                   <ul
                     id="form-issues"
                     role="alert"
-                    className="issues list-disc space-y-1 rounded-md border border-destructive/30 bg-destructive/10 py-3 pr-3 pl-7 text-sm text-destructive"
+                    className="issues list-disc space-y-1 rounded-md border border-danger-border bg-danger-bg py-3 pr-3 pl-7 text-sm text-destructive"
                   >
                     {general.map((issue, index) => (
                       <li key={index}>
@@ -497,7 +497,7 @@ export function ItemForm({ form }: { form: OpenForm }) {
               )}
             </FieldGroup>
             <aside id="form-preview" className="form-preview flex min-w-0 flex-col gap-2 self-start rounded-lg border bg-card p-4 lg:sticky lg:top-0">
-              <h3 className="text-sm font-semibold">Xem trước</h3>
+              <h3 className="text-sm font-medium">Xem trước</h3>
               {preview === undefined ? (
                 <>
                   <p className="text-xs text-muted-foreground">Mô tả đúng như apply sẽ ghi lên Taiga.</p>

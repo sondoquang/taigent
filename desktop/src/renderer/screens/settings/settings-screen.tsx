@@ -69,7 +69,7 @@ export function SettingsScreen() {
   const rows = versions ? { 'Taigent Desktop': versions.app, taigent: versions.taigent, Electron: versions.electron, Node: versions.node } : {};
   return (
     <ScreenBody>
-      <PageHeader title="Settings" description="Đăng nhập hoặc đăng xuất Taiga bằng nút ở góc trên bên phải." />
+      <PageHeader title="Settings" description="Đăng nhập hoặc đăng xuất Taiga bằng nút tài khoản ở cuối thanh bên trái." />
       <div className="settings-grid grid items-start gap-6 md:grid-cols-2">
         <Card>
           <CardHeader>
@@ -110,13 +110,13 @@ export function SettingsScreen() {
               <h2>Phiên bản</h2>
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-0">
             <Table id="settings-versions" className="versions">
               <TableBody>
                 {Object.entries(rows).map(([name, value]) => (
                   <TableRow key={name}>
-                    <TableHead className="text-muted-foreground">{name}</TableHead>
-                    <TableCell className="">{value}</TableCell>
+                    <TableHead>{name}</TableHead>
+                    <TableCell>{value}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

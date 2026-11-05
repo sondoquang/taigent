@@ -13,7 +13,7 @@ export function Statusbar() {
     .filter(Boolean)
     .join('   ·   ');
   return (
-    <footer id="statusbar" className="statusbar flex h-6 shrink-0 items-center truncate border-t bg-sidebar px-3 text-xs whitespace-pre text-muted-foreground">
+    <footer id="statusbar" className="statusbar flex h-7 shrink-0 items-center truncate border-t bg-background px-3 text-xs whitespace-pre text-muted-foreground">
       {text}
     </footer>
   );

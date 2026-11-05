@@ -5,6 +5,7 @@
 import type { ReactNode } from 'react';
 import type { PreviewItem } from '../../shared/api.ts';
 import { Badge } from '@/components/ui/badge.tsx';
+import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { cn } from '@/lib/utils.ts';
 
 export const TYPE_LABEL: Record<PreviewItem['type'], string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
@@ -19,16 +20,16 @@ export function reviewStatus(item: PreviewItem): { label: string; tone: ReviewTo
   return { label: 'Chưa duyệt', tone: 'unreviewed' };
 }
 
-/** Status tones as semantic token classes: text and border from the tone, a 10% fill of it. */
+/** Status tones as Medusa's tag colours: a tinted fill, a border and text of the same hue. */
 export const TONE_CLASS = {
-  approved: 'border-success/30 bg-success/10 text-success',
-  changes: 'border-warning/30 bg-warning/10 text-warning',
-  stale: 'border-destructive/30 bg-destructive/10 text-destructive',
-  unreviewed: 'border-border bg-muted text-muted-foreground',
-  new: 'border-info/30 bg-info/10 text-info',
-  applied: 'border-border bg-secondary text-secondary-foreground',
-  comments: 'border-info/30 bg-info/10 text-info',
-  neutral: 'border-border bg-muted text-muted-foreground',
+  approved: 'border-success-border bg-success-bg text-success',
+  changes: 'border-warning-border bg-warning-bg text-warning',
+  stale: 'border-danger-border bg-danger-bg text-danger',
+  unreviewed: 'border-neutral-border bg-neutral-bg text-neutral',
+  new: 'border-info-border bg-info-bg text-info',
+  applied: 'border-neutral-border bg-neutral-bg text-neutral',
+  comments: 'border-info-border bg-info-bg text-info',
+  neutral: 'border-neutral-border bg-neutral-bg text-neutral',
 } as const;
 export type Tone = keyof typeof TONE_CLASS;
 
@@ -86,7 +87,7 @@ const TONE_TEXT: Record<Tone, string> = {
 export function StatCell({ label, value, tone }: { label: string; value: number | string; tone?: Tone }) {
   return (
     <div className={cn('stat flex min-w-0 flex-col', tone)}>
-      <strong className={cn('text-lg font-semibold tabular-nums', tone ? TONE_TEXT[tone] : 'text-foreground')}>{value}</strong>
+      <strong className={cn('text-lg font-medium tabular-nums', tone ? TONE_TEXT[tone] : 'text-foreground')}>{value}</strong>
       <span className="text-xs text-muted-foreground">{label}</span>
     </div>
   );
@@ -97,7 +98,7 @@ export function PageHeader({ title, description, actions }: { title: string; des
   return (
     <header className="page-head flex flex-wrap items-start justify-between gap-4">
       <div className="page-title min-w-0 max-w-3xl space-y-1">
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="text-xl font-medium">{title}</h1>
         {description && <p className="text-muted-foreground">{description}</p>}
       </div>
       {actions && <div className="page-actions flex flex-wrap items-center gap-2">{actions}</div>}
@@ -109,7 +110,7 @@ export function PageHeader({ title, description, actions }: { title: string; des
 export function Block({ title, className, children }: { title: ReactNode; className?: string; children: ReactNode }) {
   return (
     <section className={cn('block space-y-2', className)}>
-      <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</h3>
+      <h3 className="text-sm font-medium text-muted-foreground">{title}</h3>
       {children}
     </section>
   );
@@ -124,7 +125,18 @@ export function formatTime(iso: string | undefined): string {
 
 /** Inline code with the design system's mono chip. */
 export function Code({ children, className }: { children: ReactNode; className?: string }) {
-  return <code className={cn('rounded-sm bg-muted px-1 py-0.5 text-xs text-foreground', className)}>{children}</code>;
+  return <code className={cn('rounded-sm border border-neutral-border bg-neutral-bg px-1 text-xs text-foreground', className)}>{children}</code>;
+}
+
+/** Medusa's loading table: a header band and `rows` row bands, pulsing, divided like the table they stand for. */
+export function TableSkeleton({ rows = 6, label = 'Đang tải…', className }: { rows?: number; label?: string; className?: string }) {
+  return (
+    <div role="status" aria-label={label} className={cn('table-skeleton flex flex-col divide-y', className)}>
+      {Array.from({ length: rows + 1 }, (_, index) => (
+        <Skeleton key={index} className="h-10 w-full rounded-none" />
+      ))}
+    </div>
+  );
 }
 
 /** The scrolling body of a screen other than Backlog: centered, padded, its blocks spaced. */

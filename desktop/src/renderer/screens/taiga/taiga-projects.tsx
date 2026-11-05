@@ -16,7 +16,7 @@ import type {
   TaigaProjectsOverview,
 } from '../../../shared/api.ts';
 import { openProject, refreshRepo, showSection, toast } from '@/actions.ts';
-import { Code } from '@/components/common.tsx';
+import { Code, TableSkeleton } from '@/components/common.tsx';
 import { FailureBlock } from '@/components/failure-block.tsx';
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -92,44 +92,49 @@ function ProjectList({
   busy: Busy;
   onOpen(slug: string): void;
 }) {
-  if (!hasRepo || failure || !overview) return failure ? <FailureBlock failure={failure} /> : null;
+  if (!hasRepo) return null;
+  if (failure) return <FailureBlock failure={failure} />;
+  // Edge to edge in the card, as Medusa's tables: the header band and the row dividers reach the card's sides.
+  if (!overview) return <TableSkeleton rows={5} label="Đang đọc project…" className="-mx-6" />;
   if (overview.rows.length === 0) {
     return <p className="text-muted-foreground">Chưa có project nào. Bấm “Tạo project mới…” để viết project.yaml.</p>;
   }
   return (
-    <Table className="taiga-projects-table">
-      <TableHeader>
-        <TableRow>
-          <TableHead>Project</TableHead>
-          <TableHead>Slug</TableHead>
-          <TableHead>Taiga</TableHead>
-          <TableHead>Trong repo</TableHead>
-          <TableHead>
-            <span className="sr-only">Thao tác</span>
-          </TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {overview.rows.map((row) => (
-          <TableRow key={row.slug} data-slug={row.slug} data-state={row.slug === selected ? 'selected' : undefined} className={cn(row.slug === selected && 'selected')}>
-            <TableCell className="max-w-64 truncate" title={row.name ?? undefined}>
-              {row.name ?? '—'}
-            </TableCell>
-            <TableCell>
-              <Code>{row.slug}</Code>
-            </TableCell>
-            <TableCell>{row.taiga ? `#${row.taiga.id} · ${row.taiga.admin ? 'admin' : 'thành viên'}` : 'Chưa có trên Taiga'}</TableCell>
-            <TableCell>{rowState(row)}</TableCell>
-            <TableCell className="text-right">
-              <Button type="button" variant="outline" size="sm" data-open={row.slug} disabled={Boolean(busy)} onClick={() => onOpen(row.slug)}>
-                {busy === `open:${row.slug}` && <Spinner />}
-                {row.hasProjectYaml ? 'Mở' : 'Tạo project.yaml'}
-              </Button>
-            </TableCell>
+    <div className="-mx-6">
+      <Table className="taiga-projects-table">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Project</TableHead>
+            <TableHead>Slug</TableHead>
+            <TableHead>Taiga</TableHead>
+            <TableHead>Trong repo</TableHead>
+            <TableHead>
+              <span className="sr-only">Thao tác</span>
+            </TableHead>
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {overview.rows.map((row) => (
+            <TableRow key={row.slug} data-slug={row.slug} data-state={row.slug === selected ? 'selected' : undefined} className={cn(row.slug === selected && 'selected')}>
+              <TableCell className="max-w-64 truncate" title={row.name ?? undefined}>
+                {row.name ?? '—'}
+              </TableCell>
+              <TableCell>
+                <Code>{row.slug}</Code>
+              </TableCell>
+              <TableCell>{row.taiga ? `#${row.taiga.id} · ${row.taiga.admin ? 'admin' : 'thành viên'}` : 'Chưa có trên Taiga'}</TableCell>
+              <TableCell>{rowState(row)}</TableCell>
+              <TableCell className="text-right">
+                <Button type="button" variant="outline" size="sm" data-open={row.slug} disabled={Boolean(busy)} onClick={() => onOpen(row.slug)}>
+                  {busy === `open:${row.slug}` && <Spinner />}
+                  {row.hasProjectYaml ? 'Mở' : 'Tạo project.yaml'}
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
@@ -152,7 +157,7 @@ function TaigaValues({ detail }: { detail: TaigaProjectDetail }) {
       <p>
         Trên Taiga: #{taiga.project.id} {taiga.project.name} · bạn là {taiga.project.admin ? 'admin' : 'thành viên (bootstrap cần quyền admin)'}
       </p>
-      <Table className="taiga-values">
+      <Table className="taiga-values [--table-edge:0px]">
         <TableBody>
           {values.map(([label, names]) => (
             <TableRow key={label}>
@@ -191,7 +196,7 @@ function ProjectForm({
   };
   return (
     <form id="project-form" className="project-form flex flex-col gap-4" onSubmit={submit}>
-      <h4 className="font-semibold">{form.baseDigest === null ? 'Tạo project.yaml' : 'project.yaml'}</h4>
+      <h4 className="font-medium">{form.baseDigest === null ? 'Tạo project.yaml' : 'project.yaml'}</h4>
       <Field>
         <FieldLabel htmlFor="pf-name">
           Tên project (<Code>{'<Khách hàng/Mảng> - <Sản phẩm>'}</Code>)
@@ -451,7 +456,7 @@ export function ProjectsCard({ onListed }: { onListed(overview: TaigaProjectsOve
           ) : (
             form && (
               <div className="taiga-project-card flex flex-col gap-4 rounded-lg border p-4">
-                <h3 className="flex flex-wrap items-center gap-2 text-lg font-semibold">
+                <h3 className="flex flex-wrap items-center gap-2 text-lg font-medium">
                   {title}
                   {detail && <Code className="slug">{detail.slug}</Code>}
                 </h3>
@@ -476,7 +481,7 @@ export function ProjectsCard({ onListed }: { onListed(overview: TaigaProjectsOve
                   <>
                     <Separator />
                     <div className="bootstrap-block flex flex-col items-start gap-2">
-                      <h4 className="font-semibold">Bootstrap</h4>
+                      <h4 className="font-medium">Bootstrap</h4>
                       <p className="text-muted-foreground">
                         Tạo project trên Taiga theo project.yaml, hoặc bổ sung phần còn thiếu (module, tag, custom attribute, member, wiki home). Ứng
                         dụng chạy bootstrap --dry-run, hỏi xác nhận, rồi mới chạy --yes. Không bao giờ tắt, đổi tên hay xoá gì.

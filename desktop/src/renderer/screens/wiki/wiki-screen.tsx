@@ -15,7 +15,7 @@ import type {
   WikiUploadOutcome,
 } from '../../../shared/api.ts';
 import { toast } from '@/actions.ts';
-import { Code, PageHeader, ScreenBody, TONE_CLASS } from '@/components/common.tsx';
+import { Code, PageHeader, ScreenBody, TableSkeleton, TONE_CLASS } from '@/components/common.tsx';
 import { showConflict } from '@/components/conflict-dialog.tsx';
 import { FailureBlock } from '@/components/failure-block.tsx';
 import { Markdown } from '@/components/markdown.tsx';
@@ -27,6 +27,7 @@ import { Empty, EmptyDescription } from '@/components/ui/empty.tsx';
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/components/ui/item.tsx';
+import { Skeleton } from '@/components/ui/skeleton.tsx';
 import { Spinner } from '@/components/ui/spinner.tsx';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table.tsx';
 import { Textarea } from '@/components/ui/textarea.tsx';
@@ -107,7 +108,7 @@ export function WikiScreen() {
     setResult(
       <Card>
         <CardHeader>
-          <h2 className="text-lg font-semibold">{title}</h2>
+          <h2 className="text-lg font-medium">{title}</h2>
           <CardDescription>
             Dự án {uploadSlug} · {new Date().toLocaleTimeString('vi-VN')}
           </CardDescription>
@@ -150,10 +151,12 @@ export function WikiScreen() {
     if (!current || busy) return;
     setBusy(true);
     setResult(
-      <p className="flex items-center gap-2 text-muted-foreground">
-        <Spinner />
-        Đang chạy taigent upload --dry-run…
-      </p>,
+      <div className="flex flex-col gap-3">
+        <p className="text-muted-foreground">Đang chạy taigent upload --dry-run…</p>
+        <div className="rounded-lg bg-card py-4 shadow-elevation-card">
+          <TableSkeleton rows={3} label="Đang chạy taigent upload --dry-run…" />
+        </div>
+      </div>,
     );
     try {
       const outcome = await api.uploadWiki(current);
@@ -191,7 +194,13 @@ export function WikiScreen() {
       <div id="wiki-pages" className="wiki-pages">
         {!slug ? (
           <EmptyState>Mở thư mục repo và chọn dự án để xem wiki.</EmptyState>
-        ) : !shown ? null : 'failure' in shown ? (
+        ) : !shown ? (
+          <div role="status" aria-label="Đang đọc wiki…" className="flex flex-col gap-2">
+            {[0, 1, 2].map((index) => (
+              <Skeleton key={index} className="h-14 w-full rounded-lg" />
+            ))}
+          </div>
+        ) : 'failure' in shown ? (
           <FailureBlock failure={shown.failure} />
         ) : shown.wiki.pages.length === 0 ? (
           <EmptyState>Chưa có trang wiki nào trong docs.yaml. Bấm "+ Trang wiki" để tạo trang đầu tiên.</EmptyState>
@@ -452,7 +461,7 @@ function PlanSummary({ plan }: { plan: UploadPlan }) {
 
 function OperationsTable({ rows }: { rows: { operation: UploadOperation; label: string }[] }) {
   return (
-    <div className="max-h-96 overflow-auto rounded-md border">
+    <div className="-mx-6 max-h-96 overflow-auto">
       <Table className="plan">
         <TableHeader>
           <TableRow>

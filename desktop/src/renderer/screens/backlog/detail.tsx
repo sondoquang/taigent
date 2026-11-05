@@ -101,7 +101,7 @@ function Comments({ item }: { item: PreviewItem }) {
           {comments.map((comment) => (
             <li
               key={comment.id}
-              className={cn('comment flex flex-col gap-2 rounded-lg border bg-card p-3', comment.resolved ? 'resolved' : 'open border-warning/30')}
+              className={cn('comment flex flex-col gap-2 rounded-lg border bg-card p-3', comment.resolved ? 'resolved' : 'open border-warning-border')}
             >
               <div className="comment-head flex flex-wrap items-center gap-2">
                 <strong className="font-medium">{comment.by}</strong>
@@ -125,11 +125,11 @@ function Comments({ item }: { item: PreviewItem }) {
 
 function KeyValueTable({ className, rows }: { className?: string; rows: [string, string][] }) {
   return (
-    <Table className={cn('attributes', className)}>
+    <Table className={cn('attributes [--table-edge:0px]', className)}>
       <TableBody>
         {rows.map(([name, value]) => (
           <TableRow key={name}>
-            <TableHead className="w-1/3 font-medium text-muted-foreground">{name}</TableHead>
+            <TableHead className="w-1/3">{name}</TableHead>
             <TableCell className="whitespace-normal break-words">{value}</TableCell>
           </TableRow>
         ))}
@@ -265,7 +265,7 @@ export function BacklogDetail() {
             <Code>{item.key}</Code>
             <ReviewBadges item={item} compact={false} />
           </div>
-          <h1 className="text-xl font-semibold tracking-tight break-words">{item.subject}</h1>
+          <h1 className="text-xl font-medium break-words">{item.subject}</h1>
           <VerdictBar item={item} />
           <ItemActions item={item} />
         </header>

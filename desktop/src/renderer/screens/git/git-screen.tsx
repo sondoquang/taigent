@@ -26,7 +26,7 @@ type Action = 'Làm mới' | 'Pull' | 'Push' | 'Commit + Push';
 /** The outcome region of `result`: the new status (when it brings one) and what to show. */
 function outcomeOf(title: string, result: Result<GitOutcome>): { status?: GitStatus; content: ReactNode } {
   const time = <p className="text-xs text-muted-foreground">{new Date().toLocaleTimeString('vi-VN')}</p>;
-  const heading = (text: string) => <h2 className="text-sm font-semibold">{text}</h2>;
+  const heading = (text: string) => <h2 className="text-sm font-medium">{text}</h2>;
   if (!result.ok) {
     return {
       content: (

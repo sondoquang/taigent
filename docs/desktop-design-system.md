@@ -11,81 +11,88 @@ phải đoán nút nào làm gì.
 
 - Người dùng: BA/PO review backlog và dev dùng terminal, agent, git. Đây là app desktop (Electron), cửa sổ rộng tối
   thiểu 960px, không phải trang web bán hàng.
-- Token lấy từ một bảng đo giao diện admin tối kiểu Medusa (trang Orders): nền đen, bề mặt zinc, chữ zinc-100/400,
-  13px. Các phần bảng đo không đáng tin (đối tượng, loại sản phẩm, "border trắng") đã được chỉnh theo app này. Font
-  của bảng đo (Inter) được thay bằng Geist, font của app.
+- Giao diện theo admin của Medusa (`@medusajs/ui`, đo trực tiếp trên trang Products ở chế độ tối): nền trang
+  `bg-subtle`, card `bg-base` có viền vẽ bằng shadow, chữ 13px với hai trọng số 400/500, thanh bên trái cao hết cửa
+  sổ, bảng tràn hết bề ngang card, skeleton nhấp nháy khi đang đọc dữ liệu. Font của Medusa (Inter) được thay bằng
+  Geist, font của app.
 - Mục tiêu: nhất quán (chỉ component của shadcn với variant mặc định), dễ tiếp cận (WCAG 2.2 AA), làm nhanh (không có
   CSS riêng cho từng màn hình).
 
 ## 2. Token và nền tảng
 
-### Cỡ gốc
+### Cỡ gốc và khoảng cách
 
-`html { font-size: 13px }`. Nhờ vậy thang spacing và radius của Tailwind trùng với token: không cần giá trị tuỳ ý.
+`html { font-size: 13px }`, nhưng thang spacing của Tailwind đặt lại là bước 4px (`--spacing: 4px`) như Medusa: class
+của Medusa dùng nguyên được, không cần giá trị tuỳ ý. Cỡ gốc 13px chỉ còn quyết định breakpoint và `max-w-*` (rem).
 
-| Token | Giá trị | Class Tailwind |
+| Class | Giá trị | Dùng cho |
 |---|---|---|
-| `space.1` | 1.63px | `*-0.5` |
-| `space.2` | 3.25px | `*-1` |
-| `space.3` | 6.5px | `*-2` |
-| `space.4` | 9.75px | `*-3` |
-| `space.5` | 34px | `h-10.5`, chiều cao hàng lớn |
-| `radius.xs` | 4.88px | `rounded-sm` |
-| `radius.sm` | 6.5px | `rounded-lg` (`--radius`) |
-
-Ngoài bảng trên, app chỉ dùng các bậc kế tiếp của cùng thang: `*-4` 13px, `*-6` 19.5px.
+| `*-0.5` | 2px | đệm trong hàng nav, avatar |
+| `*-1.5`, `*-2` | 6px, 8px | đệm control, khoảng cách icon |
+| `*-3` | 12px | đệm sidebar, khoảng giữa mục nav |
+| `*-4`, `*-6` | 16px, 24px | đệm card (`py-4`, `px-6`), mép bảng |
+| `h-7`, `h-8`, `h-12`, `h-13` | 28px, 32px, 48px, 52px | mục nav và nút nhỏ, control, hàng bảng, top bar |
+| `w-55` | 220px | sidebar |
+| `rounded-sm`, `rounded-md`, `rounded-lg` | 4px, 6px, 8px | skeleton và chip, control và mục nav, card và dialog |
 
 ### Chữ
 
-| Token | Cỡ | Class | Dùng cho |
+| Class | Cỡ / line-height | Medusa | Dùng cho |
 |---|---|---|---|
-| `font.size.xs` | 10px | `text-2xs` | nhãn loại item (EPIC, STORY) |
-| `font.size.sm` | 10.56px | `text-xs` | meta, chú thích, badge, status bar |
-| `font.size.md` (base) | 13px, line-height 19.5px | `text-sm`, `text-base` | chữ thân, control (mặc định của shadcn) |
-| `font.size.lg` | 14.63px | `text-lg` | số thống kê, tiêu đề phụ |
-| — | 16.25px | `text-xl` | tiêu đề màn hình (`PageHeader`) |
+| `text-2xs` | 11px / 16px | — | nhãn loại item (EPIC, STORY) |
+| `text-xs` | 12px / 20px | `txt-compact-xsmall` | meta, chú thích, badge, status bar |
+| `text-sm`, `text-base` | 13px / 20px | `txt-compact-small` | chữ thân, control, bảng, nav |
+| `text-lg` | 16px / 24px | `h2-core` | tiêu đề card, dialog, số thống kê |
+| `text-xl` | 18px / 28px | `h1-core` | tiêu đề màn hình (`PageHeader`) |
 
 Font: `Geist` (biến thể variable, thẳng và nghiêng) cho toàn bộ giao diện, kể cả key, đường dẫn và code; `Geist Mono`
 chỉ dùng cho terminal. Cả hai đóng gói trong `desktop/src/renderer/fonts/` (SIL OFL 1.1, `OFL.txt`), không tải gì từ
 mạng. Không dùng class `font-mono`: `--font-mono` cũng trỏ về Geist để thẻ `code`, `kbd`, `pre` theo cùng font.
-Trọng số: 400 cho chữ thân, 500 (`font-medium`) cho nhãn, 600 (`font-semibold`) cho tiêu đề.
+Trọng số như Medusa, chỉ hai mức: 400 cho chữ thân và ô bảng, 500 (`font-medium`) cho nhãn, nút, mục nav, đầu cột và
+mọi tiêu đề. Không dùng `font-semibold`/`font-bold`; `b`, `strong` (cả trong Markdown) cũng là 500.
 
 ### Màu (token ngữ nghĩa)
 
 Component chỉ dùng tên token, không bao giờ dùng mã màu.
 
-| Token shadcn | Tối (mặc định) | Token gốc | Dùng cho |
-|---|---|---|---|
-| `background` | `#000000` | `color.surface.base` | nền trang |
-| `card`, `popover`, `sidebar` | `#18181b` | `color.surface.raised` | panel, dialog, top bar, rail |
-| `muted`, `secondary`, `accent` | `#212124` | `color.surface.strong` | hover, hàng chọn, code |
-| `foreground` | `#f4f4f5` | `color.text.secondary` | chữ chính |
-| `muted-foreground` | `#a1a1aa` | `color.text.primary` | chữ phụ, placeholder |
-| `border`, `input` | `#27272a` | vòng `rgb(39,39,42)` của `shadow.1` | viền |
-| `ring` | `#a1a1aa` | — | viền focus |
-| `primary` | `#f4f4f5` trên `#18181b` | — | nút hành động chính |
-| `destructive`, `success`, `warning`, `info` | đỏ, xanh lá, vàng, xanh dương (oklch) | — | trạng thái |
+| Token | Tối (mặc định) | Sáng | Medusa | Dùng cho |
+|---|---|---|---|---|
+| `background`, `sidebar` | `#18181b` | `#fafafa` | `bg-subtle` | nền trang, sidebar, top bar, đầu bảng |
+| `card` | `#212124` | `#ffffff` | `bg-base` | card, dialog, hàng bảng, mục nav đang mở |
+| `popover` | `#27272a` | `#ffffff` | `bg-component` | menu, select |
+| `muted`, `secondary`, `accent` | `#27272a` | `#f4f4f5` | `bg-component`, `bg-base-hover` | skeleton, hover trên card |
+| `sidebar-accent` | `#212124` | `#f4f4f5` | `bg-subtle-hover` | hover trên sidebar và cây Backlog |
+| `field`, `field-hover` | trắng 4% / 8% | `#fafafa` / `#f4f4f5` | `bg-field` | nền input, select, textarea |
+| `button-neutral(-hover)` | trắng 4% / 8% | `#ffffff` / `#f4f4f5` | `button-neutral` | nút `outline`, `secondary` |
+| `primary` | `#52525b` | `#27272a` | `button-inverted` | nút hành động chính |
+| `foreground` | `#f4f4f5` | `#18181b` | `fg-base` | chữ chính |
+| `muted-foreground` | `#a1a1aa` | `#52525b` | `fg-subtle` | chữ phụ, placeholder, ô bảng, mục nav chưa mở |
+| `border` | trắng 8% | `#e4e4e7` | `border-base` | đường chia |
+| `ring`, `interactive` | `#60a5fa` | `#3b82f6` | `fg-interactive` | focus, checkbox/radio/switch đang bật, link |
+| `highlight` | `#172554` | `#eff6ff` | `bg-highlight` | hàng bảng đang chọn |
+| `success`, `warning`, `danger`, `info`, `neutral` (+ `-bg`, `-border`, `-icon`) | màu tag của Medusa | | `tag-*` | badge, hộp cảnh báo, số thống kê |
+| `destructive` | `#fb7185` | `#e11d48` | `fg-error` | chữ lỗi |
 
-`color.text.tertiary` (`#71717a`) không dùng cho chữ: chỉ đạt 3.67:1 trên `surface.raised`. Control bị vô hiệu hoá
-dùng `opacity-50` mặc định của shadcn. Giao diện sáng dùng nguyên bảng zinc sáng của shadcn.
+`fg-muted` của Medusa (`#71717a`) không dùng cho chữ: chỉ đạt khoảng 3.7:1. Control bị vô hiệu hoá dùng `opacity-50`.
 
-Tông trạng thái của review (`StatusBadge`, `TONE_CLASS` trong `components/common.tsx`):
+Tông trạng thái của review (`StatusBadge`, `TONE_CLASS` trong `components/common.tsx`), theo màu tag của Medusa:
 
 | Trạng thái | Tông |
 |---|---|
-| Đạt | `success` |
-| Cần sửa | `warning` |
-| Đã đổi sau khi duyệt | `destructive` |
-| Chưa duyệt | `muted` |
-| Mới, góp ý mở | `info` |
-| Đã đẩy | `secondary` |
+| Đạt | `success` (xanh lá) |
+| Cần sửa | `warning` (cam) |
+| Đã đổi sau khi duyệt | `danger` (đỏ) |
+| Chưa duyệt, Đã đẩy | `neutral` (xám) |
+| Mới, góp ý mở | `info` (xanh dương) |
 
 ### Độ nổi và chuyển động
 
-- `shadow-xs`/`shadow-sm` = `shadow.1` (control, card), `shadow-md`/`shadow-lg` = `shadow.2` (popover, dialog). Ở giao
-  diện tối, hai shadow này có vòng sáng 6% phía trên.
-- `motion.duration.instant` 150ms: mọi transition mặc định. `motion.duration.fast` 200ms: mở và đóng overlay (mặc định
-  của shadcn).
+- Như Medusa, control và card không có `border`: viền là shadow. `shadow-borders-base` (input, select, avatar),
+  `shadow-buttons-neutral`/`-inverted`/`-danger` (nút), `shadow-elevation-card` (card, mục nav và hàng cây đang chọn),
+  `shadow-elevation-flyout` (menu, popover, select), `shadow-elevation-tooltip`, `shadow-elevation-modal` (dialog).
+  Focus cũng là shadow: `shadow-borders-focus`, `shadow-borders-active` (input), `shadow-buttons-*-focus` (nút).
+- `divider-dashed`: đường chia nét đứt 1px của sidebar.
+- 150ms cho mọi transition mặc định; 200ms khi mở và đóng overlay (mặc định của shadcn).
 - Chế độ sáng/tối: biến thể `dark:` của Tailwind đi theo `prefers-color-scheme`. Main process đặt giá trị này qua
   `nativeTheme.themeSource` (Settings > Giao diện, mặc định *Tối*).
 
@@ -93,27 +100,28 @@ Tông trạng thái của review (`StatusBadge`, `TONE_CLASS` trong `components/
 
 Mọi control lấy từ `desktop/src/renderer/components/ui/` với variant mặc định. Thêm component bằng
 `npx shadcn@latest add <tên>` trong `desktop/`. Component dùng chung của app nằm trong `components/`: `PageHeader`,
-`ScreenBody`, `Block`, `StatCell`, `StatusBadge`, `ReviewBadges`, `TypeBadge`, `Markdown`, `FailureBlock` và
-`showConflict`.
+`ScreenBody`, `Block`, `StatCell`, `StatusBadge`, `ReviewBadges`, `TypeBadge`, `TableSkeleton`, `Markdown`,
+`FailureBlock` và `showConflict`.
 
 Trạng thái bắt buộc của mọi component tương tác:
 
 | Trạng thái | Cách làm |
 |---|---|
-| default, hover, active | style mặc định của shadcn |
-| focus-visible | `focus-visible:ring-[3px] ring-ring/50` cộng `border-ring` (mặc định của shadcn); không bao giờ gỡ |
-| disabled | thuộc tính `disabled` (shadcn đặt `opacity-50`, `pointer-events-none`) |
-| loading | `disabled` cộng `<Spinner/>` trong nút khi thao tác async đang chạy |
+| default, hover, active | style của component trong `components/ui/` (đã theo Medusa) |
+| focus-visible | shadow focus của component (`shadow-borders-focus`, `shadow-buttons-*-focus`); không bao giờ gỡ |
+| disabled | thuộc tính `disabled` (`opacity-50`, `pointer-events-none`) |
+| loading | nút: `disabled` cộng `<Spinner/>`; bảng hoặc danh sách đang đọc lần đầu: `TableSkeleton` (một dải đầu bảng và các dải hàng `h-10`, `animate-pulse`, nền `muted`) hoặc `Skeleton` cùng hình với nội dung, có `role="status"` và `aria-label` |
 | error | `FailureBlock`, hoặc `Field data-invalid` + `FieldError` + `aria-invalid` trên control |
 | empty | câu trống rõ nghĩa (`Empty` hoặc đoạn `text-muted-foreground`) |
 
 | Component | Cấu tạo và variant | Bàn phím, chuột, cảm ứng | Nội dung dài, tràn, trống |
 |---|---|---|---|
-| Button | `default` cho hành động chính (mỗi vùng một nút), `outline` cho hành động phụ, `ghost` cho thanh công cụ, `destructive` cho xoá; `size="sm"` trên thanh công cụ | Tab tới; Enter hoặc Space kích hoạt; nút chỉ có icon phải có `aria-label` và Tooltip; vùng chạm ≥ 24px | nhãn một dòng, không xuống dòng; nhãn mô tả hành động (*Đẩy lên Taiga*, không phải *OK*) |
+| Button | `default` (inverted) cho hành động chính (mỗi vùng một nút), `outline` cho hành động phụ, `ghost` cho thanh công cụ, `destructive` cho xoá; cao 32px, `size="sm"` 28px trên thanh công cụ | Tab tới; Enter hoặc Space kích hoạt; nút chỉ có icon phải có `aria-label` và Tooltip; vùng chạm ≥ 24px | nhãn một dòng, không xuống dòng; nhãn mô tả hành động (*Đẩy lên Taiga*, không phải *OK*) |
 | Link (`Button variant="link"`, link trong Markdown) | gạch chân, màu `foreground` | link Markdown mở bằng trình duyệt hệ thống (`a[data-external]`) | `overflow-wrap: anywhere` |
-| Card (panel) | `Card` > `CardHeader` (`CardTitle`, `CardDescription`, `CardAction`) > `CardContent` | không tự nhận focus | nội dung dài cuộn trong `CardContent` (`max-h-*` + `overflow-auto`) |
-| List, cây | hàng `button` (cây Backlog) hoặc `Item` / `Table` | cây: j/k, ↑/↓ chuyển mục; hàng là button nên Tab và Enter dùng được | `truncate` + `title` cho tiêu đề; câu trống khi không có mục hoặc bộ lọc không khớp |
-| Navigation (rail) | button `ghost` có icon và nhãn; mục đang mở có `aria-current="page"` và nền `sidebar-accent` | Tab hoặc Shift+Tab, Enter | nhãn `truncate` |
+| Card (panel) | `Card` > `CardHeader` (`CardTitle` 16px, `CardDescription`, `CardAction`) > `CardContent`; `bg-card`, `rounded-lg`, `shadow-elevation-card`, không viền | không tự nhận focus | nội dung dài cuộn trong `CardContent` (`max-h-*` + `overflow-auto`) |
+| Table | đầu bảng nền `background`, hàng `h-12` có đường chia, hover `accent`, chữ ô `muted-foreground`; trong card, bọc bảng bằng `-mx-6` để bảng chạm hai mép card (mép ô đầu/cuối 24px, `--table-edge`); bảng khoá-giá trị ngoài card đặt `[--table-edge:0px]` | — | `truncate` + `title` cho ô một dòng, `whitespace-normal` cho ô dài |
+| List, cây | hàng `button` (cây Backlog: cao 28px, hover `sidebar-accent`, mục chọn `bg-card shadow-elevation-card`) hoặc `Item` | cây: j/k, ↑/↓ chuyển mục; hàng là button nên Tab và Enter dùng được | `truncate` + `title` cho tiêu đề; câu trống khi không có mục hoặc bộ lọc không khớp |
+| Sidebar | cao hết cửa sổ, rộng 220px: brand, đường chia nét đứt, mục nav (28px, icon trong ô 24px, cách nhau 12px; mục đang mở có `aria-current="page"`, `bg-card shadow-elevation-card`), Setup repo và Settings ở đáy, nút tài khoản Taiga (`#login-btn`) cuối cùng | Tab hoặc Shift+Tab, Enter | nhãn `truncate` |
 | Dialog, AlertDialog | `DialogHeader` (tiêu đề, mô tả), thân cuộn, `DialogFooter` (Huỷ `outline` bên trái, hành động chính bên phải) | bẫy focus; Esc đóng; focus trả về nút đã mở | thân `max-h-[60vh]`+ cuộn; form rộng dùng `sm:max-w-3xl`/`4xl` |
 | Form | `FieldGroup` > `Field` > `FieldLabel` + control + `FieldDescription`/`FieldError` | mọi input có nhãn; Enter gửi form một dòng; Ctrl+Enter gửi góp ý | lỗi đặt ngay dưới input |
 | Select | `NativeSelect` (giữ select gốc, dùng được với bàn phím và trình đọc màn hình) | mũi tên chọn | tuỳ chọn dài: `truncate` |
@@ -122,27 +130,26 @@ Trạng thái bắt buộc của mọi component tương tác:
 
 Bố cục và responsive:
 
-- Màn hình (trừ Backlog) dùng `ScreenBody`: rộng tối đa `max-w-6xl`, `p-6`, khoảng cách giữa khối `gap-6`. Lưới nhiều
-  cột dùng `md:` hoặc `lg:`, hẹp hơn thì xếp chồng. Breakpoint của Tailwind tính bằng rem nên ở cỡ gốc 13px chúng là
-  `sm` 416px, `md` 624px, `lg` 832px, `xl` 1040px, `2xl` 1248px (bề ngang viewport). Cửa sổ rộng tối thiểu 960px,
+- Khung như Medusa: sidebar cao hết cửa sổ bên trái; bên phải là top bar (`h-13`, repo, dự án, Terminal), nội dung,
+  panel terminal và status bar.
+- Màn hình (trừ Backlog) dùng `ScreenBody`: rộng tối đa `max-w-6xl`, `p-6` (24px), khoảng cách giữa khối `gap-6`. Lưới
+  nhiều cột dùng `md:` hoặc `lg:`, hẹp hơn thì xếp chồng. Breakpoint của Tailwind tính bằng rem nên ở cỡ gốc 13px chúng
+  là `sm` 416px, `md` 624px, `lg` 832px, `xl` 1040px, `2xl` 1248px (bề ngang viewport). Cửa sổ rộng tối thiểu 960px,
   nên `lg:` luôn áp dụng cho cửa sổ; trong dialog, dùng chiều rộng của dialog để quyết định số cột.
 - Con của flex luôn có `min-w-0`. Đường dẫn, key, tiêu đề trong hàng dùng `truncate` + `title`. Text tự do dùng
   `whitespace-pre-wrap` hoặc `break-words`.
-
-Mật độ component trong bảng đo tham chiếu: 16 nút, 15 link, 3 card, 3 list, 1 thanh điều hướng. Màn hình của app nên
-giữ cỡ đó: một hàng hành động chính, ít card, list là phần chính.
 
 ## 4. Tiếp cận (WCAG 2.2 AA) và tiêu chí kiểm tra
 
 | # | Tiêu chí | Cách kiểm tra | Đạt khi |
 |---|---|---|---|
-| A1 | Tương phản chữ | đo màu chữ trên nền của nó | ≥ 4.5:1 (chữ thường), ≥ 3:1 (chữ ≥ 18.66px đậm). `foreground` ≥ 14.6:1 và `muted-foreground` ≥ 6.2:1 trên mọi bề mặt tối |
-| A2 | Focus nhìn thấy | Tab qua từng control | mọi control có vòng focus; không control nào có `outline-none` mà thiếu `focus-visible:ring` |
+| A1 | Tương phản chữ | đo màu chữ trên nền của nó | ≥ 4.5:1 (chữ thường), ≥ 3:1 (chữ ≥ 18.66px đậm). Tối: `foreground` ≥ 13.5:1 và `muted-foreground` ≥ 5.8:1 trên `background`, `card`, `muted`; sáng: ≥ 16:1 và ≥ 7:1; chữ tag ≥ 6.3:1 trên nền tag |
+| A2 | Focus nhìn thấy | Tab qua từng control | mọi control có vòng focus; không control nào có `outline-none` mà thiếu shadow focus (`focus-visible:shadow-*-focus`) |
 | A3 | Bàn phím | dùng cả màn hình không cần chuột | mọi hành động tới được bằng Tab và kích hoạt bằng Enter/Space; Esc đóng overlay; focus không bị kẹt ngoài dialog |
 | A4 | Nhãn | công cụ accessibility tree (Playwright `getByRole`/`getByLabel`) | mọi input, select, textarea có tên truy cập; nút chỉ có icon có `aria-label` |
 | A5 | Thông báo kết quả | trình đọc màn hình hoặc kiểm tra DOM | vùng kết quả async có `aria-live="polite"`; toast nằm trong vùng live của sonner |
 | A6 | Trạng thái không chỉ bằng màu | xem ảnh chụp đen trắng | badge trạng thái luôn có chữ (*Đạt*, *Cần sửa*…) |
-| A7 | Vùng chạm | đo kích thước | control ≥ 24×24px (`size="sm"` = 26px) |
+| A7 | Vùng chạm | đo kích thước | control ≥ 24×24px (`size="sm"` = 28px) |
 | A8 | Nội dung tràn | cửa sổ 960px, tên dài 200 ký tự | không có thanh cuộn ngang ở cấp trang; tên dài bị cắt có `title` |
 
 ## 5. Nội dung và giọng văn
@@ -164,7 +171,7 @@ Lỗi nói rõ chuyện gì xảy ra và cách sửa, kèm chi tiết của CLI 
 - Cỡ chữ hay khoảng cách tuỳ ý (`text-[11px]`, `p-[7px]`): dùng thang ở mục 2.
 - CSS riêng cho một màn hình, hay viết lại style mà shadcn đã có. Ngoại lệ duy nhất là `.markdown` trong
   `globals.css`.
-- Gỡ vòng focus (`outline-none` không có `focus-visible:ring`), hay chữ quá mờ (`opacity` dưới 80% trên chữ).
+- Gỡ vòng focus (`outline-none` không có `focus-visible:shadow-*-focus`), hay chữ quá mờ (`opacity` dưới 80% trên chữ).
 - `<dialog>`, `window.confirm` hay `alert` trong renderer: dùng `Dialog`/`AlertDialog`. Xác nhận trước khi ghi lên
   Taiga vẫn là hộp thoại gốc của main process.
 - Đọc hay ghi DOM bằng `document.getElementById`/`querySelector` để vẽ giao diện: chỉ dùng ref khi thật cần node
@@ -177,8 +184,11 @@ Lỗi nói rõ chuyện gì xảy ra và cách sửa, kèm chi tiết của CLI 
   `data-*` và class mà script smoke chọn vẫn được giữ: class móc (`node`, `selected`, `badge approved`…) đứng cạnh
   class Tailwind. Dialog của shadcn mở với `data-state="open"` thay cho thuộc tính `open` của `<dialog>`.
 - Giao diện mặc định đổi từ *Theo hệ thống* sang *Tối*. File `settings.json` đã lưu lựa chọn thì giữ nguyên.
-- Viền control (`--input` `#27272a`) chỉ đạt 1.41:1 trên nền đen, như shadcn mặc định. Ô nhập vẫn nhận ra được nhờ
-  nhãn, nền `input/30` và viền `ring` khi focus.
+- Viền control là `shadow-borders-base` (vòng 1px `#27272a` cộng ánh sáng 6% ở tối), mờ như ở Medusa. Ô nhập vẫn
+  nhận ra được nhờ nhãn, nền `field` và vòng xanh `shadow-borders-active` khi focus.
+- Chuyển sang giao diện Medusa: nền trang tối đổi từ `#000000` sang `#18181b` (cả `backgroundColor` của cửa sổ trong
+  `src/main/main.ts`), brand lên đầu sidebar, nút đăng nhập Taiga xuống cuối sidebar, `font-semibold` thành
+  `font-medium`, `--spacing` từ 3.25px (theo cỡ gốc) thành 4px.
 - Terminal giữ nền tối ở cả hai giao diện (màu của xterm nằm trong theme của xterm, không qua token CSS).
 
 ## 8. Checklist QA

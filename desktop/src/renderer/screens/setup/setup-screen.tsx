@@ -51,8 +51,8 @@ function InitTable({ report }: { report: InitReport }) {
         <summary className="w-fit cursor-pointer rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50">
           {`Xem ${report.files.length} file`}
         </summary>
-        <div className="mt-2 max-h-80 overflow-auto rounded-md border">
-          <Table className="setup-files">
+        <div className="mt-2 max-h-80 overflow-auto rounded-lg shadow-borders-base">
+          <Table className="setup-files [--table-edge:12px]">
             <TableHeader>
               <TableRow>
                 <TableHead>File</TableHead>
