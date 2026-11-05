@@ -16,6 +16,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadio
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty.tsx';
 import { Spinner } from '@/components/ui/spinner.tsx';
 import { DeveloperDashboard } from '@/screens/dashboard/developer-dashboard.tsx';
+import { ProductOwnerDashboard } from '@/screens/dashboard/product-owner-dashboard.tsx';
 import { api, ROLE_LABEL, useApp } from '@/store.ts';
 
 const ROLE_PURPOSE: Record<Role, string> = {
@@ -105,14 +106,7 @@ function Placeholder({ id, ticket, children }: { id: string; ticket: number; chi
 
 function RoleDashboard({ role, report }: { role: Role; report: MetricsReport }) {
   if (role === 'developer') return <DeveloperDashboard report={report} />;
-  if (role === 'productOwner') {
-    return (
-      <Placeholder id="dashboard-product-owner" ticket={71}>
-        Ticket #71 lấp đầy khung này: tiến độ sprint hiện tại, velocity, planned vs completed, release burndown, bug trend,
-        sức khoẻ project, và bảng theo sprint, theo epic (hiện ở mục Taiga &gt; Báo cáo).
-      </Placeholder>
-    );
-  }
+  if (role === 'productOwner') return <ProductOwnerDashboard report={report} />;
   return (
     <Placeholder id="dashboard-business-analyst" ticket={72}>
       Ticket #72 lấp đầy khung này: phân bố status của story (kèm Chưa apply), độ phủ yêu cầu, story chưa đủ acceptance
