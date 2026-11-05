@@ -1,6 +1,7 @@
 // What `taigent metrics` reads from Taiga for one project: the snapshot the pure metrics module (compute.ts)
 // computes from. Read-only; the client disables Taiga's pagination, so every list is complete.
 
+import { readReportExtras, type ReportSource } from '../report.ts';
 import type { TaigaClient, TaigaIssueValue, TaigaMilestone, TaigaProjectIssue, TaigaProjectTask, TaigaStatus, TaigaStory } from '../taiga/client.ts';
 
 /** The project is not on Taiga or not visible to the user. Maps to ExitCode.Usage, kind `project`. */
@@ -26,6 +27,8 @@ export interface MetricsSnapshot {
   /** Every issue, with the project's issue types to tell bugs (type `Bug`) from the rest. */
   issues: TaigaProjectIssue[];
   issueTypes: TaigaIssueValue[];
+  /** What `report`'s tables need besides the sprints and stories: sprint stats (in the order of `sprints`), epics. */
+  report: Pick<ReportSource, 'stats' | 'epics' | 'epicStories'>;
 }
 
 export async function readSnapshot(client: TaigaClient, slug: string): Promise<MetricsSnapshot> {
@@ -43,6 +46,7 @@ export async function readSnapshot(client: TaigaClient, slug: string): Promise<M
     client.listProjectTasks(project.id),
     client.listProjectIssues(project.id),
   ]);
+  const report = await readReportExtras(client, project.id, milestones);
   return {
     project: { id: project.id, slug: project.slug, name: project.name, sprints },
     me: { id: me.id, username: me.username },
@@ -53,5 +57,6 @@ export async function readSnapshot(client: TaigaClient, slug: string): Promise<M
     tasks,
     issues,
     issueTypes,
+    report,
   };
 }

@@ -8,6 +8,7 @@ import { type BusinessAnalystMetrics, businessAnalystMetrics } from './business-
 import { HISTORY_UNAVAILABLE, type MetricsContext, type MetricsLocal, type MetricsWarning, type UnavailableMetric } from './context.ts';
 import { type DeveloperMetrics, developerMetrics } from './developer.ts';
 import { type Cadence, type Period, sprintPeriods, weekPeriods } from './periods.ts';
+import { type ProductOwnerMetrics, productOwnerMetrics } from './product-owner.ts';
 import { type ReleaseBurndown, releaseBurndown } from './releases.ts';
 import type { MetricsSnapshot } from './snapshot.ts';
 import { workItems } from './work.ts';
@@ -21,7 +22,7 @@ export interface MetricsReport {
   /** Oldest first, ending with the current period. */
   periods: Period[];
   developer: DeveloperMetrics & { bugs: DeveloperBugs };
-  productOwner: { bugTrend: BugTrendEntry[]; releaseBurndown: ReleaseBurndown };
+  productOwner: ProductOwnerMetrics & { bugTrend: BugTrendEntry[]; releaseBurndown: ReleaseBurndown };
   businessAnalyst: BusinessAnalystMetrics;
   warnings: MetricsWarning[];
   unavailable: UnavailableMetric[];
@@ -30,8 +31,6 @@ export interface MetricsReport {
 /** Metrics of sections still to come that need the Taiga history of each item; each moves into its section. */
 const NEED_HISTORY = [
   'developer.bugs.reopenRate',
-  'productOwner.planned.sprintStart',
-  'productOwner.scopeChange',
   'productOwner.bugTrend.reopened',
 ];
 
@@ -53,6 +52,7 @@ export function computeMetrics(snapshot: MetricsSnapshot, local: MetricsLocal, n
   const developer = developerMetrics(context);
   const bugs = bugMetrics(context);
   const burndown = releaseBurndown(context);
+  const productOwner = productOwnerMetrics(context, developer, bugs.bugTrend);
   for (const metric of NEED_HISTORY) context.notes.unavailable.push({ metric, reason: 'history', message: HISTORY_UNAVAILABLE });
   const businessAnalyst = businessAnalystMetrics(context);
   const { id, slug, name } = snapshot.project;
@@ -63,7 +63,7 @@ export function computeMetrics(snapshot: MetricsSnapshot, local: MetricsLocal, n
     cadence,
     periods: context.periods,
     developer: { ...developer, bugs: bugs.developer },
-    productOwner: { bugTrend: bugs.bugTrend, releaseBurndown: burndown },
+    productOwner: { ...productOwner, bugTrend: bugs.bugTrend, releaseBurndown: burndown },
     businessAnalyst,
     warnings: context.notes.warnings,
     unavailable: context.notes.unavailable,

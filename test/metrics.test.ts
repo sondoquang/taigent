@@ -155,9 +155,9 @@ test('metrics of a scrum project: periods are the started sprints, phase 2 metri
     report.unavailable.map(({ metric, reason }) => [metric, reason]),
     [
       ['developer.cycleTime', 'history'],
-      ['developer.bugs.reopenRate', 'history'],
       ['productOwner.planned.sprintStart', 'history'],
       ['productOwner.scopeChange', 'history'],
+      ['developer.bugs.reopenRate', 'history'],
       ['productOwner.bugTrend.reopened', 'history'],
       ['businessAnalyst.requirementChange', 'history'],
     ],
