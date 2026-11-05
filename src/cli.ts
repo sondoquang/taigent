@@ -19,6 +19,7 @@ import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, st
 import { serveMcp, startProxy } from './mcp.ts';
 import { readBacklogData } from './metrics/backlog.ts';
 import { computeMetrics } from './metrics/compute.ts';
+import { readReleases } from './metrics/releases.ts';
 import { ProjectNotFoundError, readSnapshot } from './metrics/snapshot.ts';
 import { formatMetricsText } from './metrics/text.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
@@ -53,7 +54,8 @@ Commands:
   report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
             stories in no sprint (read-only)
   metrics   Dashboard metrics of --project for every Role, from what Taiga holds now: per period (sprint, or week on
-            a kanban project) throughput, lead time, workload, blocked and overdue work (read-only)
+            a kanban project) throughput, lead time, workload, blocked and overdue work; release burndown with the
+            releases of project.yaml (read-only)
             Business Analyst: stories by status, and from backlog.yaml and review.yaml complete acceptance
             criteria, requirements coverage, items awaiting review or pending clarification
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
@@ -640,9 +642,11 @@ async function runReport(run: Run): Promise<number> {
 async function runMetrics(run: Run): Promise<number> {
   const { options, env, cwd } = run;
   const slug = options.project!;
+  const { dir } = projectLayout(slug, env, cwd);
+  const releases = await readReleases(dir, slug);
   const snapshot = await readSnapshot(await connectTaiga(run), slug);
-  const backlog = await readBacklogData(projectLayout(slug, env, cwd).dir, slug);
-  const report = computeMetrics(snapshot, { backlog }, new Date());
+  const backlog = await readBacklogData(dir, slug);
+  const report = computeMetrics(snapshot, { releases, backlog }, new Date());
   emit(run, report, () => formatMetricsText(report));
   return ExitCode.Ok;
 }

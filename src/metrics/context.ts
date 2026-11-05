@@ -1,17 +1,19 @@
 // What every section of `taigent metrics` (developer, …) computes from, and where it reports what it could not
 // compute: one `MetricsContext` per run, built by compute.ts.
 
+import type { ReleaseSpec } from '../manifest/project.ts';
 import type { BacklogData } from './backlog.ts';
 import type { Cadence, Period } from './periods.ts';
 import type { MetricsSnapshot } from './snapshot.ts';
 import type { WorkItem } from './work.ts';
 
 /**
- * Something the reader should know about the figures: why sprint metrics are missing (`kanban`), why the backlog
- * manifest's metrics are (`backlog-missing`, `backlog-invalid`).
+ * Something the reader should know about the figures: why sprint metrics are missing (`kanban`), a release tag
+ * not declared in project.yaml, a declared release without stories, a story with two release tags or more, or why the
+ * backlog manifest's metrics are missing (`backlog-missing`, `backlog-invalid`).
  */
 export interface MetricsWarning {
-  code: 'kanban' | 'backlog-missing' | 'backlog-invalid';
+  code: 'kanban' | 'release-undeclared' | 'release-empty' | 'release-multiple' | 'backlog-missing' | 'backlog-invalid';
   message: string;
 }
 
@@ -28,8 +30,11 @@ export interface UnavailableMetric {
 
 export const HISTORY_UNAVAILABLE = 'needs the Taiga history of each item, which metrics does not read yet';
 
-/** What the run read from the project's manifest directory, besides Taiga. */
+/** What metrics reads from the repository rather than Taiga. */
 export interface MetricsLocal {
+  /** The releases of project.yaml (ADR 0005); none when the project has no project.yaml. */
+  releases: ReleaseSpec[];
+  /** The preview of the backlog manifest and review.yaml (backlog.ts), or why there is none. */
   backlog: BacklogData;
 }
 
