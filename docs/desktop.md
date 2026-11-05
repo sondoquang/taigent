@@ -212,9 +212,12 @@ kèm lý do.
 - **Sprint hiện tại**: point, story và task xong trên tổng, số ngày đã qua, và biểu đồ đường lý tưởng (giảm đều từ
   tổng point về 0) kèm số point còn lại hôm nay;
 - **Velocity**: point đã đóng của tối đa 6 sprint đã đóng gần nhất;
-- **Planned vs completed**: point planned và point đã đóng của từng sprint. Nhãn ghi theo `basis` của CLI: khi là
-  `current`, planned là point *hiện tại* của sprint, chưa phải point đã cam kết lúc sprint bắt đầu; khi là
-  `sprint-start`, planned là point của các story nằm trong sprint vào ngày bắt đầu;
+- **Planned vs completed**: point planned và point đã đóng của từng sprint. Planned (`basis: "sprint-start"`) là
+  point của các story nằm trong sprint vào cuối ngày sprint bắt đầu, dựng lại từ history đổi sprint của từng story;
+  nhãn biểu đồ ghi rõ điều đó;
+- **Scope change**: bảng theo sprint, cột *Thêm vào* và *Rút ra*: số story và tổng point được thêm vào hoặc rút ra
+  khỏi sprint sau ngày bắt đầu, tới ngày cuối của sprint, kèm từng story (ref, tên, point hiện tại, ngày). Story bị dời
+  sang sprint khác sau khi sprint đã kết thúc không tính;
 - **Release burndown**: mỗi release (story mang đúng một tag `release:<version>`, ngày đích khai báo ở `releases` của
   `project.yaml`, ADR 0005) có số story đóng, point còn lại và biểu đồ point còn lại theo ngày cùng đường lý tưởng tới
   ngày đích. Ô cảnh báo liệt kê tag chưa khai báo trong `project.yaml` (vẽ không có đường lý tưởng), release đã khai
@@ -227,9 +230,9 @@ kèm lý do.
   đang mở của từng epic, cộng một dòng cho story không thuộc epic nào. Story xong là story Taiga đã đóng; task xong là
   task có status đã đóng, cùng nghĩa với báo cáo của skill `taiga-status-report`.
 
-Project kanban (module Backlog tắt) không có tiến độ sprint, velocity và planned vs completed: một ghi chú nói lý do,
-các xu hướng tính theo tuần. Chỉ số cần history (planned lúc sprint bắt đầu, scope change, bug reopen trong bug trend)
-hiện ô **Chưa có** kèm lý do khi `taigent metrics` chưa tính được.
+Project kanban (module Backlog tắt) không có tiến độ sprint, velocity, planned vs completed và scope change: một ghi
+chú nói lý do, các xu hướng tính theo tuần. Chỉ số cần history mà `taigent metrics` chưa tính được (bug reopen trong
+bug trend) hiện ô **Chưa có** kèm lý do.
 
 **Business Analyst** (từ phần `businessAnalyst` của `taigent metrics`):
 
@@ -719,7 +722,8 @@ hàng workload và item của người dùng mà không chạy lại lệnh; men
 Business Analyst (xem bên dưới) và lưu lựa chọn. Ở dashboard Product Owner (`scripts/smoke-dashboard-po.mjs`), script
 xếp các story giả vào hai sprint, gắn tag release, thêm một epic và tạm khai báo hai release trong `project.yaml` của
 thư mục tạm (trả lại sau), đọc lại rồi kiểm tra: bốn tín hiệu sức khoẻ có màu và lý do tiếng Việt; tiến độ sprint hiện
-tại, velocity, planned vs completed có nhãn theo `basis`; burndown của release đã khai báo có đường lý tưởng, tag chưa
+tại, velocity, planned vs completed có nhãn theo `basis` (lúc sprint bắt đầu); scope change của từng sprint (story
+thêm vào sau ngày bắt đầu, và một story rút ra theo history đổi sprint); burndown của release đã khai báo có đường lý tưởng, tag chưa
 khai báo thì không, kèm đủ ba cảnh báo release; bug trend; bảng theo sprint (cả story bị block), theo epic và story
 ngoài sprint. Tắt module Backlog trên Taiga giả thì các widget sprint biến mất và có ghi chú lý do. Settings hiện vai
 trò đang chọn và đổi lại được; *Làm mới* thấy story vừa đóng trên

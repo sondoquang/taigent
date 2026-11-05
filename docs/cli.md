@@ -671,8 +671,15 @@ Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`
   the ideal line, linear from all of them on the first day to 0 on the last (2 decimals).
 - `velocity`: the points closed (`closed_points`) in each of the last 6 closed sprints, oldest first, with the sprint's
   `sprint` id (`sprint:<id>`, as in `periods`), `name`, `start` and `finish`.
-- `planned`: per sprint of `periods`, the points **planned** and **completed**, with `basis: "current"`: planned is the
-  sprint's points now (`total_points`), not the points committed when it started, which needs the history.
+- `planned`: per sprint of `periods`, the points **planned** and **completed**, with `basis: "sprint-start"`: planned
+  is the points of the stories in the sprint at the end of its first day (local time), rebuilt from the milestone
+  changes of each story's history (a story created right in a sprint counts from the day it was created; one without
+  a sprint change has been in its sprint since then); completed is the sprint's closed points now (`closed_points`).
+  Points are each story's points now: the history of points is not read.
+- `scopeChange`: per sprint of `periods`, the **Scope change**: the stories `added` to it and `removed` from it after
+  its first day, up to its last (a move after the sprint finished, such as carrying a story over, is not one), each
+  with `id`, `ref`, `subject`, `points` (now; null when not estimated) and the local `day` of the move, by day then
+  ref, and the sum of their `points`. A story added and taken out again is listed on both sides.
 - `health`: four signals, each with a `level` (`green`, `yellow`, `red`) and a `reason` with the figures; the
   thresholds are fixed:
   - `sprintPace`: how far the current sprint's points left stand above its ideal line today, in points
@@ -699,7 +706,7 @@ Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`
   release). `multiTagged` lists the stories carrying two release tags or more (`id`, `ref`, `subject`, `releases`),
   left out of every burndown.
 
-A kanban project has no `currentSprint`, `velocity`, `planned` or `health.sprintPace`, and its `report.sprints` is
+A kanban project has no `currentSprint`, `velocity`, `planned`, `scopeChange` or `health.sprintPace`, and its `report.sprints` is
 empty (its sprints are not read).
 
 `businessAnalyst` holds:
@@ -727,9 +734,9 @@ invalid, likewise with `reason: "backlog-invalid"` (and that warning); the messa
 run `taigent validate --project <slug>`. The command still exits 0.
 
 `unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
-Taiga history of each item and are not computed from it yet (`reason: "history"`: bug reopen rate, planned points at
-sprint start and scope change (both left out on a kanban project), the reopened part of the bug trend, requirement
-change), and those that need the backlog manifest (`backlog-missing`, `backlog-invalid`). `warnings` holds
+Taiga history of each item and are not computed from it yet (`reason: "history"`: bug reopen rate, the reopened part
+of the bug trend, requirement change), and those that need the backlog manifest (`backlog-missing`,
+`backlog-invalid`). `warnings` holds
 the `kanban` warning, the release warnings: `release-undeclared` (a `release:` tag `project.yaml` does not declare;
 drawn without an ideal line), `release-empty` (a declared release no story carries) and `release-multiple` (one per
 story with two release tags or more), and the `backlog-missing` and `backlog-invalid` warnings. `--json` prints:
@@ -797,12 +804,18 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
     },
     "velocity": [{ "sprint": "sprint:30", "name": "Sprint 1", "start": "2026-10-15", "finish": "2026-10-28", "points": 13 }],
     "planned": {
-      "basis": "current",
+      "basis": "sprint-start",
       "sprints": [
         { "period": "sprint:30", "planned": 15, "completed": 13 },
-        { "period": "sprint:31", "planned": 21, "completed": 5 }
+        { "period": "sprint:31", "planned": 18, "completed": 5 }
       ]
     },
+    "scopeChange": [
+      { "period": "sprint:30", "added": { "points": 0, "stories": [] }, "removed": { "points": 0, "stories": [] } },
+      { "period": "sprint:31",
+        "added": { "points": 3, "stories": [{ "id": 812, "ref": 14, "subject": "Export CSV", "points": 3, "day": "2026-11-02" }] },
+        "removed": { "points": 0, "stories": [] } }
+    ],
     "health": {
       "sprintPace": { "level": "red", "sprint": "sprint:31", "behindPoints": 6.31, "behindPercent": 30,
         "reason": "Sprint 2 is 6.31 points (30%) behind the ideal line: 16 of 21 points left on day 7 of 13, ideally 9.69" },
@@ -871,16 +884,17 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
     { "code": "release-multiple", "message": "user story #9 Export carries release:v1-2-0, release:v2-0-0: …" }
   ],
   "unavailable": [
-    { "metric": "productOwner.planned.sprintStart", "reason": "history",
+    { "metric": "developer.bugs.reopenRate", "reason": "history",
       "message": "needs the Taiga history of each item, which metrics reads but does not compute this metric from yet" },
-    { "metric": "developer.bugs.reopenRate", "reason": "history", "message": "…" }
+    { "metric": "productOwner.bugTrend.reopened", "reason": "history", "message": "…" }
   ]
 }
 ```
 
 Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`; lead time, then cycle
 time), the workload, the blocked and overdue items, the bug resolution per period, the product owner figures (current
-sprint, velocity, completed/planned points, health, then `report`'s tables as `report` prints them), the bug trend,
+sprint, velocity, completed/planned points, scope change per sprint with the stories added and removed, health, then
+`report`'s tables as `report` prints them), the bug trend,
 one line per release, the Business Analyst's figures (stories by status, the stories with incomplete acceptance
 criteria and why, the uncovered epics, the items awaiting review and pending clarification), the warnings and the
 metrics not available yet.
@@ -1227,7 +1241,7 @@ skill checks all of it and names each fix.
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
-| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug, cacheDir?)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2), with `history`: each story's, task's and issue's `TaigaHistoryEntry[]` (status, sprint and description changes, oldest first) read by `readHistories` (`history.ts`: `client.listHistory(type, id)`, 8 at a time, and the `--cache-dir` file keyed by API URL, project, type and id, hit while `modified_date` is unchanged); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); `readBacklogData(dir, slug)` → `BacklogData` (`backlog.ts`: the `buildPreview` of the manifests, or why there is none: `missing`, `invalid` with the issues); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, health and `report`'s tables, `business-analyst.ts` for `businessAnalyst`); periods (`periods.ts`), work items closed by status flag, with the day they first entered In progress (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
+| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug, cacheDir?)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2), with `history`: each story's, task's and issue's `TaigaHistoryEntry[]` (status, sprint and description changes, oldest first) read by `readHistories` (`history.ts`: `client.listHistory(type, id)`, 8 at a time, and the `--cache-dir` file keyed by API URL, project, type and id, hit while `modified_date` is unchanged); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); `readBacklogData(dir, slug)` → `BacklogData` (`backlog.ts`: the `buildPreview` of the manifests, or why there is none: `missing`, `invalid` with the issues); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, scope change (`sprint-scope.ts`: each story's sprint over time from its sprint changes), health and `report`'s tables, `business-analyst.ts` for `businessAnalyst`); periods (`periods.ts`), work items closed by status flag, with the day they first entered In progress (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
 | Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify` and `metrics` |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
