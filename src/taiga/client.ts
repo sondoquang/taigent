@@ -413,6 +413,23 @@ export interface TaigaProjectTask {
   modifiedAt: string | null;
 }
 
+/** An issue of a project as `metrics` reads it (`GET /issues?project=`). */
+export interface TaigaProjectIssue {
+  id: number;
+  ref: number;
+  subject: string;
+  /** Its type's id (null when none is set), its status's id, and the status's name and closed flag as the issue embeds them. */
+  typeId: number | null;
+  statusId: number | null;
+  status: string;
+  isClosed: boolean;
+  assignedTo: number | null;
+  /** ISO 8601 instants: created, closed (`finished_date`; null while open) and last modified. */
+  createdAt: string | null;
+  closedAt: string | null;
+  modifiedAt: string | null;
+}
+
 /** A sprint (`GET /milestones?project=`): its days, whether it is closed, and its stories' points. */
 export interface TaigaMilestone {
   id: number;
@@ -511,6 +528,24 @@ function parseProjectTask(raw: unknown): TaigaProjectTask {
     milestone: typeof r.milestone === 'number' ? r.milestone : null,
     assignedTo: typeof r.assigned_to === 'number' ? r.assigned_to : null,
     dueDate: typeof r.due_date === 'string' ? r.due_date : null,
+    createdAt: typeof r.created_date === 'string' ? r.created_date : null,
+    closedAt: typeof r.finished_date === 'string' ? r.finished_date : null,
+    modifiedAt: typeof r.modified_date === 'string' ? r.modified_date : null,
+  };
+}
+
+function parseProjectIssue(raw: unknown): TaigaProjectIssue {
+  const what = 'issue';
+  const r = record(raw, what);
+  return {
+    id: field(r, 'id', 'number', what),
+    ref: field(r, 'ref', 'number', what),
+    subject: field(r, 'subject', 'string', what),
+    typeId: typeof r.type === 'number' ? r.type : null,
+    statusId: typeof r.status === 'number' ? r.status : null,
+    status: field(record(r.status_extra_info, `${what}.status_extra_info`), 'name', 'string', `${what} status`),
+    isClosed: field(r, 'is_closed', 'boolean', what),
+    assignedTo: typeof r.assigned_to === 'number' ? r.assigned_to : null,
     createdAt: typeof r.created_date === 'string' ? r.created_date : null,
     closedAt: typeof r.finished_date === 'string' ? r.finished_date : null,
     modifiedAt: typeof r.modified_date === 'string' ? r.modified_date : null,
@@ -887,6 +922,12 @@ export class TaigaClient {
   async listProjectTasks(projectId: number): Promise<TaigaProjectTask[]> {
     const { collection, what } = TAIGA_ITEM.task;
     return parseList(await this.#request('GET', `/${collection}`, { query: { project: projectId } }), what, parseProjectTask);
+  }
+
+  /** Every issue of a project, open and closed, with its type, status, assignee and dates. */
+  async listProjectIssues(projectId: number): Promise<TaigaProjectIssue[]> {
+    const { collection, what } = TAIGA_ITEM.issue;
+    return parseList(await this.#request('GET', `/${collection}`, { query: { project: projectId } }), what, parseProjectIssue);
   }
 
   /** Every sprint of a project, open and closed, in Taiga's order. */

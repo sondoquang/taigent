@@ -604,9 +604,10 @@ login or cannot be reached).
 `taigent metrics --project <slug> [--json]` computes the metrics of the dashboards (`GLOSSARY.md`, section Dashboards)
 from what Taiga holds now about one project. It only reads: the project (`GET /projects/by_slug`, whose Backlog module
 flag decides the cadence), the user it logs in as (`GET /users/me`), the sprints (`GET /milestones?project=<id>`, not
-read for a kanban project), the user story and task statuses (`GET /userstory-statuses?project=<id>`,
-`GET /task-statuses?project=<id>`), and every user story and task (`GET /userstories?project=<id>`,
-`GET /tasks?project=<id>`), each list read with pagination disabled so no page is missed. Locally it reads only the
+read for a kanban project), the user story, task and issue statuses (`GET /userstory-statuses?project=<id>`,
+`GET /task-statuses?project=<id>`, `GET /issue-statuses?project=<id>`), the issue types (`GET /issue-types?project=<id>`),
+and every user story, task and issue (`GET /userstories?project=<id>`, `GET /tasks?project=<id>`,
+`GET /issues?project=<id>`), each list read with pagination disabled so no page is missed. Locally it reads only the
 `releases` of `taiga/<slug>/project.yaml` (none when the file does not exist). The metrics are computed by a pure module
 from that snapshot and the local day (TZ); nothing is written anywhere.
 
@@ -619,6 +620,10 @@ from that snapshot and the local day (TZ); nothing is written anywhere.
   `finish_date` or the task's `finished_date`, in local time.
 - User stories and tasks are always counted apart. A story is assigned to each of its `assigned_users` (and
   `assigned_to`), a task to its `assigned_to`. `me` is the user the CLI logs in as, as in [Tickets](#tickets).
+- A **Bug** is an issue whose type is named `Bug`; a story tagged `type:bug` is not one. A bug is **resolved** when its
+  status is named `Ready for test` or `Closed`, and **rejected** when it is named `Rejected`: the only place the
+  metrics go by a status's name, because the glossary defines a resolved bug by it. The day it was resolved or rejected
+  is its `finished_date` (set when it closes), in local time; open at a day means not closed by the status flag then.
 
 `developer` holds, for the whole team (`all`) and for `me` (`mine`):
 
@@ -633,17 +638,27 @@ from that snapshot and the local day (TZ); nothing is written anywhere.
   day is before today, compared by calendar day like the **Due status** (due today is not overdue), earliest first.
   Each item carries its `assignees` (user ids; `people` names the project's members), so a client narrows the lists
   to `me` itself.
+- `bugs.periods`: per period, the bugs **resolved** in it and the bugs **rejected** in it (counted apart; a rejected
+  bug has no resolution time), and the median **Resolution time** (`resolutionTime.medianDays`, from the local day a
+  bug was created to the day it was resolved) over the resolved ones created on a known day (`count`). `mine` counts
+  the bugs assigned to `me`.
 
-`productOwner.releaseBurndown` is the **Release burndown** ([conventions §4.1](taiga/conventions.md#41-releases),
-ADR 0005). A release is the user stories carrying exactly one tag `release:<version>` on Taiga; its target day comes
-from `releases` in `project.yaml`. `releases` lists the declared releases in the manifest's order, then the undeclared
-tags by version; each has its `version`, `tag`, `declared`, `target` (null when undeclared), `start` (the local day its
-earliest story was created, null without stories), `stories` (`total`, `closed`), `points` (`total`, `closed`,
-`remaining`; unestimated stories count 0) and `days`: every day from `start` to today, or to the target when later,
-with `remaining` (points of its current stories not yet closed at the end of that day, by `finish_date`; null after
-today) and `ideal` (linear from `points.total` on `start` to 0 on the target day, 0 after it; null for an undeclared
-release). `multiTagged` lists the stories carrying two release tags or more (`id`, `ref`, `subject`, `releases`), left
-out of every burndown.
+`productOwner` holds:
+
+- `bugTrend`: per period, the bugs **created** in it, **resolved** in it and **rejected** in it, and the bugs **open**
+  at its last day: created by then and not closed by then, from the days created and closed, for old periods too.
+  Without the history only a bug's last close is known: a reopened bug counts as open from its creation until it
+  closes again (the reopened part of the trend needs the history).
+- `releaseBurndown`: the **Release burndown** ([conventions §4.1](taiga/conventions.md#41-releases), ADR 0005). A
+  release is the user stories carrying exactly one tag `release:<version>` on Taiga; its target day comes from
+  `releases` in `project.yaml`. `releases` lists the declared releases in the manifest's order, then the undeclared
+  tags by version; each has its `version`, `tag`, `declared`, `target` (null when undeclared), `start` (the local day
+  its earliest story was created, null without stories), `stories` (`total`, `closed`), `points` (`total`, `closed`,
+  `remaining`; unestimated stories count 0) and `days`: every day from `start` to today, or to the target when later,
+  with `remaining` (points of its current stories not yet closed at the end of that day, by `finish_date`; null after
+  today) and `ideal` (linear from `points.total` on `start` to 0 on the target day, 0 after it; null for an undeclared
+  release). `multiTagged` lists the stories carrying two release tags or more (`id`, `ref`, `subject`, `releases`),
+  left out of every burndown.
 
 `unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
 Taiga history of each item (`reason: "history"`: cycle time, bug reopen rate, planned points at sprint start, scope
@@ -687,9 +702,21 @@ declare; drawn without an ideal line), `release-empty` (a declared release no st
       { "type": "task", "id": 951, "ref": 14, "subject": "Migrate", "status": "In progress", "assignees": [],
         "dueDate": "2026-11-02", "blocked": false, "points": null },
       { "type": "story", "id": 812, "ref": 6, "subject": "SSO", … }
-    ]
+    ],
+    "bugs": {
+      "periods": [
+        { "period": "sprint:30", "all": { … }, "mine": { … } },
+        { "period": "sprint:31",
+          "all": { "resolved": 3, "rejected": 1, "resolutionTime": { "medianDays": 4, "count": 3 } },
+          "mine": { "resolved": 1, "rejected": 0, "resolutionTime": { "medianDays": 2, "count": 1 } } }
+      ]
+    }
   },
   "productOwner": {
+    "bugTrend": [
+      { "period": "sprint:30", "created": 5, "resolved": 2, "rejected": 0, "open": 7 },
+      { "period": "sprint:31", "created": 2, "resolved": 3, "rejected": 1, "open": 5 }
+    ],
     "releaseBurndown": {
       "releases": [
         { "version": "v1-2-0", "tag": "release:v1-2-0", "declared": true, "target": "2026-11-07",
@@ -722,7 +749,8 @@ declare; drawn without an ideal line), `release-empty` (a declared release no st
 ```
 
 Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`), the workload, the blocked
-and overdue items, one line per release, the warnings and the metrics not available yet.
+and overdue items, the bug resolution per period, the bug trend, one line per release, the warnings and the metrics
+not available yet.
 
 Read-only, so it runs under `TAIGENT_READ_ONLY=1`. Errors: exit 2 when not logged in (kind `login`), without
 `--project` (kind `usage`), or when the project is not on Taiga or not visible to the user (kind `project`; unlike
