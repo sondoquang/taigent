@@ -15,6 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu.tsx';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty.tsx';
 import { Spinner } from '@/components/ui/spinner.tsx';
+import { BusinessAnalystDashboard } from '@/screens/dashboard/business-analyst-dashboard.tsx';
 import { DeveloperDashboard } from '@/screens/dashboard/developer-dashboard.tsx';
 import { api, ROLE_LABEL, useApp } from '@/store.ts';
 
@@ -113,12 +114,7 @@ function RoleDashboard({ role, report }: { role: Role; report: MetricsReport }) 
       </Placeholder>
     );
   }
-  return (
-    <Placeholder id="dashboard-business-analyst" ticket={72}>
-      Ticket #72 lấp đầy khung này: phân bố status của story (kèm Chưa apply), độ phủ yêu cầu, story chưa đủ acceptance
-      criteria, mục chờ review và mục chờ làm rõ.
-    </Placeholder>
-  );
+  return <BusinessAnalystDashboard report={report} />;
 }
 
 export function DashboardScreen() {
