@@ -1,10 +1,10 @@
-// The `developer` section of `taigent metrics` (GLOSSARY.md, Dashboards): throughput per period, lead time,
-// workload, blocked and overdue work, from the snapshot alone. User stories and tasks are always counted apart.
+// The `developer` section of `taigent metrics` (GLOSSARY.md, Dashboards): throughput per period, lead time and cycle
+// time, workload, blocked and overdue work. User stories and tasks are always counted apart.
 // Figures come for the whole team (`all`) and for the user the CLI logs in as (`mine`); lists carry each item's
 // assignees, so a client can narrow them to `me` ("Chỉ tôi") itself.
 
 import { daysBetween } from '../days.ts';
-import { HISTORY_UNAVAILABLE, type MetricsContext } from './context.ts';
+import type { MetricsContext } from './context.ts';
 import { inPeriod, type Period } from './periods.ts';
 import type { Person } from './snapshot.ts';
 import { median, type WorkItem, type WorkType } from './work.ts';
@@ -21,10 +21,11 @@ export interface Throughput {
   tasks: { assigned: number; completed: number };
 }
 
-export interface LeadTime {
-  /** Median days from the day an item was created to the day it was closed; null without samples. */
+/** The median of a time in days (lead time, cycle time) over the items closed in the report's periods. */
+export interface MedianDays {
+  /** Null without samples. */
   medianDays: number | null;
-  /** Items closed in the periods, created on a known day. */
+  /** Items closed in the periods with a known start (created on a known day, or started for cycle time). */
   count: number;
 }
 
@@ -59,8 +60,10 @@ export interface DeveloperMetrics {
   people: Person[];
   /** One per period, in the order of the report's `periods`. */
   periods: ({ period: string } & Scoped<Throughput>)[];
-  /** Over the items closed in the report's periods. */
-  leadTime: Scoped<{ stories: LeadTime; tasks: LeadTime }>;
+  /** Lead time: from the day an item was created to the day it was closed. */
+  leadTime: Scoped<{ stories: MedianDays; tasks: MedianDays }>;
+  /** Cycle time: from the day an item first entered In progress (its history) to the day it was closed. */
+  cycleTime: Scoped<{ stories: MedianDays; tasks: MedianDays }>;
   /** One row per assignee with open work, by username, then the unassigned row. */
   workload: WorkloadRow[];
   /** Open blocked items: stories, then tasks, by ref. */
@@ -87,11 +90,12 @@ function throughput(items: WorkItem[], period: Period): Throughput {
   return { stories: of('story'), tasks: of('task') };
 }
 
-function leadTimes(items: WorkItem[], periods: Period[]): { stories: LeadTime; tasks: LeadTime } {
-  const of = (type: WorkType): LeadTime => {
+/** The median days from `start` (an item's day, null when unknown) to the close, of the items closed in `periods`. */
+function medianTimes(items: WorkItem[], periods: Period[], start: (item: WorkItem) => string | null): { stories: MedianDays; tasks: MedianDays } {
+  const of = (type: WorkType): MedianDays => {
     const days = items
-      .filter((item) => item.type === type && item.createdDay !== null && periods.some((period) => completedIn(item, period)))
-      .map((item) => daysBetween(item.createdDay!, item.closedDay!));
+      .filter((item) => item.type === type && start(item) !== null && periods.some((period) => completedIn(item, period)))
+      .map((item) => daysBetween(start(item)!, item.closedDay!));
     return { medianDays: median(days), count: days.length };
   };
   return { stories: of('story'), tasks: of('task') };
@@ -125,16 +129,16 @@ function developerItem(item: WorkItem): DeveloperItem {
 const TYPE_ORDER: Record<WorkType, number> = { story: 0, task: 1 };
 const byTypeAndRef = (a: WorkItem, b: WorkItem) => TYPE_ORDER[a.type] - TYPE_ORDER[b.type] || a.ref - b.ref;
 
-export function developerMetrics({ snapshot, today, periods, work, notes }: MetricsContext): DeveloperMetrics {
+export function developerMetrics({ snapshot, today, periods, work }: MetricsContext): DeveloperMetrics {
   const { me } = snapshot;
   const mine = work.filter((item) => item.assignees.includes(me.id));
   const open = work.filter((item) => !item.closed);
-  notes.unavailable.push({ metric: 'developer.cycleTime', reason: 'history', message: HISTORY_UNAVAILABLE });
   return {
     me,
     people: snapshot.members,
     periods: periods.map((period) => ({ period: period.id, all: throughput(work, period), mine: throughput(mine, period) })),
-    leadTime: { all: leadTimes(work, periods), mine: leadTimes(mine, periods) },
+    leadTime: { all: medianTimes(work, periods, (item) => item.createdDay), mine: medianTimes(mine, periods, (item) => item.createdDay) },
+    cycleTime: { all: medianTimes(work, periods, (item) => item.startedDay), mine: medianTimes(mine, periods, (item) => item.startedDay) },
     workload: workload(open, new Map(snapshot.members.map((member) => [member.id, member.username]))),
     blocked: open.filter((item) => item.blocked).sort(byTypeAndRef).map(developerItem),
     overdue: open
@@ -148,7 +152,7 @@ function describeThroughput({ stories, tasks }: Throughput): string {
   return `stories ${stories.assigned} assigned, ${stories.completed} completed; tasks ${tasks.assigned} assigned, ${tasks.completed} completed`;
 }
 
-function describeLeadTime({ medianDays, count }: LeadTime): string {
+function describeTime({ medianDays, count }: MedianDays): string {
   return medianDays === null ? 'none closed' : `${medianDays} days (${count} closed)`;
 }
 
@@ -168,9 +172,10 @@ export function formatDeveloperText(developer: DeveloperMetrics, periods: Period
     lines.push(`    mine: ${describeThroughput(entry.mine)}`);
   });
   if (developer.periods.length === 0) lines.push('  No period has started.');
-  const { all, mine } = developer.leadTime;
-  lines.push(`  Lead time (median): stories ${describeLeadTime(all.stories)}, tasks ${describeLeadTime(all.tasks)}`);
-  lines.push(`    mine: stories ${describeLeadTime(mine.stories)}, tasks ${describeLeadTime(mine.tasks)}`);
+  for (const [label, time] of [['Lead time', developer.leadTime], ['Cycle time', developer.cycleTime]] as const) {
+    lines.push(`  ${label} (median): stories ${describeTime(time.all.stories)}, tasks ${describeTime(time.all.tasks)}`);
+    lines.push(`    mine: stories ${describeTime(time.mine.stories)}, tasks ${describeTime(time.mine.tasks)}`);
+  }
   lines.push('  Workload (open):');
   for (const row of developer.workload) {
     const who = row.assignee === null ? 'Unassigned' : (row.username ?? `#${row.assignee}`);

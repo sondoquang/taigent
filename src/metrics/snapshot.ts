@@ -1,8 +1,10 @@
 // What `taigent metrics` reads from Taiga for one project: the snapshot the pure metrics module (compute.ts)
-// computes from. Read-only; the client disables Taiga's pagination, so every list is complete.
+// computes from, with the history of each story, task and issue (history.ts, cached in `cacheDir` when given).
+// Read-only on Taiga; the client disables Taiga's pagination, so every list is complete.
 
 import { readReportExtras, type ReportSource } from '../report.ts';
 import type { TaigaClient, TaigaIssueValue, TaigaMilestone, TaigaProjectIssue, TaigaProjectTask, TaigaStatus, TaigaStory } from '../taiga/client.ts';
+import { type ItemHistories, readHistories } from './history.ts';
 
 /** The project is not on Taiga or not visible to the user. Maps to ExitCode.Usage, kind `project`. */
 export class ProjectNotFoundError extends Error {}
@@ -29,9 +31,11 @@ export interface MetricsSnapshot {
   issueTypes: TaigaIssueValue[];
   /** What `report`'s tables need besides the sprints and stories: sprint stats (in the order of `sprints`), epics. */
   report: Pick<ReportSource, 'stats' | 'epics' | 'epicStories'>;
+  /** The changes of each story, task and issue above, oldest first, by item id. */
+  history: ItemHistories;
 }
 
-export async function readSnapshot(client: TaigaClient, slug: string): Promise<MetricsSnapshot> {
+export async function readSnapshot(client: TaigaClient, slug: string, cacheDir?: string): Promise<MetricsSnapshot> {
   const project = await client.findProjectBySlug(slug);
   if (!project) throw new ProjectNotFoundError(`project "${slug}" not found on ${client.apiUrl} (or not visible to this user)`);
   const sprints = project.modules.is_backlog_activated;
@@ -46,7 +50,15 @@ export async function readSnapshot(client: TaigaClient, slug: string): Promise<M
     client.listProjectTasks(project.id),
     client.listProjectIssues(project.id),
   ]);
-  const report = await readReportExtras(client, project.id, milestones);
+  const historyItems = [
+    ...stories.map(({ id, modifiedAt }) => ({ type: 'story' as const, id, modifiedAt })),
+    ...tasks.map(({ id, modifiedAt }) => ({ type: 'task' as const, id, modifiedAt })),
+    ...issues.map(({ id, modifiedAt }) => ({ type: 'issue' as const, id, modifiedAt })),
+  ];
+  const [report, history] = await Promise.all([
+    readReportExtras(client, project.id, milestones),
+    readHistories(client, { id: project.id, slug: project.slug }, historyItems, cacheDir),
+  ]);
   return {
     project: { id: project.id, slug: project.slug, name: project.name, sprints },
     me: { id: me.id, username: me.username },
@@ -58,5 +70,6 @@ export async function readSnapshot(client: TaigaClient, slug: string): Promise<M
     issues,
     issueTypes,
     report,
+    history,
   };
 }

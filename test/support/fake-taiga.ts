@@ -280,6 +280,30 @@ export interface FakeComment {
   comment: string;
 }
 
+/** Items with a history on Taiga (`GET /history/{kind}/{id}`) that the fake models. */
+export type FakeHistoryKind = 'userstory' | 'task' | 'issue';
+
+/**
+ * A change in an item's history as taiga-back stores it (`history.HistoryEntry`, type 1 "change";
+ * taiga/projects/history/models.py): `diff` holds the raw value before and after of each changed field (ids for
+ * `status` and `milestone`), `values` the names of those ids (`{ status: { "<id>": "<name>" } }`), from which taiga-back
+ * renders `values_diff`. A comment is an entry too, usually with an empty `diff`.
+ */
+export interface FakeHistoryEntry {
+  id: string;
+  kind: FakeHistoryKind;
+  item: number;
+  user: number;
+  /** ISO 8601. */
+  created_at: string;
+  diff: Record<string, [unknown, unknown]>;
+  values: Record<string, Record<string, string>>;
+  comment: string;
+}
+
+/** An item with a history: a user story, task or issue. */
+export type FakeHistoryItem = FakeUserStory | FakeTask | FakeIssue;
+
 /** An Application (taiga-back `external_apps.Application`), created by an instance admin in Django admin. */
 export interface FakeApplication {
   id: string;
@@ -351,6 +375,8 @@ export interface FakeState {
   storyStatuses: FakeStoryStatus[];
   taskStatuses: FakeTaskStatus[];
   comments: FakeComment[];
+  /** Changes of items' histories, in the order they were added (seed them with `addHistory` and its helpers). */
+  history: FakeHistoryEntry[];
   templates: FakeTemplate[];
   roles: FakeRole[];
   customAttributes: FakeCustomAttribute[];
@@ -449,6 +475,18 @@ export interface FakeTaiga {
   addEpicRelatedUserStory(epic: number, userStory: number): FakeEpicRelatedUserStory;
   /** Edits an item like a Taiga user would: bumps `version` and records the fields for OCC checks. */
   editItem<T extends FakeItem>(item: T, changes: Partial<Omit<T, 'id' | 'ref' | 'version' | 'project'>>): void;
+  /**
+   * Records a change in the history of a user story, task or issue (`GET /history/{userstory|task|issue}/{id}`), made
+   * by the default user at `at`. The item's `modified_date` moves to `at` when that is later; nothing else changes:
+   * set the fields of the item's current state yourself.
+   */
+  addHistory(item: FakeHistoryItem, change: { at: string; diff?: FakeHistoryEntry['diff']; values?: FakeHistoryEntry['values']; comment?: string }): FakeHistoryEntry;
+  /** `addHistory` of a status change, by the names of statuses of the item's project (`from` null: none). */
+  addStatusChange(item: FakeHistoryItem, change: { at: string; from: string | null; to: string }): FakeHistoryEntry;
+  /** `addHistory` of a sprint change (`null`: in no sprint). */
+  addMilestoneChange(item: FakeHistoryItem, change: { at: string; from: FakeMilestone | null; to: FakeMilestone | null }): FakeHistoryEntry;
+  /** `addHistory` of a description edit. */
+  addDescriptionChange(item: FakeHistoryItem, change: { at: string; from: string; to: string }): FakeHistoryEntry;
   /** Run a callback before the next matching request(s) are handled. */
   onRequest(hook: RequestHook): void;
   close(): Promise<void>;
@@ -681,6 +719,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     attachments: [],
     applications: [],
     applicationTokens: [],
+    history: [],
   };
   const settings: FakeTaiga['settings'] = { projectSlugPrefix: false };
   const requests: RecordedRequest[] = [];
@@ -1385,6 +1424,116 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return link;
   }
 
+  function historyKind(item: FakeHistoryItem): FakeHistoryKind {
+    if (state.userStories.includes(item as FakeUserStory)) return 'userstory';
+    if (state.tasks.includes(item as FakeTask)) return 'task';
+    if (state.issues.includes(item as FakeIssue)) return 'issue';
+    throw new Error('fake taiga: addHistory takes a user story, task or issue of the fake');
+  }
+
+  function addHistory(item: FakeHistoryItem, change: { at: string; diff?: FakeHistoryEntry['diff']; values?: FakeHistoryEntry['values']; comment?: string }): FakeHistoryEntry {
+    const entry: FakeHistoryEntry = {
+      id: randomUUID(),
+      kind: historyKind(item),
+      item: item.id,
+      user: user.id,
+      created_at: change.at,
+      diff: change.diff ?? {},
+      values: change.values ?? {},
+      comment: change.comment ?? '',
+    };
+    state.history.push(entry);
+    if (Date.parse(change.at) > Date.parse(item.modified_date)) item.modified_date = change.at;
+    return entry;
+  }
+
+  function addStatusChange(item: FakeHistoryItem, change: { at: string; from: string | null; to: string }): FakeHistoryEntry {
+    const kind = historyKind(item);
+    const statuses: { id: number; project: number; name: string }[] =
+      kind === 'userstory' ? state.storyStatuses : kind === 'task' ? state.taskStatuses : state.issueStatuses;
+    const byName = (name: string | null) => {
+      if (name === null) return null;
+      const status = statuses.find((s) => s.project === item.project && s.name === name);
+      if (!status) throw new Error(`fake taiga: no ${kind} status "${name}" in project ${item.project}`);
+      return status;
+    };
+    const from = byName(change.from);
+    const to = byName(change.to)!;
+    const names = Object.fromEntries([from, to].filter((s) => s !== null).map((s) => [String(s.id), s.name]));
+    return addHistory(item, { at: change.at, diff: { status: [from?.id ?? null, to.id] }, values: { status: names } });
+  }
+
+  function addMilestoneChange(item: FakeHistoryItem, change: { at: string; from: FakeMilestone | null; to: FakeMilestone | null }): FakeHistoryEntry {
+    const names = Object.fromEntries([change.from, change.to].filter((m) => m !== null).map((m) => [String(m.id), m.name]));
+    return addHistory(item, { at: change.at, diff: { milestone: [change.from?.id ?? null, change.to?.id ?? null] }, values: { milestone: names } });
+  }
+
+  function addDescriptionChange(item: FakeHistoryItem, change: { at: string; from: string; to: string }): FakeHistoryEntry {
+    const html = (text: string) => (text === '' ? '' : `<p>${text}</p>`);
+    return addHistory(item, { at: change.at, diff: { description: [change.from, change.to], description_html: [html(change.from), html(change.to)] } });
+  }
+
+  /**
+   * `values_diff` as taiga-back renders it from `diff` and `values` (HistoryEntry.values_diff): an id field listed in
+   * `values` becomes its names, a description becomes `description_diff` (null, an HTML diff), other fields stay raw.
+   */
+  function historyValuesDiff(entry: FakeHistoryEntry): Json {
+    const result: Json = {};
+    for (const [key, [before, after]] of Object.entries(entry.diff)) {
+      if (['watchers', 'description_diff', 'content_diff', 'blocked_note_diff'].includes(key)) continue;
+      if (['description', 'content', 'blocked_note'].includes(key)) {
+        if (before !== after) result[`${key}_diff`] = [null, `<del>${String(before ?? '')}</del><ins>${String(after ?? '')}</ins>`];
+      } else if (entry.values[key]) {
+        result[key] = [before, after].map((id) => entry.values[key]![String(id)] ?? null);
+      } else {
+        result[key] = [before, after];
+      }
+    }
+    return result;
+  }
+
+  /** An entry as taiga-back's HistoryEntrySerializer renders it (taiga/projects/history/serializers.py). */
+  function historyJson(entry: FakeHistoryEntry): Json {
+    const author = state.users.find((u) => u.id === entry.user)!;
+    const model = { userstory: 'userstories.userstory', task: 'tasks.task', issue: 'issues.issue' }[entry.kind];
+    return {
+      id: entry.id,
+      user: { pk: author.id, username: author.username, name: author.username, photo: null, is_active: true, gravatar_id: '' },
+      created_at: entry.created_at,
+      type: 1,
+      key: `${model}:${entry.item}`,
+      diff: entry.diff,
+      snapshot: null,
+      values: entry.values,
+      values_diff: historyValuesDiff(entry),
+      comment: entry.comment,
+      comment_html: entry.comment === '' ? '' : `<p>${entry.comment}</p>`,
+      delete_comment_date: null,
+      delete_comment_user: null,
+      edit_comment_date: null,
+      is_hidden: false,
+      is_snapshot: false,
+    };
+  }
+
+  /**
+   * GET /history/{userstory|task|issue}/{id}: taiga-back's HistoryViewSet.retrieve (taiga/projects/history/api.py), the
+   * item's "change" entries (comments included), newest first; 404 when the item is not visible.
+   */
+  function routeHistory(req: IncomingMessage, method: string, path: string, query: URLSearchParams, userId: number): Reply | undefined {
+    const match = /^\/history\/(userstory|task|issue)\/(\d+)$/.exec(path);
+    if (method !== 'GET' || !match) return undefined;
+    const kind = match[1] as FakeHistoryKind;
+    const id = Number(match[2]);
+    const items: FakeHistoryItem[] = kind === 'userstory' ? state.userStories : kind === 'task' ? state.tasks : state.issues;
+    const item = items.find((candidate) => candidate.id === id);
+    if (!item || !visibleProject(item.project, userId)) throw notFound();
+    const entries = state.history
+      .filter((entry) => entry.kind === kind && entry.item === id)
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+    return paginate(req, query, entries.map(historyJson));
+  }
+
   /** Applies changes, records the fields that really changed and bumps the version, like a Taiga save. */
   function saveEdit(item: FakeItem | FakeWikiPage, changes: Json): void {
     const target = item as unknown as Json;
@@ -1892,6 +2041,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       routeStoriesAndTasks(req, method, path, query, body, userId) ??
       routeMilestones(req, method, path, query, userId) ??
       routeIssues(req, method, path, query, body, userId) ??
+      routeHistory(req, method, path, query, userId) ??
       routeApplicationTokens(req, method, path, query, body, userId);
     if (reply) return reply;
     throw notFound();
@@ -2080,6 +2230,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     addMilestone,
     addIssue,
     addEpicRelatedUserStory,
+    addHistory,
+    addStatusChange,
+    addMilestoneChange,
+    addDescriptionChange,
     editItem,
     editWikiPage,
     onRequest: (hook) => void hooks.push({ ...hook }),

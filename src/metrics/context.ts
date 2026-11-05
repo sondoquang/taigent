@@ -28,7 +28,7 @@ export interface UnavailableMetric {
   message: string;
 }
 
-export const HISTORY_UNAVAILABLE = 'needs the Taiga history of each item, which metrics does not read yet';
+export const HISTORY_UNAVAILABLE = 'needs the Taiga history of each item, which metrics reads but does not compute this metric from yet';
 
 /** What metrics reads from the repository rather than Taiga. */
 export interface MetricsLocal {

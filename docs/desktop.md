@@ -174,10 +174,12 @@ bao giờ ghi.
 - **Vai trò.** Lần đầu, Dashboard hiện ba lựa chọn ngay trong trang (không có hộp thoại, nên các mục khác vẫn dùng
   được khi chưa chọn). Đổi vai trò bằng menu **Vai trò: …** ở đầu Dashboard, hoặc ở Settings › **Vai trò trên
   Dashboard**. Vai trò lưu trong `settings.json` của ứng dụng (khoá `role`), giữ qua các lần mở.
-- **Số liệu.** Main process chạy `taigent metrics --project <slug> --json` (xem `docs/cli.md` §Metrics) trong repo
-  đang mở, nên `.env` của repo (`TAIGA_*`) được dùng như mọi lệnh đọc khác. Mỗi lần đọc xong, kết quả được lưu vào
-  `metrics-cache/latest-<slug>.json` trong thư mục dữ liệu của ứng dụng. Lần sau mở, Dashboard hiện ngay số liệu đã
-  lưu kèm thời điểm đọc (*Cập nhật lúc …*), trong khi lần đọc mới chạy ở nền.
+- **Số liệu.** Main process chạy `taigent metrics --project <slug> --cache-dir <userData>/metrics-cache --json` (xem
+  `docs/cli.md` §Metrics) trong repo đang mở, nên `.env` của repo (`TAIGA_*`) được dùng như mọi lệnh đọc khác. Mỗi
+  lần đọc xong, kết quả được lưu vào `metrics-cache/latest-<slug>.json` trong thư mục dữ liệu của ứng dụng. Lần sau
+  mở, Dashboard hiện ngay số liệu đã lưu kèm thời điểm đọc (*Cập nhật lúc …*), trong khi lần đọc mới chạy ở nền.
+  Cùng thư mục đó, CLI giữ history của từng item (`history-<slug>-<hash>.json`), nên các lần đọc sau chỉ đọc lại
+  history của item đã đổi trên Taiga.
 - **Khi nào đọc.** Lần đầu mục Dashboard hiện ra trong phiên, và mỗi lần đổi dự án (Dashboard đang ẩn thì đọc khi nó
   hiện ra). Nút **Làm mới** đọc lại.
 - **Lỗi.** Không đọc được (chưa đăng nhập, đăng nhập hết hạn hoặc bị từ chối, project không có trên Taiga hoặc bạn
@@ -188,7 +190,9 @@ bao giờ ghi.
 
 - **Kỳ hiện tại** (sprint đang chạy, hoặc tuần này với project kanban): số story và số task được giao và hoàn thành,
   đếm riêng;
-- **Thời gian xử lý**: lead time trung vị của story và của task (Ready for test chưa tính là đóng);
+- **Thời gian xử lý**: lead time và cycle time trung vị của story và của task. Cycle time tính từ lần đầu item vào
+  `In progress` (theo history trên Taiga) tới lúc đóng; Ready for test chưa tính là đóng. Số liệu lưu từ phiên bản
+  taigent cũ chưa có cycle time thì hai ô này chờ lần đọc sau;
 - **Xu hướng hoàn thành**: biểu đồ cột story và task đóng trong từng kỳ;
 - **Bug**: số bug resolved và số bug Rejected (đếm riêng) trong kỳ hiện tại, resolution time trung vị, và bảng theo
   từng kỳ;
@@ -197,8 +201,8 @@ bao giờ ghi.
 
 Công tắc **Chỉ tôi** thu mọi số liệu về việc được giao cho bạn (người dùng mà CLI đăng nhập): số của bạn, hàng
 workload của bạn, các item block và quá hạn của bạn. Công tắc lọc ngay trong ứng dụng, không chạy lại lệnh. Chỉ số mà
-`taigent metrics` chưa tính được (danh sách `unavailable`, ví dụ cycle time và reopen rate cần history của Taiga) hiện
-ô **Chưa có** kèm lý do.
+`taigent metrics` chưa tính được (danh sách `unavailable`, ví dụ reopen rate cần history của Taiga) hiện ô **Chưa có**
+kèm lý do.
 
 **Product Owner** (từ phần `productOwner` của `taigent metrics`):
 
@@ -706,10 +710,11 @@ và HEAD, trạng thái cùng nội dung working tree không đổi. Ảnh chụ
 Phần **Dashboard** (`scripts/smoke-dashboard.mjs`) chạy ngay sau khi mở repo, khi Dashboard đang hiện. Lần đọc đầu
 (bằng đăng nhập của bạn, hoặc lỗi nếu chưa đăng nhập) chạy xong trước, rồi script trỏ CLI của ứng dụng vào FakeTaiga
 (như phần Ticket của tôi) với một project cùng slug với fixture: hai sprint, story và task của người dùng giả và một
-đồng đội, hai bug. Script kiểm tra: *Làm mới* đọc số liệu (Taiga giả chỉ nhận request đọc) và kết quả được lưu trong
-`metrics-cache/` của user-data; chưa có vai trò thì số liệu chờ lựa chọn, chọn Developer trong trang thì
-`settings.json` lưu `role`; số story/task của kỳ hiện tại, bug resolved và Rejected, ô *Chưa có* kèm lý do của cycle
-time và reopen rate, biểu đồ xu hướng, workload (kèm *Chưa giao*), danh sách quá hạn và bị block; *Chỉ tôi* chỉ giữ
+đồng đội, hai bug, và history của một story và một task. Script kiểm tra: *Làm mới* đọc số liệu (Taiga giả chỉ nhận
+request đọc), kết quả được lưu trong `metrics-cache/` của user-data và CLI giữ history ở đó (`--cache-dir`); chưa có
+vai trò thì số liệu chờ lựa chọn, chọn Developer trong trang thì `settings.json` lưu `role`; số story/task của kỳ hiện
+tại, bug resolved và Rejected, cycle time của story và của task, ô *Chưa có* kèm lý do của reopen rate, biểu đồ xu
+hướng, workload (kèm *Chưa giao*), danh sách quá hạn và bị block; *Chỉ tôi* chỉ giữ
 hàng workload và item của người dùng mà không chạy lại lệnh; menu vai trò chuyển sang dashboard Product Owner và
 Business Analyst (xem bên dưới) và lưu lựa chọn. Ở dashboard Product Owner (`scripts/smoke-dashboard-po.mjs`), script
 xếp các story giả vào hai sprint, gắn tag release, thêm một epic và tạm khai báo hai release trong `project.yaml` của

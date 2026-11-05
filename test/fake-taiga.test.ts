@@ -293,3 +293,46 @@ test('fake Taiga parses multipart attachment uploads, computes size/sha1 from th
   );
   assert.equal(ok.body.content, undefined, 'stored bytes are not part of the attachment object');
 });
+
+test('fake Taiga serves an item history like taiga-back: change entries newest first, values_diff with names', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const hidden = fake.addProject({ slug: 'hidden', members: [] });
+  const sprint = fake.addMilestone({ project: project.id, name: 'Sprint 1', estimated_start: '2026-01-05', estimated_finish: '2026-01-18' });
+  const story = Object.assign(fake.addUserStory({ project: project.id, subject: 'Login' }), { modified_date: '2026-01-01T00:00:00.000Z' });
+  const statuses = Object.fromEntries(fake.state.storyStatuses.filter((s) => s.project === project.id).map((s) => [s.name, s.id]));
+  fake.addStatusChange(story, { at: '2026-01-06T03:00:00.000Z', from: 'New', to: 'In progress' });
+  fake.addMilestoneChange(story, { at: '2026-01-05T03:00:00.000Z', from: null, to: sprint });
+  fake.addDescriptionChange(story, { at: '2026-01-07T03:00:00.000Z', from: 'Old', to: 'New text' });
+  const secret = fake.addTask({ project: hidden.id, subject: 'Hidden' });
+  const token = await login(fake);
+  const get = async (path: string) => {
+    const response = await fetch(`${fake.url}${path}`, { headers: { authorization: `Bearer ${token}`, 'x-disable-pagination': 'True' } });
+    return { status: response.status, body: (await response.json()) as unknown };
+  };
+
+  const history = await get(`/history/userstory/${story.id}`);
+  assert.equal(history.status, 200);
+  assert.ok(Array.isArray(history.body));
+  const entries = history.body.map((entry) => {
+    assert.ok(isRecord(entry));
+    assert.ok(isRecord(entry.user));
+    return { created_at: entry.created_at, type: entry.type, key: entry.key, diff: entry.diff, values_diff: entry.values_diff, user: entry.user.username };
+  });
+  const common = { type: 1, key: `userstories.userstory:${story.id}`, user: 'taigent-bot' };
+  assert.deepEqual(entries, [
+    {
+      ...common,
+      created_at: '2026-01-07T03:00:00.000Z',
+      diff: { description: ['Old', 'New text'], description_html: ['<p>Old</p>', '<p>New text</p>'] },
+      values_diff: { description_diff: [null, '<del>Old</del><ins>New text</ins>'], description_html: ['<p>Old</p>', '<p>New text</p>'] },
+    },
+    { ...common, created_at: '2026-01-06T03:00:00.000Z', diff: { status: [statuses.New, statuses['In progress']] }, values_diff: { status: ['New', 'In progress'] } },
+    { ...common, created_at: '2026-01-05T03:00:00.000Z', diff: { milestone: [null, sprint.id] }, values_diff: { milestone: [null, 'Sprint 1'] } },
+  ]);
+  assert.equal(story.modified_date, '2026-01-07T03:00:00.000Z', 'a change moves the item’s modified_date');
+
+  assert.deepEqual(await get(`/history/task/${story.id}`), { status: 404, body: { _error_message: 'No matches the given query.', _error_type: 'taiga.base.exceptions.NotFound' } });
+  assert.equal((await get(`/history/task/${secret.id}`)).status, 404, 'an item of a project the user cannot see');
+});

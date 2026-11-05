@@ -1,6 +1,7 @@
 // Dashboard: the metrics of the open repository's project, read with `taigent metrics` (read-only, ADR 0003). Each
 // successful read is saved as `<userData>/metrics-cache/latest-<slug>.json`, so the Dashboard shows the last numbers
-// with their `generatedAt` at once while the next read runs.
+// with their `generatedAt` at once while the next read runs. The same folder is the CLI's history cache
+// (`--cache-dir`, its own `history-*.json` files), so a refresh reads Taiga's history again only for changed items.
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ import { failure } from './project.ts';
 import { networkFix, taigaFailure } from './taiga-errors.ts';
 import { type CliError, parseCliJson, runCli } from './taigent.ts';
 
-/** The app's metrics folder: the last read of each project (and, with the history cache, the CLI's own files). */
+/** The app's metrics folder: the last read of each project, and the CLI's history cache. */
 function cacheDir(): string {
   return join(app.getPath('userData'), 'metrics-cache');
 }
@@ -21,7 +22,7 @@ function latestFile(slug: string): string {
 
 /** The arguments of one `taigent metrics` run: the only place the Dashboard's command line is built. */
 function metricsArgs(slug: string): string[] {
-  return ['metrics', '--project', slug, '--json'];
+  return ['metrics', '--project', slug, '--cache-dir', cacheDir(), '--json'];
 }
 
 /** The last saved read of `slug`; null without one, or when the file is not a metrics read of that project. */

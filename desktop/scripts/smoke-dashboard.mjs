@@ -2,8 +2,9 @@
 // the Dashboard is the shown section. Against FakeTaiga (test/support/fake-taiga.ts) only, never the real Taiga: the
 // app's process env points the CLI at the fake for this step, then is restored.
 //   1. Without a Role the three choices sit in the page; the one picked is saved in settings.json.
-//   2. The Developer dashboard shows the fake project's numbers, the metrics `taigent metrics` cannot compute yet as
-//      "Chưa có" cells with their reason, and "Chỉ tôi" narrows the workload and the lists to the user.
+//   2. The Developer dashboard shows the fake project's numbers, cycle time from the items' history (kept in the app's
+//      metrics-cache by --cache-dir), the metrics `taigent metrics` cannot compute yet as "Chưa có" cells with their
+//      reason, and "Chỉ tôi" narrows the workload and the lists to the user.
 //   3. The Role menu switches to the Product Owner dashboard (smoke-dashboard-po.mjs) and the Business Analyst
 //      dashboard (smoke-dashboard-ba.mjs); Settings shows the Role and changes it too.
 //   4. Làm mới reads again: the numbers follow what Taiga holds.
@@ -11,7 +12,7 @@
 //      runs (held by a server that never answers); that read failing, and then a login Taiga refuses, show the
 //      Vietnamese error with its fix while the numbers stay.
 
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { startFakeTaiga } from '../../test/support/fake-taiga.ts';
@@ -89,10 +90,14 @@ function seed(fake, slug) {
   };
   const sso = story('Đăng nhập SSO', { name: 'In progress', assigned: [me], created: -10, due: -1, blocked: true, points: 3 });
   const profile = story('Trang hồ sơ', { assigned: [lan], created: -5, points: 5 });
-  story('Đổi mật khẩu', { name: 'Done', assigned: [me], created: -8, closed: -2, points: 2 });
+  const changed = story('Đổi mật khẩu', { name: 'Done', assigned: [me], created: -8, closed: -2, points: 2 });
+  fake.addStatusChange(changed, { at: at(-6), from: 'New', to: 'In progress' });
+  fake.addStatusChange(changed, { at: at(-2), from: 'In progress', to: 'Done' });
   story('Chưa ai nhận', { created: -3, points: 8 });
   const migrate = task('Migrate bảng user', { name: 'In progress', assignee: lan, created: -4, due: -2 });
-  task('Viết test SSO', { name: 'Closed', assignee: me, created: -3, closed: -1 });
+  const test = task('Viết test SSO', { name: 'Closed', assignee: me, created: -3, closed: -1 });
+  fake.addStatusChange(test, { at: at(-2), from: 'New', to: 'In progress' });
+  fake.addStatusChange(test, { at: at(-1), from: 'In progress', to: 'Closed' });
   bug('Crash khi đăng nhập', { name: 'Closed', assignee: me, created: -5, closed: -2 });
   bug('Không tái hiện được', { name: 'Rejected', assignee: lan, created: -3, closed: -1 });
   return { me, lan, project, sso, profile, migrate, done: status(fake.state.storyStatuses, 'Done') };
@@ -153,6 +158,8 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
     await refresh();
     check((await failureText()) === '' && Boolean(await generatedAt()), `dashboard (FakeTaiga): Làm mới read the metrics of ${project}`);
     check(JSON.parse(await readFile(savedFile, 'utf8')).project.slug === project, 'dashboard: the read is saved in user-data/metrics-cache for the next start');
+    const cached = (await readdir(join(work, 'user-data', 'metrics-cache'))).filter((name) => name.startsWith(`history-${project}-`));
+    check(cached.length > 0, `dashboard: taigent metrics keeps the items' history in user-data/metrics-cache (--cache-dir) (${cached.join(', ')})`);
     check(fake.requests.every((request) => request.method === 'GET' || request.path === '/auth'), 'dashboard: taigent metrics only reads Taiga');
 
     // 1. No Role yet: the three choices, in the page; the one picked is saved.
@@ -170,10 +177,13 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
     );
     const bugs = await stats('#dashboard-bugs');
     check(bugs['Bug resolved trong kỳ'] === '1' && bugs['Bug bị Rejected trong kỳ'] === '1', `dashboard: bugs resolved and Rejected apart (${JSON.stringify(bugs)})`);
-    for (const [widget, metric] of [['#dashboard-times', 'developer.cycleTime'], ['#dashboard-bugs', 'developer.bugs.reopenRate']]) {
-      const cell = (await page.textContent(`${widget} [data-metric="${metric}"]`)) ?? '';
-      check(cell.includes('Chưa có') && cell.includes('history'), `dashboard: ${metric} is a "Chưa có" cell with its reason`);
-    }
+    const times = await stats('#dashboard-times');
+    check(
+      times['Cycle time story (trung vị của 1 item)'] === '4 ngày' && times['Cycle time task (trung vị của 1 item)'] === '1 ngày',
+      `dashboard: cycle time from the first entry into In progress, stories and tasks apart (${JSON.stringify(times)})`,
+    );
+    const reopen = (await page.textContent('#dashboard-bugs [data-metric="developer.bugs.reopenRate"]')) ?? '';
+    check(reopen.includes('Chưa có') && reopen.includes('history'), 'dashboard: developer.bugs.reopenRate is a "Chưa có" cell with its reason');
     check(await page.isVisible('#dashboard-trend [data-slot="chart"] .recharts-surface'), 'dashboard: the completion trend is a chart');
     const team = await rows('#dashboard-workload', 'data-assignee');
     check(team.join('|') === `${lan}|${me}|none`, `dashboard: workload of each assignee, then Chưa giao (${team.join(', ')})`);
