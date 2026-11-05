@@ -252,7 +252,7 @@ test('health on kanban: overdue 1–2 yellow and 3 red, blocked stories 1 yellow
     const { productOwner, warnings, unavailable } = await metrics(h, slug);
     assert.ok(!('currentSprint' in productOwner) && !('velocity' in productOwner) && !('planned' in productOwner), slug);
     assert.ok(!('sprintPace' in productOwner.health), slug);
-    assert.deepEqual(warnings.map(({ code }) => code), ['kanban']);
+    assert.ok(warnings.some(({ code }) => code === 'kanban'), slug);
     assert.ok(!unavailable.some(({ metric }) => metric === 'productOwner.planned.sprintStart' || metric === 'productOwner.scopeChange'), slug);
     const { overdue, blocked, openBugs } = productOwner.health;
     for (const signal of [overdue, blocked, openBugs]) assert.ok(signal.reason.length > 0, slug);

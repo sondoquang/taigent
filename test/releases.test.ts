@@ -264,11 +264,13 @@ test('metrics draws a burndown per release with the three release warnings, read
   });
 
   assert.deepEqual(multiTagged, [{ id: both.id, ref: both.ref, subject: 'Both', releases: ['v1-0-0', 'v2-0-0'] }]);
+  // Without backlog.yaml there is a backlog-missing warning too (businessAnalyst).
+  const releaseWarnings = report.warnings.filter(({ code }) => code.startsWith('release-'));
   assert.deepEqual(
-    report.warnings.map(({ code }) => code),
+    releaseWarnings.map(({ code }) => code),
     ['release-undeclared', 'release-empty', 'release-multiple'],
   );
-  const [undeclared, empty, multiple] = report.warnings.map(({ message }) => message) as [string, string, string];
+  const [undeclared, empty, multiple] = releaseWarnings.map(({ message }) => message) as [string, string, string];
   assert.match(undeclared, /release:v1-0/);
   assert.match(empty, /v2-0-0/);
   assert.match(multiple, new RegExp(`#${both.ref}`));
@@ -293,7 +295,7 @@ test('metrics without project.yaml has no declared release, and an invalid proje
     report.productOwner.releaseBurndown.releases.map(({ version, declared }) => [version, declared]),
     [['v1-0-0', false]],
   );
-  assert.deepEqual(report.warnings.map(({ code }) => code), ['release-undeclared']);
+  assert.deepEqual(report.warnings.map(({ code }) => code), ['release-undeclared', 'backlog-missing']);
 
   await h.writeManifest('vigo-alpha', 'project.yaml', `${PROJECT_YAML}releases:\n  - version: v1-0-0\n    target: soon\n`);
   const invalid = await h.taigent(['metrics', '--project', 'vigo-alpha', '--json'], { env: { TZ } });
