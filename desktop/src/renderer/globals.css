@@ -91,6 +91,12 @@
   --neutral-icon: #a1a1aa;
   --neutral-bg: #f4f4f5;
   --neutral-border: #e4e4e7;
+  /* Chart series (shadcn Chart): the tag icon hues, so charts follow the theme with the badges. */
+  --chart-1: var(--info-icon);
+  --chart-2: var(--success-icon);
+  --chart-3: var(--warning-icon);
+  --chart-4: var(--danger-icon);
+  --chart-5: var(--neutral-icon);
   --sidebar: #fafafa;
   --sidebar-foreground: #18181b;
   --sidebar-primary: #18181b;
@@ -299,6 +305,11 @@
   --color-neutral-icon: var(--neutral-icon);
   --color-neutral-bg: var(--neutral-bg);
   --color-neutral-border: var(--neutral-border);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);

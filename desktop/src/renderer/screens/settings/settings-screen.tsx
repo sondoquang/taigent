@@ -1,16 +1,16 @@
 // The Settings section: the app's colours (Theo hệ thống, Sáng or Tối; the main process saves the choice and sets
-// nativeTheme.themeSource, which drives `prefers-color-scheme` here and the title bar), the agent of the headless skill
-// buttons, and the versions of the app and its parts.
+// nativeTheme.themeSource, which drives `prefers-color-scheme` here and the title bar), the Role of the Dashboard, the
+// agent of the headless skill buttons, and the versions of the app and its parts.
 
 import { useEffect, useState } from 'react';
-import { THEMES, type Theme } from '../../../shared/api.ts';
-import { chooseHeadlessAgent, toast } from '@/actions.ts';
+import { ROLES, THEMES, type Theme } from '../../../shared/api.ts';
+import { chooseHeadlessAgent, chooseRole, toast } from '@/actions.ts';
 import { Code, PageHeader, ScreenBody } from '@/components/common.tsx';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { Label } from '@/components/ui/label.tsx';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group.tsx';
 import { Table, TableBody, TableCell, TableHead, TableRow } from '@/components/ui/table.tsx';
-import { api, useApp } from '@/store.ts';
+import { api, ROLE_LABEL, useApp } from '@/store.ts';
 
 const THEME_OPTIONS: { value: Theme; label: string; toast: string }[] = [
   { value: 'system', label: 'Theo hệ thống', toast: 'theo hệ thống' },
@@ -23,6 +23,8 @@ const AGENT_OPTIONS = [
   { value: 'claude', label: 'claude (Claude Code)' },
   { value: 'codex', label: 'codex (Codex CLI)' },
 ];
+
+const ROLE_OPTIONS = ROLES.map((role) => ({ value: role, label: ROLE_LABEL[role] }));
 
 function Choices({ id, label, value, options, onChange }: {
   id: string;
@@ -47,6 +49,7 @@ function Choices({ id, label, value, options, onChange }: {
 
 export function SettingsScreen() {
   const headlessAgent = useApp((s) => s.headlessAgent);
+  const role = useApp((s) => s.role);
   const versions = useApp((s) => s.versions);
   const [theme, setTheme] = useState<Theme>();
 
@@ -102,6 +105,19 @@ export function SettingsScreen() {
               options={AGENT_OPTIONS}
               onChange={(value) => void chooseHeadlessAgent(value)}
             />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              <h2>Vai trò trên Dashboard</h2>
+            </CardTitle>
+            <CardDescription>
+              Dashboard hiện số liệu theo vai trò này. Đổi nhanh bằng menu vai trò ngay trên Dashboard.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Choices id="settings-role" label="Vai trò trên Dashboard" value={role ?? ''} options={ROLE_OPTIONS} onChange={(value) => void chooseRole(value)} />
           </CardContent>
         </Card>
         <Card>

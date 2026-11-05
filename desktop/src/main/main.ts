@@ -30,7 +30,7 @@ import {
 import { buildView, changeReview, failure, messageOf, ProjectWatcher, pushBlockers, readBacklog, removeItem, saveItem, toFailure } from './project.ts';
 import { handle, handleProject, slugFailure, trustWindow } from './ipc.ts';
 import { killChildren } from './processes.ts';
-import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, setHeadlessAgent, setTheme, theme } from './repo.ts';
+import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName, role, setHeadlessAgent, setRole, setTheme, theme } from './repo.ts';
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
@@ -41,6 +41,7 @@ import { checkTools } from './tools.ts';
 import { runSkill } from './headless.ts';
 import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
 import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
+import { cachedMetrics, readMetrics } from './metrics.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -341,6 +342,11 @@ function registerIpc(): void {
   handle(CHANNELS.readMyTickets, async (from: string, to: string) => readMyTickets(repoRoot ?? app.getPath('home'), String(from), String(to)));
   handle(CHANNELS.setTicketStatus, async (request: TicketStatusRequest) => setTicketStatus(repoRoot ?? app.getPath('home'), request, window!));
   handle(CHANNELS.commentTicket, async (request: TicketCommentRequest) => commentTicket(repoRoot ?? app.getPath('home'), request, window!));
+  handle(CHANNELS.role, role);
+  handle(CHANNELS.setRole, async (choice: unknown) => ({ ok: true, value: await setRole(choice) }));
+  // The Dashboard shows the open repository's project; its .env (TAIGA_*) applies, as for every read.
+  handleProject(CHANNELS.cachedMetrics, async (slug) => ({ ok: true, value: await cachedMetrics(slug) }));
+  handleProject(CHANNELS.readMetrics, async (slug) => readMetrics(requireRepo(), slug));
 }
 
 app.enableSandbox();
