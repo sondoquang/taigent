@@ -227,6 +227,24 @@ Project kanban (module Backlog tắt) không có tiến độ sprint, velocity v
 các xu hướng tính theo tuần. Chỉ số cần history (planned lúc sprint bắt đầu, scope change, bug reopen trong bug trend)
 hiện ô **Chưa có** kèm lý do khi `taigent metrics` chưa tính được.
 
+**Business Analyst** (từ phần `businessAnalyst` của `taigent metrics`):
+
+- **Pipeline phân tích**: số story trên Taiga theo từng status, theo thứ tự status của project, dạng biểu đồ và bảng.
+  Dashboard đọc *New* là *đang phân tích* và *Ready* là *đủ AC* (tên status trên Taiga giữ nguyên). Thêm nhóm **Chưa
+  apply**: story của backlog chưa có trên Taiga (mới, hoặc story đã ghi trong `state.json` không còn trên Taiga).
+  Requirement change (sửa mô tả story sau khi vào Ready) cần history của Taiga nên hiện ô *Chưa có* kèm lý do;
+- **Độ phủ yêu cầu**: số epic có ít nhất một story đủ acceptance criteria trên tổng số epic, và danh sách epic chưa
+  được phủ;
+- **Acceptance criteria**: số story đủ AC (có ít nhất một scenario đủ Given, When và Then) trên tổng số story, và các
+  story chưa đủ kèm lý do: định dạng cũ (legacy, luôn tính là chưa đủ), chưa có scenario, hoặc scenario thiếu Given,
+  When hay Then;
+- **Chờ review**: item của backlog chưa có verdict, hoặc đã đổi sau khi duyệt (*Đã đổi sau khi duyệt*);
+- **Chờ làm rõ**: item còn góp ý chưa xử lý trong `review.yaml`, kèm các góp ý đó.
+
+Bốn mục sau và nhóm *Chưa apply* tính từ backlog manifest và `review.yaml` của dự án trong repo (cùng bản xem trước
+của mục Backlog). Dự án chưa có `backlog.yaml`, hoặc manifest hay `review.yaml` đang lỗi, thì chỉ còn phân bố status:
+thay vào đó là ghi chú nói lý do và cách sửa (lỗi thì chạy `taigent validate --project <slug>`), kèm lời của CLI.
+
 Biểu đồ dùng component Chart của shadcn/ui (Recharts, đóng gói cùng renderer), màu lấy từ token `--chart-1`…`--chart-5`
 của `globals.css`. Mỗi widget có `id` ổn định (`#dashboard-throughput`, `#dashboard-workload`…) cho smoke.
 
@@ -704,6 +722,16 @@ Taiga giả, kèm thời điểm mới. Sau đó script trỏ CLI vào một ser
 lại ứng dụng): vai trò còn giữ, số liệu đã lưu hiện kèm thời điểm trong khi lần đọc mới còn chạy. Server ngắt kết nối,
 rồi đăng nhập bị từ chối (sai mật khẩu): cả hai lần đều hiện lỗi tiếng Việt kèm cách sửa mà số liệu cũ vẫn trên màn
 hình. Xong thì trả lại biến môi trường.
+
+Phần **Business Analyst** (`scripts/smoke-dashboard-ba.mjs`) chạy khi menu vừa chuyển sang Business Analyst. Script
+trỏ CLI vào một bản chép riêng của fixture (ứng dụng và mục Backlog không thấy các sửa đổi này): story `SMOKE-FIXTURE`
+mất Then, `review.yaml` có một verdict đã cũ, một góp ý chưa xử lý và một góp ý đã xử lý, `state.json` ghi một story
+có trên Taiga giả và một story không còn. Script kiểm tra: số story theo status, *New* đọc là *đang phân tích* và
+*Ready* là *đủ AC*, nhóm *Chưa apply*, biểu đồ; độ phủ yêu cầu và epic `SMOKE` chưa được phủ; tỉ lệ đủ AC và hai story
+chưa đủ kèm lý do (legacy, thiếu Then); ô *Chưa có* của requirement change; 15 item chờ review (có item đã đổi sau khi
+duyệt); chỉ item còn góp ý chưa xử lý ở *Chờ làm rõ*. Rồi trỏ CLI vào một thư mục không có manifest: phân bố status
+vẫn còn, không còn *Chưa apply*, ghi chú thiếu backlog manifest thay cho các widget kia. Xong thì trả lại biến môi
+trường.
 
 Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form và phần wiki, trước *Xem thay đổi*: panel ẩn lúc mở, bật/tắt bằng
 `` Ctrl+` `` và nút; mở tab shell, gõ lệnh và thấy output, in tiếng Việt, in chữ đỏ bằng mã ANSI, kéo panel cao lên rồi

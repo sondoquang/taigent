@@ -15,6 +15,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { startFakeTaiga } from '../../test/support/fake-taiga.ts';
+import { smokeBusinessAnalyst } from './smoke-dashboard-ba.mjs';
 import { smokeProductOwner } from './smoke-dashboard-po.mjs';
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -204,7 +205,7 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
     await pickFromMenu('productOwner');
     await smokeProductOwner({ page, fake, work, project, shots, check, log, refresh });
     await pickFromMenu('businessAnalyst');
-    check(((await page.textContent('#dashboard-business-analyst[data-placeholder="72"]')) ?? '').includes('#72'), 'dashboard: the Business Analyst frame names ticket #72');
+    await smokeBusinessAnalyst({ app, page, work, project, shots, check, refresh, stats, setEnv, onTaiga: sso });
     check(JSON.parse(await readFile(settingsFile, 'utf8')).role === 'businessAnalyst', 'dashboard: the Role picked from the menu is saved');
     await goTo(page, 'settings');
     check(await page.isChecked('#settings-role [role="radio"][value="businessAnalyst"]'), 'Settings shows the Role picked on the Dashboard');
