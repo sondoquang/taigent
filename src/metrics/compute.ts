@@ -4,6 +4,7 @@
 
 import { localDay } from '../days.ts';
 import { type BugTrendEntry, bugMetrics, type DeveloperBugs } from './bugs.ts';
+import { type BusinessAnalystMetrics, businessAnalystMetrics } from './business-analyst.ts';
 import { HISTORY_UNAVAILABLE, type MetricsContext, type MetricsLocal, type MetricsWarning, type UnavailableMetric } from './context.ts';
 import { type DeveloperMetrics, developerMetrics } from './developer.ts';
 import { type Cadence, type Period, sprintPeriods, weekPeriods } from './periods.ts';
@@ -21,6 +22,7 @@ export interface MetricsReport {
   periods: Period[];
   developer: DeveloperMetrics & { bugs: DeveloperBugs };
   productOwner: { bugTrend: BugTrendEntry[]; releaseBurndown: ReleaseBurndown };
+  businessAnalyst: BusinessAnalystMetrics;
   warnings: MetricsWarning[];
   unavailable: UnavailableMetric[];
 }
@@ -31,7 +33,6 @@ const NEED_HISTORY = [
   'productOwner.planned.sprintStart',
   'productOwner.scopeChange',
   'productOwner.bugTrend.reopened',
-  'businessAnalyst.requirementChange',
 ];
 
 export function computeMetrics(snapshot: MetricsSnapshot, local: MetricsLocal, now: Date): MetricsReport {
@@ -53,6 +54,7 @@ export function computeMetrics(snapshot: MetricsSnapshot, local: MetricsLocal, n
   const bugs = bugMetrics(context);
   const burndown = releaseBurndown(context);
   for (const metric of NEED_HISTORY) context.notes.unavailable.push({ metric, reason: 'history', message: HISTORY_UNAVAILABLE });
+  const businessAnalyst = businessAnalystMetrics(context);
   const { id, slug, name } = snapshot.project;
   return {
     project: { id, slug, name },
@@ -62,6 +64,7 @@ export function computeMetrics(snapshot: MetricsSnapshot, local: MetricsLocal, n
     periods: context.periods,
     developer: { ...developer, bugs: bugs.developer },
     productOwner: { bugTrend: bugs.bugTrend, releaseBurndown: burndown },
+    businessAnalyst,
     warnings: context.notes.warnings,
     unavailable: context.notes.unavailable,
   };

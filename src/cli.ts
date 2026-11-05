@@ -17,6 +17,7 @@ import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/
 import { initRepository, InitError, type InitStatus } from './init.ts';
 import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
 import { serveMcp, startProxy } from './mcp.ts';
+import { readBacklogData } from './metrics/backlog.ts';
 import { computeMetrics } from './metrics/compute.ts';
 import { readReleases } from './metrics/releases.ts';
 import { ProjectNotFoundError, readSnapshot } from './metrics/snapshot.ts';
@@ -55,6 +56,8 @@ Commands:
   metrics   Dashboard metrics of --project for every Role, from what Taiga holds now: per period (sprint, or week on
             a kanban project) throughput, lead time, workload, blocked and overdue work; release burndown with the
             releases of project.yaml (read-only)
+            Business Analyst: stories by status, and from backlog.yaml and review.yaml complete acceptance
+            criteria, requirements coverage, items awaiting review or pending clarification
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
@@ -635,13 +638,15 @@ async function runReport(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `metrics`: the dashboards' metrics of the project, computed from one read of Taiga and its project.yaml. Read-only. */
+/** `metrics`: the dashboards' metrics of the project, from one read of Taiga and its manifests. Read-only. */
 async function runMetrics(run: Run): Promise<number> {
   const { options, env, cwd } = run;
   const slug = options.project!;
-  const releases = await readReleases(projectLayout(slug, env, cwd).dir, slug);
+  const { dir } = projectLayout(slug, env, cwd);
+  const releases = await readReleases(dir, slug);
   const snapshot = await readSnapshot(await connectTaiga(run), slug);
-  const report = computeMetrics(snapshot, { releases }, new Date());
+  const backlog = await readBacklogData(dir, slug);
+  const report = computeMetrics(snapshot, { releases, backlog }, new Date());
   emit(run, report, () => formatMetricsText(report));
   return ExitCode.Ok;
 }
