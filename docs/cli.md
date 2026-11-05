@@ -446,6 +446,9 @@ members:                            # optional
     role: Front
 wiki_home: |                        # optional Markdown for the wiki page `home`
   # Acme Portal
+releases:                           # optional, read only by `metrics` (release burndown); bootstrap ignores it
+  - version: v1-2-0                 # required, kebab-case, unique: the stories tagged release:v1-2-0 on Taiga
+    target: 2026-12-01              # required, target day YYYY-MM-DD
 ```
 
 Steps, in order (each is `create`, `update` or `skip` in the plan):
@@ -603,8 +606,9 @@ from what Taiga holds now about one project. It only reads: the project (`GET /p
 flag decides the cadence), the user it logs in as (`GET /users/me`), the sprints (`GET /milestones?project=<id>`, not
 read for a kanban project), the user story and task statuses (`GET /userstory-statuses?project=<id>`,
 `GET /task-statuses?project=<id>`), and every user story and task (`GET /userstories?project=<id>`,
-`GET /tasks?project=<id>`), each list read with pagination disabled so no page is missed. The metrics are computed by a
-pure module from that snapshot and the local day (TZ); nothing is written anywhere.
+`GET /tasks?project=<id>`), each list read with pagination disabled so no page is missed. Locally it reads only the
+`releases` of `taiga/<slug>/project.yaml` (none when the file does not exist). The metrics are computed by a pure module
+from that snapshot and the local day (TZ); nothing is written anywhere.
 
 - **Periods**: with the Backlog module on (`cadence: "sprint"`), the last 6 sprints that have started, by first day;
   `current` is the open sprint holding today. With it off (a kanban project, `cadence: "week"`), the last 6 weeks,
@@ -630,10 +634,23 @@ pure module from that snapshot and the local day (TZ); nothing is written anywhe
   Each item carries its `assignees` (user ids; `people` names the project's members), so a client narrows the lists
   to `me` itself.
 
+`productOwner.releaseBurndown` is the **Release burndown** ([conventions §4.1](taiga/conventions.md#41-releases),
+ADR 0005). A release is the user stories carrying exactly one tag `release:<version>` on Taiga; its target day comes
+from `releases` in `project.yaml`. `releases` lists the declared releases in the manifest's order, then the undeclared
+tags by version; each has its `version`, `tag`, `declared`, `target` (null when undeclared), `start` (the local day its
+earliest story was created, null without stories), `stories` (`total`, `closed`), `points` (`total`, `closed`,
+`remaining`; unestimated stories count 0) and `days`: every day from `start` to today, or to the target when later,
+with `remaining` (points of its current stories not yet closed at the end of that day, by `finish_date`; null after
+today) and `ideal` (linear from `points.total` on `start` to 0 on the target day, 0 after it; null for an undeclared
+release). `multiTagged` lists the stories carrying two release tags or more (`id`, `ref`, `subject`, `releases`), left
+out of every burndown.
+
 `unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
 Taiga history of each item (`reason: "history"`: cycle time, bug reopen rate, planned points at sprint start, scope
 change, the reopened part of the bug trend, requirement change), which `metrics` does not read yet. `warnings` holds
-the `kanban` warning. `--json` prints:
+the `kanban` warning and the release warnings: `release-undeclared` (a `release:` tag `project.yaml` does not
+declare; drawn without an ideal line), `release-empty` (a declared release no story carries) and `release-multiple`
+(one per story with two release tags or more). `--json` prints:
 
 ```json
 {
@@ -672,7 +689,30 @@ the `kanban` warning. `--json` prints:
       { "type": "story", "id": 812, "ref": 6, "subject": "SSO", … }
     ]
   },
-  "warnings": [],
+  "productOwner": {
+    "releaseBurndown": {
+      "releases": [
+        { "version": "v1-2-0", "tag": "release:v1-2-0", "declared": true, "target": "2026-11-07",
+          "start": "2026-11-03", "stories": { "total": 3, "closed": 1 },
+          "points": { "total": 8, "closed": 3, "remaining": 5 },
+          "days": [
+            { "day": "2026-11-03", "remaining": 8, "ideal": 8 },
+            { "day": "2026-11-04", "remaining": 5, "ideal": 6 },
+            { "day": "2026-11-05", "remaining": 5, "ideal": 4 },
+            { "day": "2026-11-06", "remaining": null, "ideal": 2 },
+            { "day": "2026-11-07", "remaining": null, "ideal": 0 }
+          ] },
+        { "version": "v1-3", "tag": "release:v1-3", "declared": false, "target": null, "start": "2026-11-05",
+          "stories": { "total": 1, "closed": 0 }, "points": { "total": 2, "closed": 0, "remaining": 2 },
+          "days": [{ "day": "2026-11-05", "remaining": 2, "ideal": null }] }
+      ],
+      "multiTagged": [{ "id": 830, "ref": 9, "subject": "Export", "releases": ["v1-2-0", "v2-0-0"] }]
+    }
+  },
+  "warnings": [
+    { "code": "release-undeclared", "message": "user stories carry the tag release:v1-3 but project.yaml declares no release v1-3: …" },
+    { "code": "release-multiple", "message": "user story #9 Export carries release:v1-2-0, release:v2-0-0: …" }
+  ],
   "unavailable": [
     { "metric": "developer.cycleTime", "reason": "history",
       "message": "needs the Taiga history of each item, which metrics does not read yet" },
@@ -682,11 +722,12 @@ the `kanban` warning. `--json` prints:
 ```
 
 Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`), the workload, the blocked
-and overdue items, the warnings and the metrics not available yet.
+and overdue items, one line per release, the warnings and the metrics not available yet.
 
 Read-only, so it runs under `TAIGENT_READ_ONLY=1`. Errors: exit 2 when not logged in (kind `login`), without
 `--project` (kind `usage`), or when the project is not on Taiga or not visible to the user (kind `project`; unlike
-`report`, which exits 5); exit 5 when Taiga refuses the login or a read, or cannot be reached (kind `taiga`).
+`report`, which exits 5); exit 4 when `project.yaml` is invalid (its issues, as `validate` reports them); exit 5 when
+Taiga refuses the login or a read, or cannot be reached (kind `taiga`).
 
 ## Tickets
 
@@ -1024,7 +1065,7 @@ skill checks all of it and names each fix.
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command |
-| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2); pure `computeMetrics(snapshot, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`); periods (`periods.ts`), work items closed by status flag (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
+| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `releases.ts` for `productOwner.releaseBurndown`); periods (`periods.ts`), work items closed by status flag (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
 | Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify` and `metrics` |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |

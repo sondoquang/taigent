@@ -387,6 +387,8 @@ export interface TaigaStory {
   createdAt: string | null;
   closedAt: string | null;
   modifiedAt: string | null;
+  /** Lowercase tag names (Taiga's [name, color] pairs), e.g. `release:v1-2-0`. */
+  tags: string[];
 }
 
 /** A task of a project as `metrics` reads it (`GET /tasks?project=`). */
@@ -490,6 +492,7 @@ function parseStory(raw: unknown): TaigaStory {
     createdAt: typeof r.created_date === 'string' ? r.created_date : null,
     closedAt: typeof r.finish_date === 'string' ? r.finish_date : null,
     modifiedAt: typeof r.modified_date === 'string' ? r.modified_date : null,
+    tags: Array.isArray(r.tags) ? r.tags.map((tag) => String(Array.isArray(tag) ? tag[0] : tag)) : [],
   };
 }
 
