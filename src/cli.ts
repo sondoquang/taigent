@@ -53,9 +53,9 @@ Commands:
             --project, that project's issue types, severities and priorities (read-only)
   report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
             stories in no sprint (read-only)
-  metrics   Dashboard metrics of --project for every Role, from what Taiga holds now: per period (sprint, or week on
-            a kanban project) throughput, lead time, workload, blocked and overdue work; release burndown with the
-            releases of project.yaml (read-only)
+  metrics   Dashboard metrics of --project for every Role, from what Taiga holds now and the history of each item:
+            per period (sprint, or week on a kanban project) throughput, lead time, cycle time, workload, blocked and
+            overdue work; release burndown with the releases of project.yaml (read-only)
             Business Analyst: stories by status, and from backlog.yaml and review.yaml complete acceptance
             criteria, requirements coverage, items awaiting review or pending clarification
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
@@ -74,6 +74,8 @@ Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets, notify and projects)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
   --out <file>      preview: write the page (or the JSON) to this file instead of stdout
+  --cache-dir <dir> metrics: keep the history of each item in this directory and read it again only for items
+                    changed since (default: read every history, write nothing)
   --application <id>  login: store an application token of this Application (created by the instance admin)
                     instead of a refresh token
   --json            Machine-readable output on stdout
@@ -153,6 +155,8 @@ interface Options {
   application?: string;
   /** `preview`: file to write instead of stdout. */
   out?: string;
+  /** `metrics`: directory of the history cache. */
+  cacheDir?: string;
   json: boolean;
   yes: boolean;
   dryRun: boolean;
@@ -187,6 +191,7 @@ function parseOptions(argv: string[]): Options | 'help' {
         to: { type: 'string' },
         application: { type: 'string' },
         out: { type: 'string' },
+        'cache-dir': { type: 'string' },
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
@@ -234,6 +239,8 @@ function parseOptions(argv: string[]): Options | 'help' {
   if (values.application === '') throw new UsageError('--application needs the Application id');
   if (values.out !== undefined && command !== 'preview') throw new UsageError('--out applies only to preview');
   if (values.out === '') throw new UsageError('--out needs a file path');
+  if (values['cache-dir'] !== undefined && command !== 'metrics') throw new UsageError('--cache-dir applies only to metrics');
+  if (values['cache-dir'] === '') throw new UsageError('--cache-dir needs a directory');
   if (command === 'tickets') {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
@@ -255,6 +262,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     notifyKind,
     application: values.application,
     out: values.out,
+    cacheDir: values['cache-dir'],
     json: values.json,
     yes: values.yes,
     dryRun: values['dry-run'],
@@ -638,13 +646,17 @@ async function runReport(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `metrics`: the dashboards' metrics of the project, from one read of Taiga and its manifests. Read-only. */
+/**
+ * `metrics`: the dashboards' metrics of the project, from one read of Taiga (with each item's history, kept in
+ * --cache-dir when given) and its manifests. Read-only on Taiga.
+ */
 async function runMetrics(run: Run): Promise<number> {
   const { options, env, cwd } = run;
   const slug = options.project!;
   const { dir } = projectLayout(slug, env, cwd);
   const releases = await readReleases(dir, slug);
-  const snapshot = await readSnapshot(await connectTaiga(run), slug);
+  const cacheDir = options.cacheDir === undefined ? undefined : resolve(cwd, options.cacheDir);
+  const snapshot = await readSnapshot(await connectTaiga(run), slug, cacheDir);
   const backlog = await readBacklogData(dir, slug);
   const report = computeMetrics(snapshot, { releases, backlog }, new Date());
   emit(run, report, () => formatMetricsText(report));

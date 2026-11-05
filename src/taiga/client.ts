@@ -459,6 +459,29 @@ export interface TaigaStatus {
   isClosed: boolean;
 }
 
+/** A status in an item's history: its id and its name when the change was recorded. */
+export interface TaigaHistoryStatus {
+  id: number;
+  name: string | null;
+}
+
+/**
+ * One change of a user story, task or issue (`GET /history/{userstory|task|issue}/{id}`; taiga-back's
+ * HistoryEntrySerializer, type 1 "change"): when, and what it changed among the fields `metrics` reads, each null
+ * when the change left it alone. Taiga takes the before and after values from the entry's `diff` (raw ids and text)
+ * and the status names from its `values_diff`.
+ */
+export interface TaigaHistoryEntry {
+  /** When (`created_at`, ISO 8601). */
+  at: string;
+  /** The status before and after (null: none). */
+  status: { from: TaigaHistoryStatus | null; to: TaigaHistoryStatus | null } | null;
+  /** The sprint (milestone) id before and after (null: in no sprint). */
+  milestone: { from: number | null; to: number | null } | null;
+  /** The description before and after. */
+  description: { from: string; to: string } | null;
+}
+
 /** What `taigent status` and `taigent comment` change on a story: its status (by id), and/or a comment. */
 export interface StoryEdit {
   status?: number;
@@ -563,6 +586,34 @@ function parseMilestone(raw: unknown): TaigaMilestone {
     closed: r.closed === true,
     totalPoints: typeof r.total_points === 'number' ? r.total_points : 0,
     closedPoints: typeof r.closed_points === 'number' ? r.closed_points : 0,
+  };
+}
+
+/** `[before, after]` of one field of a history entry's `diff` or `values_diff`, undefined when the entry has none. */
+function historyPair(raw: unknown, name: string): [unknown, unknown] | undefined {
+  const pair = isRecord(raw) ? raw[name] : undefined;
+  return Array.isArray(pair) && pair.length === 2 ? [pair[0], pair[1]] : undefined;
+}
+
+const historyId = (value: unknown) => (typeof value === 'number' ? value : null);
+
+function parseHistoryEntry(raw: unknown): TaigaHistoryEntry {
+  const what = 'history entry';
+  const r = record(raw, what);
+  const status = historyPair(r.diff, 'status');
+  const statusNames = historyPair(r.values_diff, 'status');
+  const statusAt = (index: 0 | 1): TaigaHistoryStatus | null => {
+    const id = historyId(status![index]);
+    const name = statusNames?.[index];
+    return id === null ? null : { id, name: typeof name === 'string' ? name : null };
+  };
+  const milestone = historyPair(r.diff, 'milestone');
+  const description = historyPair(r.diff, 'description');
+  return {
+    at: field(r, 'created_at', 'string', what),
+    status: status ? { from: statusAt(0), to: statusAt(1) } : null,
+    milestone: milestone ? { from: historyId(milestone[0]), to: historyId(milestone[1]) } : null,
+    description: description ? { from: String(description[0] ?? ''), to: String(description[1] ?? '') } : null,
   };
 }
 
@@ -928,6 +979,12 @@ export class TaigaClient {
   async listProjectIssues(projectId: number): Promise<TaigaProjectIssue[]> {
     const { collection, what } = TAIGA_ITEM.issue;
     return parseList(await this.#request('GET', `/${collection}`, { query: { project: projectId } }), what, parseProjectIssue);
+  }
+
+  /** The changes of one item (`GET /history/userstory/{id}`, …), oldest first; Taiga sends them newest first. */
+  async listHistory(type: ItemType, id: number): Promise<TaigaHistoryEntry[]> {
+    const entries = parseList(await this.#request('GET', `/history/${TAIGA_ITEM[type].attributes}/${id}`), 'history entry', parseHistoryEntry);
+    return entries.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   }
 
   /** Every sprint of a project, open and closed, in Taiga's order. */

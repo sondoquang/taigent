@@ -75,7 +75,6 @@ export function WidgetTable({ head, rows, empty }: { head: string[]; rows: Widge
 
 /** How the dashboards name each metric of the report's `unavailable` (its path in the JSON). */
 const UNAVAILABLE_LABEL: Record<string, string> = {
-  'developer.cycleTime': 'Cycle time',
   'developer.bugs.reopenRate': 'Reopen rate của bug',
   'productOwner.planned.sprintStart': 'Planned lúc sprint bắt đầu',
   'productOwner.scopeChange': 'Scope change',
@@ -85,7 +84,7 @@ const UNAVAILABLE_LABEL: Record<string, string> = {
 
 /** Why a metric is missing, in Vietnamese; the CLI's own message stays in the cell's title. */
 const UNAVAILABLE_REASON: Record<UnavailableMetric['reason'], string> = {
-  history: 'cần lịch sử thay đổi (history) của từng item trên Taiga, mà taigent metrics chưa đọc',
+  history: 'cần lịch sử thay đổi (history) của từng item trên Taiga, mà taigent metrics chưa dùng để tính chỉ số này',
   'backlog-missing': 'dự án chưa có backlog manifest (taiga/<slug>/backlog.yaml) trong repo',
   'backlog-invalid': 'backlog manifest của dự án đang lỗi (xem taigent validate)',
 };

@@ -290,8 +290,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   project; read-only. See [Projects](#projects).
 - `taigent report --project <slug> [--json]`: the project's progress by sprint and by epic, and its stories in no
   sprint; read-only. See [Report](#report).
-- `taigent metrics --project <slug> [--json]`: the dashboards' metrics of the project (Taigent Desktop's Dashboard);
-  read-only. See [Metrics](#metrics).
+- `taigent metrics --project <slug> [--cache-dir <dir>] [--json]`: the dashboards' metrics of the project (Taigent
+  Desktop's Dashboard); read-only on Taiga, `--cache-dir` keeps the items' history between runs. See [Metrics](#metrics).
 - `taigent login [--application <id>]`, `taigent logout`, `taigent whoami [--json]`, `taigent mcp`: see
   [Login and the MCP server](#login-and-the-mcp-server).
 
@@ -602,19 +602,29 @@ login or cannot be reached).
 
 ## Metrics
 
-`taigent metrics --project <slug> [--json]` computes the metrics of the dashboards (`GLOSSARY.md`, section Dashboards)
-from what Taiga holds now about one project. It only reads: the project (`GET /projects/by_slug`, whose Backlog module
-flag decides the cadence), the user it logs in as (`GET /users/me`), the sprints (`GET /milestones?project=<id>`, not
-read for a kanban project), the user story, task and issue statuses (`GET /userstory-statuses?project=<id>`,
-`GET /task-statuses?project=<id>`, `GET /issue-statuses?project=<id>`), the issue types (`GET /issue-types?project=<id>`),
-and every user story, task and issue (`GET /userstories?project=<id>`, `GET /tasks?project=<id>`,
-`GET /issues?project=<id>`), each list read with pagination disabled so no page is missed; then, like `report`, each
-sprint's stats (`GET /milestones/<id>/stats`), the epics (`GET /epics?project=<id>`) and each epic's stories
-(`GET /epics/<id>/related_userstories`). Locally it reads the `releases` of `taiga/<slug>/project.yaml` (none when the
-file does not exist), and, for the Business Analyst's metrics, the project's `backlog.yaml`, `state.json` and
-`review.yaml` through the same preview as [`preview`](#review); a missing or invalid backlog manifest never fails the
-command (see below). The metrics are computed by a pure module from that snapshot and the local day (TZ); nothing is
-written anywhere.
+`taigent metrics --project <slug> [--cache-dir <dir>] [--json]` computes the metrics of the dashboards (`GLOSSARY.md`,
+section Dashboards) from what Taiga holds now about one project. It only reads: the project (`GET /projects/by_slug`,
+whose Backlog module flag decides the cadence), the user it logs in as (`GET /users/me`), the sprints
+(`GET /milestones?project=<id>`, not read for a kanban project), the user story, task and issue statuses
+(`GET /userstory-statuses?project=<id>`, `GET /task-statuses?project=<id>`, `GET /issue-statuses?project=<id>`), the
+issue types (`GET /issue-types?project=<id>`), and every user story, task and issue (`GET /userstories?project=<id>`,
+`GET /tasks?project=<id>`, `GET /issues?project=<id>`), each list read with pagination disabled so no page is missed;
+then, like `report`, each sprint's stats (`GET /milestones/<id>/stats`), the epics (`GET /epics?project=<id>`) and each
+epic's stories (`GET /epics/<id>/related_userstories`); and the history of every user story, task and issue
+(`GET /history/userstory/<id>`, `GET /history/task/<id>`, `GET /history/issue/<id>`: one request per item, 8 at a time).
+Locally it reads the `releases` of `taiga/<slug>/project.yaml` (none when the file does not exist), and, for the
+Business Analyst's metrics, the project's `backlog.yaml`, `state.json` and `review.yaml` through the same preview as
+[`preview`](#review); a missing or invalid backlog manifest never fails the command (see below). The metrics are
+computed by a pure module from that snapshot and the local day (TZ).
+
+**History cache.** Without `--cache-dir` every history is read on each run and nothing is written anywhere. With
+`--cache-dir <dir>` (created when missing; relative to the working directory) the histories are kept in
+`<dir>/history-<slug>-<hash>.json`, one file per Taiga instance and project (the hash is of the API URL and the
+project id), each history under its item type and id with the item's `modified_date` when it was read. The next run
+reads Taiga's history again only for the items whose `modified_date` changed (any change on Taiga moves it) or that
+are new; the file is rewritten with the items the project still has. A file that cannot be parsed, of another format
+version, or of another instance or project is ignored: every history is read again and the command still succeeds.
+Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`).
 
 - **Periods**: with the Backlog module on (`cadence: "sprint"`), the last 6 sprints that have started, by first day;
   `current` is the open sprint holding today. With it off (a kanban project, `cadence: "week"`), the last 6 weeks,
@@ -637,6 +647,11 @@ written anywhere.
 - `leadTime`: the median **Lead time** in days, from the local day an item was created to the day it was closed, of
   the stories and of the tasks closed in the periods, with the number of items (`count`); `medianDays` is null without
   any.
+- `cycleTime`: the median **Cycle time** in days, likewise, from the local day an item first entered the status named
+  `In progress` to the day it was closed. The start comes from the item's history: its first status change into
+  `In progress`, or its creation when its first status change leaves `In progress` (Taiga records no change for the
+  status an item is created in). A status goes by its name in the project's status list (the history's own name only
+  for a status no longer in it). Items that never entered `In progress` are left out; `Ready for test` is not closed.
 - `workload`: the **Workload** of each assignee with open work (open stories, open tasks, points of those stories), by
   username, then the unassigned row (`assignee: null`, always present). A story with two assignees counts for both.
 - `blocked`: the open stories, then tasks, that are blocked (`is_blocked`), by ref; `overdue`: the open ones whose due
@@ -712,9 +727,9 @@ invalid, likewise with `reason: "backlog-invalid"` (and that warning); the messa
 run `taigent validate --project <slug>`. The command still exits 0.
 
 `unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
-Taiga history of each item (`reason: "history"`: cycle time, bug reopen rate, planned points at sprint start and scope
-change (both left out on a kanban project), the reopened part of the bug trend, requirement change), which `metrics`
-does not read yet, and those that need the backlog manifest (`backlog-missing`, `backlog-invalid`). `warnings` holds
+Taiga history of each item and are not computed from it yet (`reason: "history"`: bug reopen rate, planned points at
+sprint start and scope change (both left out on a kanban project), the reopened part of the bug trend, requirement
+change), and those that need the backlog manifest (`backlog-missing`, `backlog-invalid`). `warnings` holds
 the `kanban` warning, the release warnings: `release-undeclared` (a `release:` tag `project.yaml` does not declare;
 drawn without an ideal line), `release-empty` (a declared release no story carries) and `release-multiple` (one per
 story with two release tags or more), and the `backlog-missing` and `backlog-invalid` warnings. `--json` prints:
@@ -741,6 +756,10 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
     "leadTime": {
       "all": { "stories": { "medianDays": 9, "count": 5 }, "tasks": { "medianDays": 2.5, "count": 8 } },
       "mine": { "stories": { "medianDays": 7, "count": 2 }, "tasks": { "medianDays": 2, "count": 4 } }
+    },
+    "cycleTime": {
+      "all": { "stories": { "medianDays": 5, "count": 4 }, "tasks": { "medianDays": 1.5, "count": 8 } },
+      "mine": { "stories": { "medianDays": 4, "count": 2 }, "tasks": { "medianDays": 1, "count": 4 } }
     },
     "workload": [
       { "assignee": 6, "username": "lan", "stories": 2, "tasks": 3, "points": 8 },
@@ -852,24 +871,25 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
     { "code": "release-multiple", "message": "user story #9 Export carries release:v1-2-0, release:v2-0-0: …" }
   ],
   "unavailable": [
-    { "metric": "developer.cycleTime", "reason": "history",
-      "message": "needs the Taiga history of each item, which metrics does not read yet" },
+    { "metric": "productOwner.planned.sprintStart", "reason": "history",
+      "message": "needs the Taiga history of each item, which metrics reads but does not compute this metric from yet" },
     { "metric": "developer.bugs.reopenRate", "reason": "history", "message": "…" }
   ]
 }
 ```
 
-Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`), the workload, the blocked
-and overdue items, the bug resolution per period, the product owner figures (current sprint, velocity,
-completed/planned points, health, then `report`'s tables as `report` prints them), the bug trend, one line per
-release, the Business Analyst's figures (stories by status, the stories with incomplete acceptance criteria and why,
-the uncovered epics, the items awaiting review and pending clarification), the warnings and the metrics not available
-yet.
+Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`; lead time, then cycle
+time), the workload, the blocked and overdue items, the bug resolution per period, the product owner figures (current
+sprint, velocity, completed/planned points, health, then `report`'s tables as `report` prints them), the bug trend,
+one line per release, the Business Analyst's figures (stories by status, the stories with incomplete acceptance
+criteria and why, the uncovered epics, the items awaiting review and pending clarification), the warnings and the
+metrics not available yet.
 
-Read-only, so it runs under `TAIGENT_READ_ONLY=1`. Errors: exit 2 when not logged in (kind `login`), without
-`--project` (kind `usage`), or when the project is not on Taiga or not visible to the user (kind `project`; unlike
-`report`, which exits 5); exit 4 when `project.yaml` is invalid (its issues, as `validate` reports them); exit 5 when
-Taiga refuses the login or a read, or cannot be reached (kind `taiga`).
+Read-only on Taiga, so it runs under `TAIGENT_READ_ONLY=1`; it writes only the history cache of `--cache-dir`. Errors:
+exit 2 when not logged in (kind `login`), without `--project` (kind `usage`), with `--cache-dir` on another command or
+empty (kind `usage`), or when the project is not on Taiga or not visible to the user (kind `project`; unlike `report`,
+which exits 5); exit 4 when `project.yaml` is invalid (its issues, as `validate` reports them); exit 5 when Taiga
+refuses the login or a read, or cannot be reached (kind `taiga`).
 
 ## Tickets
 
@@ -1207,7 +1227,7 @@ skill checks all of it and names each fix.
 | Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
-| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); `readBacklogData(dir, slug)` → `BacklogData` (`backlog.ts`: the `buildPreview` of the manifests, or why there is none: `missing`, `invalid` with the issues); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, health and `report`'s tables, `business-analyst.ts` for `businessAnalyst`); periods (`periods.ts`), work items closed by status flag (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
+| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug, cacheDir?)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2), with `history`: each story's, task's and issue's `TaigaHistoryEntry[]` (status, sprint and description changes, oldest first) read by `readHistories` (`history.ts`: `client.listHistory(type, id)`, 8 at a time, and the `--cache-dir` file keyed by API URL, project, type and id, hit while `modified_date` is unchanged); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); `readBacklogData(dir, slug)` → `BacklogData` (`backlog.ts`: the `buildPreview` of the manifests, or why there is none: `missing`, `invalid` with the issues); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, health and `report`'s tables, `business-analyst.ts` for `businessAnalyst`); periods (`periods.ts`), work items closed by status flag, with the day they first entered In progress (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
 | Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify` and `metrics` |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
@@ -1248,7 +1268,12 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   name?, members?, admins?, is_private?, modules?, tagsColors? })` (`GET /projects?member=<user id>` lists the projects
   of that member the caller can see, like taiga-back's `member` filter, with `i_am_admin`), `addCustomAttribute`, `addMembership`,
   `addWikiPage`; upload fixtures `addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki",
-  object_id, name, content })`. For `tickets`, set the returned story's `assigned_users`, `is_closed`, `finish_date`,
+  object_id, name, content })`. History of stories, tasks and issues (`GET /history/{userstory|task|issue}/<id>`,
+  newest first, entries shaped like taiga-back's HistoryEntrySerializer: `created_at`, `type: 1`, `key`, raw `diff`,
+  `values`, `values_diff` with names): `addHistory(item, { at, diff?, values?, comment? })` and its helpers
+  `addStatusChange(item, { at, from, to })` (status names of the item's project), `addMilestoneChange(item, { at, from,
+  to })` (sprints or null) and `addDescriptionChange(item, { at, from, to })`; each moves the item's `modified_date` to
+  `at` when later. For `tickets`, set the returned story's `assigned_users`, `is_closed`, `finish_date`,
   `due_date` (YYYY-MM-DD), `total_points` (number or null), `is_blocked` and `status_name` (its status name when open or closed, null
   for the default): list responses embed `project_extra_info` and `status_extra_info` (closed stories `Done`, closed
   tasks `Closed`, otherwise `New`, unless `status_name` is set), and `GET /userstories` filters on `assigned_users`,

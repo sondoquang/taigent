@@ -5,7 +5,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
-import type { DeveloperItem, LeadTime, MetricsReport } from '../../../shared/api.ts';
+import type { DeveloperItem, MedianDays, MetricsReport } from '../../../shared/api.ts';
 import { StatCell } from '@/components/common.tsx';
 import { type ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart.tsx';
 import { Label } from '@/components/ui/label.tsx';
@@ -19,11 +19,16 @@ const TREND_CONFIG = {
 
 const TYPE_TEXT: Record<DeveloperItem['type'], string> = { story: 'Story', task: 'Task' };
 
-function leadTimeCell(label: string, lead: LeadTime): ReactNode {
-  return lead.medianDays === null ? (
-    <StatCell label={`${label} (chưa có item nào đóng)`} value="—" />
-  ) : (
-    <StatCell label={`${label} (trung vị của ${lead.count} item)`} value={days(lead.medianDays)} />
+/** A median time cell (lead time, cycle time); `metric` is its hook for the smoke, e.g. `developer.cycleTime.stories`. */
+function timeCell(label: string, time: MedianDays, metric: string): ReactNode {
+  return (
+    <div className="min-w-0" data-metric={metric}>
+      {time.medianDays === null ? (
+        <StatCell label={`${label} (chưa có item nào đóng)`} value="—" />
+      ) : (
+        <StatCell label={`${label} (trung vị của ${time.count} item)`} value={days(time.medianDays)} />
+      )}
+    </div>
   );
 }
 
@@ -56,6 +61,8 @@ export function DeveloperDashboard({ report }: { report: MetricsReport }) {
   const throughput = developer.periods.find((entry) => entry.period === current?.id)?.[scope];
   const bugs = developer.bugs.periods.find((entry) => entry.period === current?.id)?.[scope];
   const lead = developer.leadTime[scope];
+  // A read saved by an older taigent has no cycle time: its cells wait for the next read.
+  const cycle = developer.cycleTime?.[scope];
   const assignedToMe = (item: DeveloperItem) => !mine || item.assignees.includes(me.id);
   const workload = mine ? developer.workload.filter((row) => row.assignee === me.id) : developer.workload;
   const blocked = developer.blocked.filter(assignedToMe);
@@ -92,11 +99,16 @@ export function DeveloperDashboard({ report }: { report: MetricsReport }) {
         )}
       </Widget>
 
-      <Widget id="dashboard-times" title="Thời gian xử lý" description="Lead time: từ ngày tạo tới ngày đóng, của các item đóng trong các kỳ. Ready for test chưa tính là đóng.">
+      <Widget
+        id="dashboard-times"
+        title="Thời gian xử lý"
+        description="Lead time: từ ngày tạo tới ngày đóng. Cycle time: từ lần đầu vào In progress (theo history trên Taiga) tới ngày đóng. Tính trên các item đóng trong các kỳ; Ready for test chưa tính là đóng."
+      >
         <Stats>
-          {leadTimeCell('Lead time story', lead.stories)}
-          {leadTimeCell('Lead time task', lead.tasks)}
-          <UnavailableCells unavailable={unavailable} metrics={['developer.cycleTime']} />
+          {timeCell('Lead time story', lead.stories, 'developer.leadTime.stories')}
+          {timeCell('Lead time task', lead.tasks, 'developer.leadTime.tasks')}
+          {cycle && timeCell('Cycle time story', cycle.stories, 'developer.cycleTime.stories')}
+          {cycle && timeCell('Cycle time task', cycle.tasks, 'developer.cycleTime.tasks')}
         </Stats>
       </Widget>
 
