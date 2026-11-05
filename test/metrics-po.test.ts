@@ -83,7 +83,7 @@ function addStory(fake: FakeTaiga, project: number, subject: string, fields: Sto
     ...statusFields(fake, 'userstory', project, closed === undefined ? 'New' : 'Done'),
     milestone: sprint,
     total_points: points,
-    created_date: at(-60),
+    created_date: at(-200),
     finish_date: closed === undefined ? null : at(closed),
     due_date: due === undefined ? null : day(due),
     is_blocked: blocked,
@@ -175,9 +175,10 @@ test('product owner: current sprint with its ideal line, velocity of the last 6 
     productOwner.velocity,
     closed.slice(1).map((sprint, index) => ({ sprint: `sprint:${sprint.id}`, name: sprint.name, start: sprint.estimated_start, finish: sprint.estimated_finish, points: index + 2 })),
   );
-  // Over the periods: the last 6 started sprints. Sprint 7 also holds the open "Left over".
+  // Over the periods: the last 6 started sprints. Sprint 7 also holds the open "Left over". No story changed sprint:
+  // planned at sprint start is the sprint's points.
   assert.deepEqual(productOwner.planned, {
-    basis: 'current',
+    basis: 'sprint-start',
     sprints: [
       ...closed.slice(2, 6).map((sprint, index) => ({ period: `sprint:${sprint.id}`, planned: index + 3, completed: index + 3 })),
       { period: `sprint:${closed[6]!.id}`, planned: 9, completed: 7 },

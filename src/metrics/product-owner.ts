@@ -1,14 +1,16 @@
 // The `productOwner` section of `taigent metrics` (GLOSSARY.md, Dashboards), besides the bug trend (bugs.ts) and the
-// release burndown (releases.ts): the current sprint against its ideal line, velocity, planned vs completed, the
-// project's health, and the sprint and epic tables of `report`, computed by report.ts so both stay the same. A kanban
-// project has no sprint metrics: no `currentSprint`, `velocity`, `planned` or sprint pace.
+// release burndown (releases.ts): the current sprint against its ideal line, velocity, planned vs completed and scope
+// change (sprint-scope.ts, from the history), the project's health, and the sprint and epic tables of `report`,
+// computed by report.ts so both stay the same. A kanban project has no sprint metrics: no `currentSprint`, `velocity`,
+// `planned`, `scopeChange` or sprint pace.
 
 import { addDays, daysBetween } from '../days.ts';
 import { formatReportTablesText, reportTables, type Progress, type ReportTables, type SprintReport } from '../report.ts';
 import type { BugTrendEntry } from './bugs.ts';
-import { HISTORY_UNAVAILABLE, type MetricsContext } from './context.ts';
+import type { MetricsContext } from './context.ts';
 import type { DeveloperMetrics } from './developer.ts';
 import type { Period } from './periods.ts';
+import { type ScopeChange, sprintScope } from './sprint-scope.ts';
 
 /** How many closed sprints velocity covers. */
 const VELOCITY_SPRINTS = 6;
@@ -40,9 +42,9 @@ export interface VelocityEntry {
 }
 
 export interface Planned {
-  /** `current`: the sprint's points now, not the points committed at its start (that needs the history). */
-  basis: 'current';
-  /** One per period, in the order of the report's `periods`. */
+  /** `sprint-start`: the points of the stories in the sprint at the end of its first day, rebuilt from the history. */
+  basis: 'sprint-start';
+  /** One per period, in the order of the report's `periods`; completed is the sprint's closed points now. */
   sprints: { period: string; planned: number; completed: number }[];
 }
 
@@ -72,6 +74,8 @@ export interface ProductOwnerMetrics {
   velocity?: VelocityEntry[];
   /** Absent on a kanban project. */
   planned?: Planned;
+  /** One per period, in the order of the report's `periods`; absent on a kanban project. */
+  scopeChange?: ScopeChange[];
   health: Health;
   /** The tables of `taigent report --json`, without its `project`. */
   report: ReportTables;
@@ -101,13 +105,13 @@ function velocity(sprints: SprintReport[]): VelocityEntry[] {
     .map(({ id, name, start, finish, points }) => ({ sprint: `sprint:${id}`, name, start, finish, points: points.done }));
 }
 
-function planned(sprints: SprintReport[], periods: Period[]): Planned {
+function planned(sprints: SprintReport[], periods: Period[], atStart: Map<number, number>): Planned {
   const byPeriod = new Map(sprints.map((sprint) => [`sprint:${sprint.id}`, sprint]));
   return {
-    basis: 'current',
+    basis: 'sprint-start',
     sprints: periods.flatMap((period) => {
       const sprint = byPeriod.get(period.id);
-      return sprint ? [{ period: period.id, planned: sprint.points.total, completed: sprint.points.done }] : [];
+      return sprint ? [{ period: period.id, planned: atStart.get(sprint.id) ?? 0, completed: sprint.points.done }] : [];
     }),
   };
 }
@@ -162,16 +166,17 @@ function blocked(items: DeveloperMetrics['blocked']): Health['blocked'] {
 }
 
 export function productOwnerMetrics(context: MetricsContext, developer: DeveloperMetrics, bugTrend: BugTrendEntry[]): ProductOwnerMetrics {
-  const { snapshot, today, cadence, periods, notes } = context;
+  const { snapshot, today, cadence, periods } = context;
   const report = reportTables({ milestones: snapshot.sprints, stories: snapshot.stories, ...snapshot.report });
   const health: Health = { overdue: overdue(developer.overdue), openBugs: openBugs(bugTrend), blocked: blocked(developer.blocked) };
   if (cadence === 'week') return { health, report };
-  for (const metric of ['productOwner.planned.sprintStart', 'productOwner.scopeChange']) notes.unavailable.push({ metric, reason: 'history', message: HISTORY_UNAVAILABLE });
   const sprint = currentSprint(report.sprints, today);
+  const scope = sprintScope(snapshot.stories, snapshot.history.story, periods);
   return {
     currentSprint: sprint,
     velocity: velocity(report.sprints),
-    planned: planned(report.sprints, periods),
+    planned: planned(report.sprints, periods, scope.planned),
+    scopeChange: scope.scopeChange,
     health: { sprintPace: sprintPace(sprint), ...health },
     report,
   };
@@ -190,10 +195,21 @@ export function formatProductOwnerText(productOwner: ProductOwnerMetrics, period
     lines.push(`  Current sprint: ${name}, day ${days.elapsed} of ${days.total}: points ${points.done}/${points.total} done, stories ${stories.done}/${stories.total} done, tasks ${tasks.done}/${tasks.total} done; ideal ${ideal} points left today`);
   }
   if (closed) lines.push(`  Velocity (points closed): ${closed.length === 0 ? 'no closed sprint' : closed.map((entry) => `${entry.name} ${entry.points}`).join(', ')}`);
+  const names = new Map(periods.map((period) => [period.id, period.name]));
   if (plan) {
-    const names = new Map(periods.map((period) => [period.id, period.name]));
     const sprints = plan.sprints.map((entry) => `${names.get(entry.period)} ${entry.completed}/${entry.planned}`).join(', ');
-    lines.push(`  Completed/planned points (planned as the sprint's points now): ${sprints || 'no sprint started'}`);
+    lines.push(`  Completed/planned points (planned as the points in the sprint on its first day): ${sprints || 'no sprint started'}`);
+  }
+  if (productOwner.scopeChange) {
+    const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+    lines.push(`  Scope change:${productOwner.scopeChange.length === 0 ? ' no sprint started' : ''}`);
+    for (const { period, added, removed } of productOwner.scopeChange) {
+      const side = ({ points, stories }: ScopeChange['added']) => `${count(stories.length, 'story', 'stories')} (${count(points, 'point', 'points')})`;
+      lines.push(`    ${names.get(period)}: added ${side(added)}, removed ${side(removed)}`);
+      for (const [sign, { stories }] of [['+', added], ['-', removed]] as const) {
+        for (const story of stories) lines.push(`      ${sign} #${story.ref} ${story.subject} (${story.points === null ? 'not estimated' : count(story.points, 'point', 'points')}, ${story.day})`);
+      }
+    }
   }
   lines.push('  Health:');
   if (health.sprintPace) lines.push(describe('sprint pace', health.sprintPace));
