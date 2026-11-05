@@ -4,6 +4,7 @@
 
 import { localDay } from '../days.ts';
 import { HISTORY_UNAVAILABLE, type MetricsContext, type MetricsWarning, type UnavailableMetric } from './context.ts';
+import { type BugTrendEntry, bugMetrics, type DeveloperBugs } from './bugs.ts';
 import { type DeveloperMetrics, developerMetrics } from './developer.ts';
 import { type Cadence, type Period, sprintPeriods, weekPeriods } from './periods.ts';
 import type { MetricsSnapshot } from './snapshot.ts';
@@ -17,7 +18,8 @@ export interface MetricsReport {
   cadence: Cadence;
   /** Oldest first, ending with the current period. */
   periods: Period[];
-  developer: DeveloperMetrics;
+  developer: DeveloperMetrics & { bugs: DeveloperBugs };
+  productOwner: { bugTrend: BugTrendEntry[] };
   warnings: MetricsWarning[];
   unavailable: UnavailableMetric[];
 }
@@ -46,6 +48,7 @@ export function computeMetrics(snapshot: MetricsSnapshot, now: Date): MetricsRep
     context.notes.warnings.push({ code: 'kanban', message: 'the Backlog module (sprints) is off: periods are weeks, Monday to Sunday, and there are no sprint metrics' });
   }
   const developer = developerMetrics(context);
+  const bugs = bugMetrics(context);
   for (const metric of NEED_HISTORY) context.notes.unavailable.push({ metric, reason: 'history', message: HISTORY_UNAVAILABLE });
   const { id, slug, name } = snapshot.project;
   return {
@@ -54,7 +57,8 @@ export function computeMetrics(snapshot: MetricsSnapshot, now: Date): MetricsRep
     today,
     cadence,
     periods: context.periods,
-    developer,
+    developer: { ...developer, bugs: bugs.developer },
+    productOwner: { bugTrend: bugs.bugTrend },
     warnings: context.notes.warnings,
     unavailable: context.notes.unavailable,
   };

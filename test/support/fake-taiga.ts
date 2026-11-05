@@ -222,6 +222,11 @@ export interface FakeIssue {
   severity: number | null;
   priority: number | null;
   is_closed: boolean;
+  /** When the issue was closed (ISO 8601; Taiga names it `finished_date`), null while open. */
+  finished_date: string | null;
+  /** When the issue was created and last modified (ISO 8601): the time it was added; override them to seed dates. */
+  created_date: string;
+  modified_date: string;
 }
 
 /** An issue type, severity or priority of a project ("issue type detail", "severity detail", "priority detail"). */
@@ -985,13 +990,18 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     const project = state.projects.find((p) => p.id === input.project);
     if (!project) throw new Error(`fake taiga: no project ${input.project}`);
     const status = input.status ?? project.default_issue_status;
+    const now = new Date().toISOString();
+    const isClosed = state.issueStatuses.find((s) => s.id === status)?.is_closed ?? false;
     return addItem<FakeIssue>('issue', input, {
       milestone: null,
       type: input.type ?? project.default_issue_type,
       severity: input.severity ?? project.default_severity,
       priority: input.priority ?? project.default_priority,
-      is_closed: state.issueStatuses.find((s) => s.id === status)?.is_closed ?? false,
+      is_closed: isClosed,
       status,
+      finished_date: isClosed ? now : null,
+      created_date: now,
+      modified_date: now,
     } as Omit<FakeIssue, keyof FakeEpic>);
   }
 
@@ -1563,7 +1573,10 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       checkVersion(issue, data);
       const { version: _version, ...changes } = data;
       if (tags !== undefined) changes.tags = tags;
-      if (typeof data.status === 'number') changes.is_closed = state.issueStatuses.find((s) => s.id === data.status)!.is_closed;
+      if (typeof data.status === 'number') {
+        const closed = state.issueStatuses.find((s) => s.id === data.status)!.is_closed;
+        Object.assign(changes, { is_closed: closed, finished_date: closed ? (issue.is_closed ? issue.finished_date : new Date().toISOString()) : null });
+      }
       saveEdit(issue, changes);
       return { status: 200, body: issueJson(issue) };
     }
