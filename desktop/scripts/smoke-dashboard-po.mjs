@@ -5,21 +5,17 @@
 //   - health: four signals, each with its colour and a reason in Vietnamese;
 //   - the current sprint against its ideal line, velocity, planned vs completed labelled by its basis (sprint start),
 //     and the scope change of each sprint, rebuilt from the stories' sprint changes;
-//   - the release burndowns: a declared release with an ideal line, an undeclared tag drawn without one, a declared
-//     release without stories, and a story with two release tags left out, all three warned about;
+//   - the release burndowns: a declared release with an ideal line, an undeclared tag with `.` in its version (a
+//     hand-made `release:3.0.0`) drawn without one but still in the chart colours, a declared release without stories,
+//     and a story with two release tags left out, all three warned about;
 //   - the bug trend with the bugs reopened per period from the issues' history, and the sprint and epic tables that the
 //     Taiga section no longer shows;
-//   - a kanban project (Backlog module off): no sprint widgets, a note saying why.
+//   - a kanban project (Backlog module off): no sprint widgets, a note saying why;
+//   - an invalid project.yaml: the read fails, saying so in Vietnamese with `taigent validate --project` as the fix.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-
-/** The local day `offset` days from today, YYYY-MM-DD. */
-function day(offset) {
-  const now = new Date();
-  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
+import { day } from './smoke-days.mjs';
 
 /**
  * Sprints, release tags and an epic on the stories smoke-dashboard.mjs seeded; no item is added or removed. "Trang hồ
@@ -35,7 +31,7 @@ function plan(fake, slug) {
   const sso = set('Đăng nhập SSO', { milestone: sprint('Sprint 2').id, tags: ['release:v1-0-0'] });
   const profile = set('Trang hồ sơ', { milestone: sprint('Sprint 2').id, tags: ['release:v1-0-0'] });
   const password = set('Đổi mật khẩu', { milestone: sprint('Sprint 1').id, tags: ['release:v1-0-0', 'release:v2-0-0'] });
-  const unclaimed = set('Chưa ai nhận', { tags: ['release:v3-0-0'] });
+  const unclaimed = set('Chưa ai nhận', { tags: ['release:3.0.0'] });
   fake.addMilestoneChange(unclaimed, { at: new Date(`${day(-1)}T12:00:00`).toISOString(), from: sprint('Sprint 2'), to: null });
   const epic = fake.addEpic({ project: project.id, subject: 'Đăng nhập' });
   fake.addEpicRelatedUserStory(epic, sso);
@@ -43,7 +39,7 @@ function plan(fake, slug) {
   return { project, sso, profile, password, unclaimed, epic };
 }
 
-export async function smokeProductOwner({ page, fake, work, project, shots, check, log, refresh }) {
+export async function smokeProductOwner({ app, page, fake, work, project, shots, check, log, refresh, setEnv }) {
   const projectFile = join(work, 'taiga', project, 'project.yaml');
   const original = await readFile(projectFile, 'utf8');
   const signals = () =>
@@ -100,16 +96,21 @@ export async function smokeProductOwner({ page, fake, work, project, shots, chec
       `dashboard PO: scope change per sprint with the stories added and taken out (${scope.join(', ')})`,
     );
 
-    // Release burndown: v1-0-0 declared with 2 stories, v0-9-0 declared without any, v3-0-0 tagged but not declared;
+    // Release burndown: v1-0-0 declared with 2 stories, v0-9-0 declared without any, 3.0.0 tagged but not declared;
     // "Đổi mật khẩu" carries two release tags and is in none.
     const releases = await page
       .locator('#dashboard-release section[data-release]')
       .evaluateAll((items) => items.map((item) => `${item.dataset.release}:${item.dataset.declared}:${item.dataset.stories}:${item.querySelectorAll('.recharts-line').length}`));
-    check(releases.join('|') === 'v1-0-0:true:2:2|v0-9-0:true:0:0|v3-0-0:false:1:1', `dashboard PO: release burndowns, the undeclared one without an ideal line (${releases.join(', ')})`);
+    check(releases.join('|') === 'v1-0-0:true:2:2|v0-9-0:true:0:0|3.0.0:false:1:1', `dashboard PO: release burndowns, the undeclared one without an ideal line (${releases.join(', ')})`);
+    // The chart's id holds the version: `.` must not break the rule that gives its series their colour.
+    const colour = await page
+      .locator('#dashboard-release section[data-release="3.0.0"] [data-slot="chart"]')
+      .evaluate((chart) => getComputedStyle(chart).getPropertyValue('--color-remaining').trim());
+    check(colour !== '', `dashboard PO: the chart of release 3.0.0 gets its series colour (--color-remaining: ${colour || 'none'})`);
     const warnings = await attributes('#dashboard-release-warnings [data-warning]', 'data-warning');
     check(warnings.join('|') === 'release-undeclared|release-empty|release-multiple', `dashboard PO: the three release warnings (${warnings.join(', ')})`);
     const warningText = (await page.textContent('#dashboard-release-warnings')) ?? '';
-    check(warningText.includes('release:v3-0-0') && warningText.includes('Đổi mật khẩu') && warningText.includes('Cách sửa'), 'dashboard PO: the warnings name the tag, the story and the fix');
+    check(warningText.includes('release:3.0.0') && warningText.includes('Đổi mật khẩu') && warningText.includes('Cách sửa'), 'dashboard PO: the warnings name the tag, the story and the fix');
 
     check(await page.isVisible('#dashboard-bug-trend [data-slot="chart"] .recharts-surface'), 'dashboard PO: the bug trend is a chart');
     check((await attributes('#dashboard-bug-trend tr[data-period]', 'data-period')).length === 2, 'dashboard PO: the bug trend has one row per sprint');
@@ -136,6 +137,24 @@ export async function smokeProductOwner({ page, fake, work, project, shots, chec
     );
     log('dashboard PO kanban note:', (await page.textContent('#dashboard-po-kanban'))?.trim());
     taiga.modules.is_backlog_activated = true;
+
+    // An invalid project.yaml, in a copy of the manifests (TAIGENT_MANIFESTS_DIR, put back after) that the open project
+    // and its watcher never see: the CLI's validation error, said in Vietnamese with its fix.
+    const invalidDir = await mkdtemp(join(work, 'dashboard-po-'));
+    await cp(join(work, 'taiga', project), join(invalidDir, project), { recursive: true });
+    await writeFile(join(invalidDir, project, 'project.yaml'), `${original.trimEnd()}\nreleases: nope\n`);
+    const [manifests] = await app.evaluate(() => [process.env.TAIGENT_MANIFESTS_DIR]);
+    await setEnv({ TAIGENT_MANIFESTS_DIR: invalidDir });
+    try {
+      await refresh();
+      const invalid = (await page.locator('#dashboard-failure .failure').count()) > 0 ? ((await page.textContent('#dashboard-failure .failure')) ?? '') : '';
+      check(
+        invalid.includes('không hợp lệ') && invalid.includes(`taigent validate --project ${project}`) && (await page.isVisible('#dashboard-product-owner')),
+        `dashboard PO: an invalid project.yaml says so in Vietnamese, with taigent validate --project as the fix; the numbers stay (${invalid.split('\n')[0]})`,
+      );
+    } finally {
+      await setEnv({ TAIGENT_MANIFESTS_DIR: manifests });
+    }
   } finally {
     await writeFile(projectFile, original);
   }

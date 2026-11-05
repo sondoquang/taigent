@@ -18,6 +18,12 @@ export function localDay(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/** `YYYY-MM-DD HH:mm` of an instant (ISO 8601) in the local time zone. */
+export function localMinute(iso: string): string {
+  const date = new Date(iso);
+  return `${localDay(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 /** The day `days` after the calendar day `day` (before it when negative). */
 export function addDays(day: string, days: number): string {
   const date = parseDay(day)!;

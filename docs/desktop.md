@@ -176,15 +176,21 @@ bao giờ ghi.
   Dashboard**. Vai trò lưu trong `settings.json` của ứng dụng (khoá `role`), giữ qua các lần mở.
 - **Số liệu.** Main process chạy `taigent metrics --project <slug> --cache-dir <userData>/metrics-cache --json` (xem
   `docs/cli.md` §Metrics) trong repo đang mở, nên `.env` của repo (`TAIGA_*`) được dùng như mọi lệnh đọc khác. Mỗi
-  lần đọc xong, kết quả được lưu vào `metrics-cache/latest-<slug>.json` trong thư mục dữ liệu của ứng dụng. Lần sau
-  mở, Dashboard hiện ngay số liệu đã lưu kèm thời điểm đọc (*Cập nhật lúc …*), trong khi lần đọc mới chạy ở nền.
-  Cùng thư mục đó, CLI giữ history của từng item (`history-<slug>-<hash>.json`), nên các lần đọc sau chỉ đọc lại
-  history của item đã đổi trên Taiga.
-- **Khi nào đọc.** Lần đầu mục Dashboard hiện ra trong phiên, và mỗi lần đổi dự án (Dashboard đang ẩn thì đọc khi nó
-  hiện ra). Nút **Làm mới** đọc lại.
+  lần đọc xong, kết quả được lưu vào `metrics-cache/latest-<slug>-<hash>.json` trong thư mục dữ liệu của ứng dụng,
+  `<hash>` là 16 ký tự hex đầu của SHA-256 URL API Taiga mà bạn đang đăng nhập (như `whoami` báo, cùng cách CLI chọn),
+  nên mỗi dự án trên mỗi Taiga có một bản lưu riêng. File lưu kèm số phiên bản định dạng và URL API; file của phiên
+  bản khác, của Taiga khác, hay thiếu một phần số liệu (`developer`, `productOwner`, `businessAnalyst`, `periods`) bị bỏ
+  qua. Lần sau mở, Dashboard hiện ngay số liệu đã lưu kèm thời điểm đọc (*Cập nhật lúc …*), trong khi lần đọc mới chạy
+  ở nền; chưa đăng nhập thì không hiện số liệu đã lưu và không lưu gì. File được ghi ra một file tạm tên riêng rồi đổi
+  tên (`writeAtomic` của lõi taigent), nên hai lần đọc chồng nhau không giẫm lên nhau. Cùng thư mục đó, CLI giữ history
+  của từng item (`history-<slug>-<hash>.json`), nên các lần đọc sau chỉ đọc lại history của item đã đổi trên Taiga.
+- **Khi nào đọc.** Lần đầu mục Dashboard hiện ra trong phiên (sau khi ứng dụng kiểm tra xong đăng nhập), mỗi lần đổi
+  dự án, và mỗi lần URL API của đăng nhập đổi (đăng nhập, đăng xuất); Dashboard đang ẩn thì đọc khi nó hiện ra. Nút
+  **Làm mới** đọc lại.
 - **Lỗi.** Không đọc được (chưa đăng nhập, đăng nhập hết hạn hoặc bị từ chối, project không có trên Taiga hoặc bạn
-  không xem được, mạng hay URL API) thì lỗi hiện bằng tiếng Việt kèm cách sửa, chi tiết của CLI để bên dưới. Số liệu
-  đang hiện vẫn giữ nguyên.
+  không xem được, `project.yaml` của dự án không hợp lệ, mạng hay URL API) thì lỗi hiện bằng tiếng Việt kèm cách sửa,
+  chi tiết của CLI để bên dưới. `project.yaml` không hợp lệ (CLI thoát mã 4, lỗi `validation`) thì cách sửa là chạy
+  `taigent validate --project <slug>`, sửa các lỗi nó báo, rồi bấm *Làm mới*. Số liệu đang hiện vẫn giữ nguyên.
 
 **Developer** (từ phần `developer` của `taigent metrics`):
 
@@ -192,7 +198,7 @@ bao giờ ghi.
   đếm riêng;
 - **Thời gian xử lý**: lead time và cycle time trung vị của story và của task. Cycle time tính từ lần đầu item vào
   `In progress` (theo history trên Taiga) tới lúc đóng; Ready for test chưa tính là đóng. Số liệu lưu từ phiên bản
-  taigent cũ chưa có cycle time thì hai ô này chờ lần đọc sau;
+  taigent cũ chưa có cycle time thì hai ô này hiện *Chưa có* kèm lý do, tới lần đọc sau;
 - **Xu hướng hoàn thành**: biểu đồ cột story và task đóng trong từng kỳ;
 - **Bug**: số bug resolved và số bug Rejected (đếm riêng) trong kỳ hiện tại, resolution time trung vị, **reopen
   rate** (số bug reopened, tức từ Ready for test hoặc Closed quay lại status đang mở theo history trên Taiga, chia cho
@@ -234,7 +240,8 @@ chú nói lý do, các xu hướng tính theo tuần.
 
 **Business Analyst** (từ phần `businessAnalyst` của `taigent metrics`):
 
-- **Pipeline phân tích**: số story trên Taiga theo từng status, theo thứ tự status của project, dạng biểu đồ và bảng.
+- **Pipeline phân tích**: số story trên Taiga theo từng status, theo thứ tự status của project, dạng biểu đồ và bảng
+  (project chưa có status nào cho user story thì thay bằng một ô trống nói lý do).
   Dashboard đọc *New* là *đang phân tích* và *Ready* là *đủ AC* (tên status trên Taiga giữ nguyên). Thêm nhóm **Chưa
   apply**: story của backlog chưa có trên Taiga (mới, hoặc story đã ghi trong `state.json` không còn trên Taiga);
 - **Requirement change**: số lần sửa mô tả (description) của story trên Taiga sau lần đầu story vào *Ready* (theo
@@ -255,7 +262,8 @@ của mục Backlog). Dự án chưa có `backlog.yaml`, hoặc manifest hay `re
 thay vào đó là ghi chú nói lý do và cách sửa (lỗi thì chạy `taigent validate --project <slug>`), kèm lời của CLI.
 
 Biểu đồ dùng component Chart của shadcn/ui (Recharts, đóng gói cùng renderer), màu lấy từ token `--chart-1`…`--chart-5`
-của `globals.css`. Mỗi widget có `id` ổn định (`#dashboard-throughput`, `#dashboard-workload`…) cho smoke.
+của `globals.css`; selector màu của mỗi biểu đồ đặt id trong ngoặc kép (`CSS.escape`), nên id có `:` hay `.` (như
+release `1.2.0`) vẫn có màu. Mỗi widget có `id` ổn định (`#dashboard-throughput`, `#dashboard-workload`…) cho smoke.
 
 ## Duyệt và góp ý
 
@@ -714,9 +722,11 @@ và HEAD, trạng thái cùng nội dung working tree không đổi. Ảnh chụ
 
 Phần **Dashboard** (`scripts/smoke-dashboard.mjs`) chạy ngay sau khi mở repo, khi Dashboard đang hiện. Lần đọc đầu
 (bằng đăng nhập của bạn, hoặc lỗi nếu chưa đăng nhập) chạy xong trước, rồi script trỏ CLI của ứng dụng vào FakeTaiga
-(như phần Ticket của tôi) với một project cùng slug với fixture: hai sprint, story và task của người dùng giả và một
-đồng đội, ba bug (một bug bị reopen rồi đóng lại), và history của một story, một task và bug đó. Script kiểm tra: *Làm mới* đọc số liệu (Taiga giả chỉ nhận
-request đọc), kết quả được lưu trong `metrics-cache/` của user-data và CLI giữ history ở đó (`--cache-dir`); chưa có
+(như phần Ticket của tôi) qua một proxy có thể giữ request lại, với một project cùng slug với fixture: hai sprint,
+story và task của người dùng giả và một đồng đội, ba bug (một bug bị reopen rồi đóng lại), và history của một story,
+một task và bug đó. Script tải lại cửa sổ để `whoami` của ứng dụng biết đăng nhập giả, rồi kiểm tra: Dashboard đọc số
+liệu (Taiga giả chỉ nhận request đọc), kết quả được lưu trong `metrics-cache/latest-<slug>-<hash>.json` của user-data
+(phiên bản, URL API của đăng nhập, số liệu) và CLI giữ history ở đó (`--cache-dir`); chưa có
 vai trò thì số liệu chờ lựa chọn, chọn Developer trong trang thì `settings.json` lưu `role`; số story/task của kỳ hiện
 tại, bug resolved và Rejected, cycle time của story và của task, reopen rate (1 reopened / 2 resolved), biểu đồ xu
 hướng, workload (kèm *Chưa giao*), danh sách quá hạn và bị block; *Chỉ tôi* chỉ giữ
@@ -726,13 +736,16 @@ xếp các story giả vào hai sprint, gắn tag release, thêm một epic và 
 thư mục tạm (trả lại sau), đọc lại rồi kiểm tra: bốn tín hiệu sức khoẻ có màu và lý do tiếng Việt; tiến độ sprint hiện
 tại, velocity, planned vs completed có nhãn theo `basis` (lúc sprint bắt đầu); scope change của từng sprint (story
 thêm vào sau ngày bắt đầu, và một story rút ra theo history đổi sprint); burndown của release đã khai báo có đường lý tưởng, tag chưa
-khai báo thì không, kèm đủ ba cảnh báo release; bug trend (tạo, resolved, reopened, mở cuối kỳ theo từng sprint); bảng theo sprint (cả story bị block), theo epic và story
-ngoài sprint. Tắt module Backlog trên Taiga giả thì các widget sprint biến mất và có ghi chú lý do. Settings hiện vai
+khai báo (`release:3.0.0`, có dấu chấm) thì không nhưng biểu đồ vẫn có màu, kèm đủ ba cảnh báo release; bug trend (tạo, resolved, reopened, mở cuối kỳ theo từng sprint); bảng theo sprint (cả story bị block), theo epic và story
+ngoài sprint. Tắt module Backlog trên Taiga giả thì các widget sprint biến mất và có ghi chú lý do. `project.yaml`
+không hợp lệ (trong một bản chép riêng của manifest, trỏ bằng `TAIGENT_MANIFESTS_DIR`) thì lỗi tiếng Việt chỉ cách sửa `taigent validate --project <slug>`. Settings hiện vai
 trò đang chọn và đổi lại được; *Làm mới* thấy story vừa đóng trên
-Taiga giả, kèm thời điểm mới. Sau đó script trỏ CLI vào một server không bao giờ trả lời rồi tải lại cửa sổ (như mở
-lại ứng dụng): vai trò còn giữ, số liệu đã lưu hiện kèm thời điểm trong khi lần đọc mới còn chạy. Server ngắt kết nối,
-rồi đăng nhập bị từ chối (sai mật khẩu): cả hai lần đều hiện lỗi tiếng Việt kèm cách sửa mà số liệu cũ vẫn trên màn
-hình. Xong thì trả lại biến môi trường.
+Taiga giả, kèm thời điểm mới. Sau đó script xoá cycle time khỏi số liệu đã lưu (như bản lưu của taigent cũ), cho proxy
+giữ mọi request trừ đăng nhập rồi tải lại cửa sổ (như mở lại ứng dụng): vai trò còn giữ, số liệu đã lưu hiện kèm thời
+điểm trong khi lần đọc mới còn chạy, hai ô cycle time hiện *Chưa có* kèm lý do. Proxy ngắt kết nối, rồi đăng nhập bị
+từ chối (sai mật khẩu): cả hai lần đều hiện lỗi tiếng Việt kèm cách sửa mà số liệu cũ vẫn trên màn hình. Cuối cùng
+script ghi một bản lưu theo định dạng cũ (chỉ số liệu, thiếu phần Product Owner và Business Analyst), chọn Product
+Owner và tải lại cửa sổ: bản lưu đó bị bỏ qua, dashboard hiện lần đọc mới. Xong thì trả lại biến môi trường.
 
 Phần **Business Analyst** (`scripts/smoke-dashboard-ba.mjs`) chạy khi menu vừa chuyển sang Business Analyst. Script
 trỏ CLI vào một bản chép riêng của fixture (ứng dụng và mục Backlog không thấy các sửa đổi này): story `SMOKE-FIXTURE`

@@ -4,6 +4,7 @@
 // related stories. The client disables Taiga's pagination, so every list is complete.
 
 import type { TaigaClient, TaigaItem, TaigaMilestone, TaigaMilestoneStats, TaigaStory } from './taiga/client.ts';
+import { mapLimited, TAIGA_CONCURRENCY } from './taiga/concurrency.ts';
 
 /** Done out of total. */
 export interface Progress {
@@ -83,10 +84,14 @@ function countStories(stories: TaigaStory[]): StoryCounts {
   return { done, open: stories.length - done };
 }
 
-/** What the tables need beyond the sprints and the stories: each sprint's stats, the epics and their stories. */
+/**
+ * What the tables need beyond the sprints and the stories: each sprint's stats, the epics and their stories. One
+ * request per sprint and per epic, TAIGA_CONCURRENCY at a time.
+ */
 export async function readReportExtras(client: TaigaClient, projectId: number, milestones: TaigaMilestone[]): Promise<Pick<ReportSource, 'stats' | 'epics' | 'epicStories'>> {
-  const [stats, epics] = await Promise.all([Promise.all(milestones.map((milestone) => client.getMilestoneStats(milestone.id))), client.listItems('epic', projectId)]);
-  const epicStories = await Promise.all(epics.map((epic) => client.listEpicUserStories(epic.id)));
+  const stats = await mapLimited(milestones, TAIGA_CONCURRENCY, (milestone) => client.getMilestoneStats(milestone.id));
+  const epics = await client.listItems('epic', projectId);
+  const epicStories = await mapLimited(epics, TAIGA_CONCURRENCY, (epic) => client.listEpicUserStories(epic.id));
   return { stats, epics, epicStories };
 }
 

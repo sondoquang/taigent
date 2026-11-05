@@ -1,7 +1,7 @@
 // `taigent tickets`: the Period's tickets of the authenticated user (see GLOSSARY.md), each with its Due status and Effort.
 // Read-only. Days are calendar days in the local time zone (TZ); the client knows Taiga's field names.
 
-import { localDay, parseDay } from './days.ts';
+import { localDay, localMinute, parseDay } from './days.ts';
 import type { TaigaAssignedStory, TaigaClient } from './taiga/client.ts';
 
 /** An inclusive range of days: `from` and `to` as written (YYYY-MM-DD), `start`/`end` the instants bounding it. */
@@ -89,14 +89,6 @@ export function dayRange(from: string, to: string): DayRange {
   const start = parseDay(from)!;
   const last = parseDay(to)!;
   return { from, to, start, end: new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1) };
-}
-
-const pad = (n: number) => String(n).padStart(2, '0');
-
-/** `YYYY-MM-DD HH:mm` in the local time zone. */
-function localMinute(iso: string): string {
-  const date = new Date(iso);
-  return `${localDay(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /** Due status by calendar day: a closed ticket's closing day, or an open ticket's `today`, against its due date. */

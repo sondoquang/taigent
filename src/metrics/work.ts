@@ -3,7 +3,7 @@
 // time they entered In progress, from their history.
 
 import { localDay } from '../days.ts';
-import type { TaigaHistoryEntry, TaigaStatus } from '../taiga/client.ts';
+import type { TaigaHistoryEntry, TaigaHistoryStatus, TaigaStatus } from '../taiga/client.ts';
 import type { MetricsSnapshot } from './snapshot.ts';
 
 export type WorkType = 'story' | 'task';
@@ -33,14 +33,21 @@ export interface WorkItem {
 const IN_PROGRESS = 'In progress';
 
 /**
+ * The name of a status an item's history recorded: its name in the project's status list, which Taiga does not
+ * translate (the history may name it in another language), else the history's own name for a status no longer in
+ * the list; null for none.
+ */
+export function historyStatusName(status: TaigaHistoryStatus | null, statuses: Map<number, TaigaStatus>): string | null {
+  return status === null ? null : (statuses.get(status.id)?.name ?? status.name);
+}
+
+/**
  * When an item first entered In progress, from its changes (oldest first): the first change into it, or its creation
- * when its first status change leaves In progress (Taiga records no change for the status an item is created in). A
- * status goes by its name in the project's list, which Taiga does not translate, and by the name the history recorded
- * for a status no longer in the list.
+ * when its first status change leaves In progress (Taiga records no change for the status an item is created in).
  */
 function startedAt(history: TaigaHistoryEntry[], createdAt: string | null, statuses: Map<number, TaigaStatus>): string | null {
   const changes = history.flatMap((entry) => (entry.status ? [{ at: entry.at, ...entry.status }] : []));
-  const isInProgress = (status: { id: number; name: string | null } | null) => status !== null && (statuses.get(status.id)?.name ?? status.name) === IN_PROGRESS;
+  const isInProgress = (status: TaigaHistoryStatus | null) => historyStatusName(status, statuses) === IN_PROGRESS;
   if (changes.length > 0 && isInProgress(changes[0]!.from)) return createdAt;
   return changes.find((change) => isInProgress(change.to))?.at ?? null;
 }

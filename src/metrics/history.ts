@@ -1,37 +1,41 @@
 // The Taiga history of each user story, task and issue of a project, as `taigent metrics` reads it: one
 // `GET /history/{userstory|task|issue}/{id}` per item. With --cache-dir the histories are kept in one file per Taiga
 // instance (API URL) and project, by item type and id, and a cached history is used again while the item's
-// `modified_date` is the one it was read with (any change on Taiga moves it). Without --cache-dir nothing is written.
-// A cache file that cannot be read, of another version, or of another instance or project is ignored: the histories
-// are read again and the file is rewritten.
+// fingerprint (its `modified_date` and the fields Taiga changes without moving it, snapshot.ts) is the one it was
+// read with. Without --cache-dir nothing is written. A cache file that cannot be read, of another version, or of
+// another instance or project is ignored: the histories are read again and the file is rewritten. When a history
+// read fails, no other one starts and the histories read so far are still written to the cache before the failure is
+// reported.
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { isRecord } from '../guards.ts';
+import { writeAtomic } from '../files.ts';
+import { errorMessage, isRecord } from '../guards.ts';
 import type { TaigaClient, TaigaHistoryEntry } from '../taiga/client.ts';
+import { mapLimited, TAIGA_CONCURRENCY } from '../taiga/concurrency.ts';
 
 export type HistoryType = 'story' | 'task' | 'issue';
 
 /** The changes of each item (oldest first), by type and item id. */
 export type ItemHistories = Record<HistoryType, Map<number, TaigaHistoryEntry[]>>;
 
-/** An item whose history to read, with its `modified_date` (null when Taiga sent none: never taken from the cache). */
+/** An item whose history to read, with its fingerprint (null when Taiga sent no `modified_date`: never cached). */
 export interface HistoryItem {
   type: HistoryType;
   id: number;
-  modifiedAt: string | null;
+  fingerprint: string | null;
 }
 
 /** Bumped whenever the file's shape or `TaigaHistoryEntry` changes, so an old file is read again. */
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 3;
 
-/** History reads in flight at once: one request per item, bounded so Taiga does not throttle (429). */
-const CONCURRENCY = 8;
+/** The --cache-dir cannot hold the cache file (not a directory, no permission). Maps to ExitCode.Usage. */
+export class HistoryCacheError extends Error {}
 
-/** One cached history: the item's `modified_date` when it was read, and its changes. */
+/** One cached history: the item's fingerprint when it was read, and its changes. */
 interface CachedHistory {
-  modifiedAt: string;
+  fingerprint: string;
   entries: TaigaHistoryEntry[];
 }
 
@@ -60,19 +64,21 @@ async function loadCache(path: string, apiUrl: string, project: number): Promise
   return parsed.items;
 }
 
-/** The cached changes of an item read at `modifiedAt`, undefined when there are none or they look damaged. */
-function cachedEntries(raw: unknown, modifiedAt: string): TaigaHistoryEntry[] | undefined {
-  if (!isRecord(raw) || raw.modifiedAt !== modifiedAt || !Array.isArray(raw.entries)) return undefined;
+/** The cached changes of an item read at `fingerprint`, undefined when there are none or they look damaged. */
+function cachedEntries(raw: unknown, fingerprint: string): TaigaHistoryEntry[] | undefined {
+  if (!isRecord(raw) || raw.fingerprint !== fingerprint || !Array.isArray(raw.entries)) return undefined;
   const entries: unknown[] = raw.entries;
   return entries.every((entry) => isRecord(entry) && typeof entry.at === 'string') ? (entries as TaigaHistoryEntry[]) : undefined;
 }
 
-/** Writes the cache file whole, through a temporary file, so a reader never sees half of it. */
+/** Writes the cache file whole and atomically, so a reader never sees half of it. */
 async function saveCache(path: string, file: CacheFile): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(file)}\n`);
-  await rename(temporary, path);
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await writeAtomic(path, `${JSON.stringify(file)}\n`);
+  } catch (error) {
+    throw new HistoryCacheError(`cannot write the history cache in ${dirname(path)}: ${errorMessage(error)}; give a writable directory as --cache-dir`);
+  }
 }
 
 /** The history of every item in `items`; from the cache in `cacheDir` (when given) for the unchanged ones. */
@@ -81,17 +87,19 @@ export async function readHistories(client: TaigaClient, project: { id: number; 
   const cached = path === undefined ? {} : await loadCache(path, client.apiUrl, project.id);
   const histories: ItemHistories = { story: new Map(), task: new Map(), issue: new Map() };
   const kept: Record<string, CachedHistory> = {};
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const { type, id, modifiedAt } = items[next++]!;
+  const save = () => (path === undefined ? undefined : saveCache(path, { version: CACHE_VERSION, apiUrl: client.apiUrl, project: project.id, items: kept }));
+  try {
+    await mapLimited(items, TAIGA_CONCURRENCY, async ({ type, id, fingerprint }) => {
       const key = `${type}:${id}`;
-      const entries = (modifiedAt === null ? undefined : cachedEntries(cached[key], modifiedAt)) ?? (await client.listHistory(type, id));
+      const entries = (fingerprint === null ? undefined : cachedEntries(cached[key], fingerprint)) ?? (await client.listHistory(type, id));
       histories[type].set(id, entries);
-      if (modifiedAt !== null) kept[key] = { modifiedAt, entries };
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, items.length) }, worker));
-  if (path !== undefined) await saveCache(path, { version: CACHE_VERSION, apiUrl: client.apiUrl, project: project.id, items: kept });
+      if (fingerprint !== null) kept[key] = { fingerprint, entries };
+    });
+  } catch (error) {
+    // The read failure is what to report; a cache that cannot be written as well only costs the next run its reads.
+    await save()?.catch(() => undefined);
+    throw error;
+  }
+  await save();
   return histories;
 }

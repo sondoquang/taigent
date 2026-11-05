@@ -9,7 +9,7 @@ import { StatCell } from '@/components/common.tsx';
 import { type ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart.tsx';
 import { Label } from '@/components/ui/label.tsx';
 import { Switch } from '@/components/ui/switch.tsx';
-import { days, periodLabel, Stats, Widget, type WidgetRow, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
+import { currentPeriod, days, percent, periodLabel, periodNames, Stats, Widget, type WidgetRow, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
 
 const TREND_CONFIG = {
   stories: { label: 'Story', color: 'var(--chart-1)' },
@@ -18,16 +18,16 @@ const TREND_CONFIG = {
 
 const TYPE_TEXT: Record<DeveloperItem['type'], string> = { story: 'Story', task: 'Task' };
 
-/** A reopen rate as a whole percentage; "—" without a bug resolved. */
-function percent(rate: number | null): string {
-  return rate === null ? '—' : `${Math.round(rate * 100)}%`;
-}
-
-/** A median time cell (lead time, cycle time); `metric` is its hook for the smoke, e.g. `developer.cycleTime.stories`. */
-function timeCell(label: string, time: MedianDays, metric: string): ReactNode {
+/**
+ * A median time cell (lead time, cycle time); `metric` is its hook for the smoke, e.g. `developer.cycleTime.stories`.
+ * Without `time` (a read saved by an older taigent has no cycle time) it says so: "Chưa có" until the next read.
+ */
+function timeCell(label: string, time: MedianDays | undefined, metric: string): ReactNode {
   return (
     <div className="min-w-0" data-metric={metric}>
-      {time.medianDays === null ? (
+      {time === undefined ? (
+        <StatCell label={`${label} (lần đọc này từ phiên bản taigent cũ, bấm Làm mới để đọc lại)`} value="Chưa có" />
+      ) : time.medianDays === null ? (
         <StatCell label={`${label} (chưa có item nào đóng)`} value="—" />
       ) : (
         <StatCell label={`${label} (trung vị của ${time.count} item)`} value={days(time.medianDays)} />
@@ -56,17 +56,13 @@ export function DeveloperDashboard({ report }: { report: MetricsReport }) {
   const me = developer.me;
   const scope = mine ? 'mine' : 'all';
   const names = new Map(developer.people.map((person) => [person.id, person.username]));
-  const periodOf = new Map(periods.map((period) => [period.id, period]));
-  const label = (id: string) => {
-    const period = periodOf.get(id);
-    return period ? periodLabel(period) : id;
-  };
-  const current = periods.find((period) => period.current) ?? periods.at(-1);
+  const label = periodNames(periods);
+  const current = currentPeriod(periods);
   const throughput = developer.periods.find((entry) => entry.period === current?.id)?.[scope];
   const bugs = developer.bugs.periods.find((entry) => entry.period === current?.id)?.[scope];
   const lead = developer.leadTime[scope];
-  // A read saved by an older taigent has no cycle time: its cells wait for the next read.
-  const cycle = developer.cycleTime?.[scope];
+  // A read saved by an older taigent has no cycle time: its cells say so until the next read.
+  const cycle = (developer.cycleTime as MetricsReport['developer']['cycleTime'] | undefined)?.[scope];
   const assignedToMe = (item: DeveloperItem) => !mine || item.assignees.includes(me.id);
   const workload = mine ? developer.workload.filter((row) => row.assignee === me.id) : developer.workload;
   const blocked = developer.blocked.filter(assignedToMe);
@@ -111,8 +107,8 @@ export function DeveloperDashboard({ report }: { report: MetricsReport }) {
         <Stats>
           {timeCell('Lead time story', lead.stories, 'developer.leadTime.stories')}
           {timeCell('Lead time task', lead.tasks, 'developer.leadTime.tasks')}
-          {cycle && timeCell('Cycle time story', cycle.stories, 'developer.cycleTime.stories')}
-          {cycle && timeCell('Cycle time task', cycle.tasks, 'developer.cycleTime.tasks')}
+          {timeCell('Cycle time story', cycle?.stories, 'developer.cycleTime.stories')}
+          {timeCell('Cycle time task', cycle?.tasks, 'developer.cycleTime.tasks')}
         </Stats>
       </Widget>
 

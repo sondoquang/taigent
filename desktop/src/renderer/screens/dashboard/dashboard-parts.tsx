@@ -1,5 +1,5 @@
 // Pieces every Role's dashboard uses: the widget card (its `id` is the stable hook of the smoke, ADR 0004), the stat
-// row, the edge-to-edge table and the period label.
+// row, the edge-to-edge table, the period labels, the current period and percentages.
 
 import type { ReactNode } from 'react';
 import type { Period } from '../../../shared/api.ts';
@@ -9,6 +9,25 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 /** A period as the dashboards name it: the sprint's name, or "Tuần <Monday>" for a week of a kanban project. */
 export function periodLabel(period: Period): string {
   return period.id.startsWith('week:') ? `Tuần ${period.start}` : period.name;
+}
+
+/** The label of a period id of the report (`periodLabel`); the id itself for a period the report does not list. */
+export function periodNames(periods: Period[]): (id: string) => string {
+  const byId = new Map(periods.map((period) => [period.id, period]));
+  return (id) => {
+    const period = byId.get(id);
+    return period ? periodLabel(period) : id;
+  };
+}
+
+/** The report's current period: the one the CLI marks current, else the last one. */
+export function currentPeriod(periods: Period[]): Period | undefined {
+  return periods.find((period) => period.current) ?? periods.at(-1);
+}
+
+/** A rate as a whole percentage; "—" without one (nothing to count it on). */
+export function percent(rate: number | null): string {
+  return rate === null ? '—' : `${Math.round(rate * 100)}%`;
 }
 
 /** Days as Vietnamese writes them (2,5 ngày). */

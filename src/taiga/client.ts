@@ -468,7 +468,7 @@ export interface TaigaHistoryStatus {
 /**
  * One change of a user story, task or issue (`GET /history/{userstory|task|issue}/{id}`; taiga-back's
  * HistoryEntrySerializer, type 1 "change"): when, and what it changed among the fields `metrics` reads, each null
- * when the change left it alone. Taiga takes the before and after values from the entry's `diff` (raw ids and text)
+ * (false) when the change left it alone. Taiga takes the before and after values from the entry's `diff` (raw ids)
  * and the status names from its `values_diff`.
  */
 export interface TaigaHistoryEntry {
@@ -478,8 +478,8 @@ export interface TaigaHistoryEntry {
   status: { from: TaigaHistoryStatus | null; to: TaigaHistoryStatus | null } | null;
   /** The sprint (milestone) id before and after (null: in no sprint). */
   milestone: { from: number | null; to: number | null } | null;
-  /** The description before and after. */
-  description: { from: string; to: string } | null;
+  /** Whether it changed the description (its text is not kept: only the edit counts). */
+  description: boolean;
 }
 
 /** What `taigent status` and `taigent comment` change on a story: its status (by id), and/or a comment. */
@@ -608,12 +608,11 @@ function parseHistoryEntry(raw: unknown): TaigaHistoryEntry {
     return id === null ? null : { id, name: typeof name === 'string' ? name : null };
   };
   const milestone = historyPair(r.diff, 'milestone');
-  const description = historyPair(r.diff, 'description');
   return {
     at: field(r, 'created_at', 'string', what),
     status: status ? { from: statusAt(0), to: statusAt(1) } : null,
     milestone: milestone ? { from: historyId(milestone[0]), to: historyId(milestone[1]) } : null,
-    description: description ? { from: String(description[0] ?? ''), to: String(description[1] ?? '') } : null,
+    description: historyPair(r.diff, 'description') !== undefined,
   };
 }
 

@@ -482,10 +482,13 @@ export interface TaigentApi {
   /** The Role of the Dashboard, from the app settings; null until the user picks one. */
   role(): Promise<Role | null>;
   setRole(role: Role): Promise<Result<Role>>;
-  /** The last metrics read of project `slug` that the app saved (shown at once, with its `generatedAt`); null without one. */
-  cachedMetrics(slug: string): Promise<Result<MetricsReport | null>>;
-  /** Dashboard: `taigent metrics --project <slug> --json` (read-only); a success replaces the saved read. */
-  readMetrics(slug: string): Promise<Result<MetricsReport>>;
+  /**
+   * The last metrics read of project `slug` that the app saved for the Taiga at `apiUrl` (the login's, from whoami),
+   * shown at once with its `generatedAt`; null without one, or without a login (`apiUrl` undefined).
+   */
+  cachedMetrics(slug: string, apiUrl: string | undefined): Promise<Result<MetricsReport | null>>;
+  /** Dashboard: `taigent metrics --project <slug> --json` (read-only); a success replaces the saved read of `apiUrl`. */
+  readMetrics(slug: string, apiUrl: string | undefined): Promise<Result<MetricsReport>>;
 }
 
 export const CHANNELS = {

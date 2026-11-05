@@ -1,6 +1,7 @@
 // Smoke step of the Dashboard (spec #64 Seam 3, ticket #70), run by smoke.mjs right after the repository opens, while
 // the Dashboard is the shown section. Against FakeTaiga (test/support/fake-taiga.ts) only, never the real Taiga: the
-// app's process env points the CLI at the fake for this step, then is restored.
+// app's process env points the CLI at the fake (through a gate that can hold a read in flight) for this step, then is
+// restored; the app opens again so that its whoami knows the fake's login, whose API URL keys the saved read.
 //   1. Without a Role the three choices sit in the page; the one picked is saved in settings.json.
 //   2. The Developer dashboard shows the fake project's numbers, cycle time from the items' history (kept in the app's
 //      metrics-cache by --cache-dir), the bug reopen rate from the issues' history, and "Chỉ tôi" narrows the workload
@@ -9,42 +10,66 @@
 //      dashboard (smoke-dashboard-ba.mjs); Settings shows the Role and changes it too.
 //   4. Làm mới reads again: the numbers follow what Taiga holds.
 //   5. A reload (the app opened again) keeps the Role and shows the saved numbers with their time while the next read
-//      runs (held by a server that never answers); that read failing, and then a login Taiga refuses, show the
-//      Vietnamese error with its fix while the numbers stay.
+//      runs (held by the gate); the saved read lacks cycle time, as one an older taigent wrote: its cells say "Chưa
+//      có". That read failing, and then a login Taiga refuses, show the Vietnamese error with its fix while the
+//      numbers stay.
+//   6. A saved read in an older build's format (the bare report, without the Product Owner and Business Analyst
+//      sections) is ignored: the Product Owner dashboard shows the next read instead of breaking.
 
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { createServer, request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { startFakeTaiga } from '../../test/support/fake-taiga.ts';
 import { smokeBusinessAnalyst } from './smoke-dashboard-ba.mjs';
 import { smokeProductOwner } from './smoke-dashboard-po.mjs';
-
-const pad = (n) => String(n).padStart(2, '0');
-/** The local day `offset` days from today, YYYY-MM-DD. */
-function day(offset) {
-  const now = new Date();
-  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-/** Noon (local time) of the day `offset` days from today, ISO 8601. */
-function at(offset) {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12).toISOString();
-}
+import { at, day } from './smoke-days.mjs';
 
 const TAIGA_VARS = ['TAIGA_API_URL', 'TAIGA_USERNAME', 'TAIGA_PASSWORD', 'TAIGA_TOKEN', 'TAIGENT_CONFIG_DIR', 'TAIGENT_CREDENTIAL_STORE'];
 
-/** A Taiga that accepts connections and never answers, until `release()` drops them: it holds a read in flight. */
-async function startSilentServer() {
-  const sockets = new Set();
-  const server = createServer((socket) => sockets.add(socket));
+/**
+ * A proxy in front of the fake Taiga that can hold a read in flight. `hold()` leaves every request unanswered but the
+ * login's (POST /auth, GET /users/me: whoami still answers); `release()` drops those and refuses the next ones the same
+ * way, until `open()` lets everything through again.
+ */
+async function startGate(fake) {
+  const target = new URL(fake.url);
+  const held = new Set();
+  let mode = 'open';
+  const server = createServer((request, response) => {
+    const url = new URL(request.url ?? '/', target);
+    const login = url.pathname.endsWith('/auth') || url.pathname.endsWith('/users/me');
+    if (mode !== 'open' && !login) {
+      if (mode === 'hold') held.add(request.socket);
+      else request.socket.destroy();
+      return;
+    }
+    const upstream = httpRequest(url, { method: request.method, headers: request.headers }, (answer) => {
+      response.writeHead(answer.statusCode ?? 502, answer.headers);
+      answer.pipe(response);
+    });
+    upstream.on('error', () => response.destroy());
+    request.pipe(upstream);
+  });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   return {
-    url: `http://127.0.0.1:${server.address().port}/api/v1`,
-    release: () => {
-      for (const socket of sockets) socket.destroy();
-      return new Promise((resolve) => server.close(resolve));
+    url: `http://127.0.0.1:${server.address().port}${target.pathname}`,
+    hold: () => {
+      mode = 'hold';
     },
+    release: () => {
+      mode = 'drop';
+      for (const socket of held) socket.destroy();
+      held.clear();
+    },
+    open: () => {
+      mode = 'open';
+    },
+    close: () =>
+      new Promise((resolve) => {
+        server.closeAllConnections();
+        server.close(resolve);
+      }),
   };
 }
 
@@ -110,7 +135,7 @@ function seed(fake, slug) {
 
 export async function smokeDashboard({ app, page, work, project, shots, check, log, goTo }) {
   const settingsFile = join(work, 'user-data', 'settings.json');
-  const savedFile = join(work, 'user-data', 'metrics-cache', `latest-${project}.json`);
+  const metricsDir = join(work, 'user-data', 'metrics-cache');
   const reads = async () => Number(await page.getAttribute('#dashboard', 'data-reads'));
   /** Waits until `count` reads have finished this session and none runs. */
   const readsDone = (count) =>
@@ -147,23 +172,31 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
   log('dashboard: first read with the app env:', (await failureText()).split('\n')[0] || 'ok');
 
   const fake = await startFakeTaiga();
-  const silent = await startSilentServer();
+  const gate = await startGate(fake);
   const configDir = await mkdtemp(join(work, 'dashboard-config-'));
   const saved = await app.evaluate((_electron, names) => Object.fromEntries(names.map((name) => [name, process.env[name]])), TAIGA_VARS);
+  // The saved read of the project on the fake Taiga: keyed by the API URL of the login and the slug, like the CLI cache.
+  const savedFile = join(metricsDir, `latest-${project}-${createHash('sha256').update(gate.url).digest('hex').slice(0, 16)}.json`);
   try {
     const { me, lan, sso, profile, migrate, done } = seed(fake, project);
     await setEnv({
-      TAIGA_API_URL: fake.url,
+      TAIGA_API_URL: gate.url,
       TAIGA_USERNAME: fake.user.username,
       TAIGA_PASSWORD: fake.user.password,
       TAIGA_TOKEN: undefined,
       TAIGENT_CONFIG_DIR: configDir,
       TAIGENT_CREDENTIAL_STORE: 'file',
     });
-    await refresh();
-    check((await failureText()) === '' && Boolean(await generatedAt()), `dashboard (FakeTaiga): Làm mới read the metrics of ${project}`);
-    check(JSON.parse(await readFile(savedFile, 'utf8')).project.slug === project, 'dashboard: the read is saved in user-data/metrics-cache for the next start');
-    const cached = (await readdir(join(work, 'user-data', 'metrics-cache'))).filter((name) => name.startsWith(`history-${project}-`));
+    // Opened again, the app's whoami reports the fake's login; the Dashboard reads with it.
+    await page.reload();
+    await readsDone(1);
+    check((await failureText()) === '' && Boolean(await generatedAt()), `dashboard (FakeTaiga): opened with the fake's login, the Dashboard read the metrics of ${project}`);
+    const savedRead = JSON.parse(await readFile(savedFile, 'utf8'));
+    check(
+      savedRead.version === 1 && savedRead.apiUrl === gate.url && savedRead.report.project.slug === project,
+      'dashboard: the read is saved in user-data/metrics-cache for the next start, keyed by the API URL of the login and the project',
+    );
+    const cached = (await readdir(metricsDir)).filter((name) => name.startsWith(`history-${project}-`));
     check(cached.length > 0, `dashboard: taigent metrics keeps the items' history in user-data/metrics-cache (--cache-dir) (${cached.join(', ')})`);
     check(fake.requests.every((request) => request.method === 'GET' || request.path === '/auth'), 'dashboard: taigent metrics only reads Taiga');
 
@@ -220,7 +253,7 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
       await page.waitForSelector(`#dashboard[data-role="${role}"]`);
     };
     await pickFromMenu('productOwner');
-    await smokeProductOwner({ page, fake, work, project, shots, check, log, refresh });
+    await smokeProductOwner({ app, page, fake, work, project, shots, check, log, refresh, setEnv });
     await pickFromMenu('businessAnalyst');
     await smokeBusinessAnalyst({ app, page, fake, work, project, shots, check, refresh, stats, setEnv, onTaiga: sso });
     check(JSON.parse(await readFile(settingsFile, 'utf8')).role === 'businessAnalyst', 'dashboard: the Role picked from the menu is saved');
@@ -239,26 +272,51 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
     check((await stats('#dashboard-throughput'))['Story hoàn thành'] === '2' && (await generatedAt()) !== first, 'dashboard: Làm mới shows the story closed since, with the new time');
     const last = await generatedAt();
 
-    // 5. Opened again: the Role and the saved numbers show while the next read runs; failed reads keep them.
-    await setEnv({ TAIGA_API_URL: silent.url });
+    // 5. Opened again: the Role and the saved numbers show while the next read runs; failed reads keep them. The saved
+    // read loses its cycle time first, as a read an older taigent wrote: those cells say so instead of disappearing.
+    const latest = JSON.parse(await readFile(savedFile, 'utf8'));
+    delete latest.report.developer.cycleTime;
+    await writeFile(savedFile, JSON.stringify(latest));
+    gate.hold();
     await page.reload();
     await page.waitForSelector('#dashboard[data-state="loading"] #dashboard-developer', { timeout: 60_000 });
     check((await generatedAt()) === last && (await page.getAttribute('#dashboard-role-menu', 'data-role')) === 'developer', 'dashboard: opened again, the Role and the saved numbers show with their time while the read runs');
     check(((await page.textContent('#dashboard-generated-at')) ?? '').startsWith('Cập nhật lúc'), 'dashboard: the time of the saved numbers is shown');
+    const cycleCells = await page.locator('#dashboard-times [data-metric^="developer.cycleTime."]').allTextContents();
+    check(
+      cycleCells.length === 2 && cycleCells.every((text) => text.includes('Chưa có') && text.includes('phiên bản taigent cũ')),
+      `dashboard: a saved read without cycle time shows its cells as "Chưa có", with why (${cycleCells.join(' | ')})`,
+    );
     await page.screenshot({ path: join(shots, 'dashboard-5-saved.png') });
-    await silent.release();
+    gate.release();
     await readsDone(1);
     const unreachable = await failureText();
     check(unreachable.includes('Không đọc được số liệu') && unreachable.includes('Cách sửa') && (await page.isVisible('#dashboard-developer')) && (await generatedAt()) === last, 'dashboard: a failed read says so in Vietnamese with the fix; the numbers stay');
 
-    await setEnv({ TAIGA_API_URL: fake.url, TAIGA_PASSWORD: 'wrong-password' });
+    gate.open();
+    await setEnv({ TAIGA_PASSWORD: 'wrong-password' });
     await refresh();
     const refused = await failureText();
     check(refused.includes('hết hạn hoặc bị từ chối') && refused.includes('Cách sửa') && (await page.isVisible('#dashboard-developer')) && (await generatedAt()) === last, 'dashboard: a refused login says so in Vietnamese with the fix; the numbers stay');
     await page.screenshot({ path: join(shots, 'dashboard-6-error.png') });
+
+    // 6. A saved read in an older build's format, also under the name those builds used: the bare report, without the
+    // Product Owner and Business Analyst sections. The Product Owner dashboard ignores it and shows the next read.
+    await setEnv({ TAIGA_PASSWORD: fake.user.password });
+    await pickFromMenu('productOwner');
+    const { productOwner: _po, businessAnalyst: _ba, ...older } = latest.report;
+    await writeFile(savedFile, JSON.stringify(older));
+    await writeFile(join(metricsDir, `latest-${project}.json`), JSON.stringify(older));
+    await page.reload();
+    await readsDone(1);
+    check(
+      (await failureText()) === '' && (await page.isVisible('#dashboard-product-owner')) && (await generatedAt()) !== last,
+      'dashboard: a saved read in an older format is ignored, and the Product Owner dashboard shows the next read',
+    );
+    check(JSON.parse(await readFile(savedFile, 'utf8')).version === 1, 'dashboard: the next read replaced the older saved read');
   } finally {
     await setEnv(saved);
-    await silent.release().catch(() => undefined);
+    await gate.close();
     await fake.close();
   }
 }
