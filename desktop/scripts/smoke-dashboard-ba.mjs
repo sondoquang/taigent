@@ -4,15 +4,24 @@
 // watcher never see these edits:
 //   1. The copy holds a story whose only scenario misses its Then (its epic is then uncovered), a review.yaml with a
 //      stale verdict, an open and a resolved comment, and a state.json that records one story on the fake Taiga and one
-//      gone from it. The dashboard shows the stories on Taiga by status (New read as "đang phân tích", Ready as "đủ AC")
-//      with "Chưa apply", the requirements coverage with the uncovered epic, the stories without complete acceptance
-//      criteria and why, the items awaiting review and those pending clarification.
-//   2. Without a backlog manifest the statuses stay and a note says why the other metrics are missing.
+//      gone from it. That story's Taiga history gets a move into Ready and description edits before and after it. The
+//      dashboard shows the stories on Taiga by status (New read as "đang phân tích", Ready as "đủ AC") with "Chưa
+//      apply", the requirement change trend (only the edits after Ready, per sprint), the requirements coverage with
+//      the uncovered epic, the stories without complete acceptance criteria and why, the items awaiting review and
+//      those pending clarification.
+//   2. Without a backlog manifest the statuses and the requirement change trend stay and a note says why the other
+//      metrics are missing.
 
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const AT = '2026-11-02T09:30:00.000Z';
+
+/** Noon (local time) of the day `offset` days from today, ISO 8601. */
+function at(offset) {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12).toISOString();
+}
 
 const REVIEW = `items:
   REVIEW-APPROVE:
@@ -28,9 +37,11 @@ const REVIEW = `items:
 
 /**
  * @param {object} step
- * @param {{ id: number, ref: number }} step.onTaiga a story of the fake project, recorded in state.json as REVIEW-MARKDOWN
+ * @param {import('../../test/support/fake-taiga.ts').FakeTaiga} step.fake the fake Taiga of the project
+ * @param {import('../../test/support/fake-taiga.ts').FakeUserStory} step.onTaiga a story of the fake project (In
+ *   progress), recorded in state.json as REVIEW-MARKDOWN
  */
-export async function smokeBusinessAnalyst({ app, page, work, project, shots, check, refresh, stats, setEnv, onTaiga }) {
+export async function smokeBusinessAnalyst({ app, page, fake, work, project, shots, check, refresh, stats, setEnv, onTaiga }) {
   const ba = '#dashboard-business-analyst';
   /** `data-item` (and `data-reason` when present) of each row under `selector`. */
   const items = (selector) =>
@@ -56,6 +67,15 @@ export async function smokeBusinessAnalyst({ app, page, work, project, shots, ch
   await writeFile(join(copy, 'state.json'), JSON.stringify(state, null, 2));
   const empty = join(manifests, 'empty');
   await mkdir(empty);
+  // Sprint 1 runs from day -20 to -7, Sprint 2 from day -6: the edit of day -12 is before Ready (day -9), not counted.
+  fake.addDescriptionChange(onTaiga, { at: at(-12), from: 'v0', to: 'v1' });
+  fake.addStatusChange(onTaiga, { at: at(-9), from: 'New', to: 'Ready' });
+  fake.addDescriptionChange(onTaiga, { at: at(-8), from: 'v1', to: 'v2' });
+  fake.addStatusChange(onTaiga, { at: at(-7), from: 'Ready', to: 'In progress' });
+  fake.addDescriptionChange(onTaiga, { at: at(-3), from: 'v2', to: 'v3' });
+  fake.addDescriptionChange(onTaiga, { at: at(-1), from: 'v3', to: 'v4' });
+  // A change on Taiga moves modified_date, so the history cache of --cache-dir reads it again.
+  onTaiga.modified_date = new Date().toISOString();
 
   const [saved] = await app.evaluate(() => [process.env.TAIGENT_MANIFESTS_DIR]);
   try {
@@ -82,8 +102,15 @@ export async function smokeBusinessAnalyst({ app, page, work, project, shots, ch
     const legacy = (await page.textContent('#dashboard-ba-criteria tr[data-item="REVIEW-MARKDOWN"]')) ?? '';
     const missingThen = (await page.textContent('#dashboard-ba-criteria tr[data-item="SMOKE-FIXTURE"]')) ?? '';
     check(legacy.includes(`#${onTaiga.ref}`) && legacy.includes('legacy') && missingThen.includes('thiếu Then'), 'dashboard BA: the reasons read legacy and "thiếu Then"');
-    const requirementChange = (await page.textContent(`${ba} [data-metric="businessAnalyst.requirementChange"]`)) ?? '';
-    check(requirementChange.includes('Chưa có') && requirementChange.includes('history'), 'dashboard BA: requirement change is a "Chưa có" cell with its reason');
+    const changes = await stats('#dashboard-ba-requirement-change');
+    check(changes['Lần sửa trong kỳ Sprint 2'] === '2' && changes['Story bị sửa trong kỳ'] === '1', `dashboard BA: the requirement changes of the current sprint (${JSON.stringify(changes)})`);
+    check(
+      (await page.getAttribute('#dashboard-ba-requirement-change [data-slot="chart"]', 'data-series')) === '1,2' && (await page.isVisible('#dashboard-ba-requirement-change [data-slot="chart"] .recharts-surface')),
+      'dashboard BA: the requirement change trend is a chart, only the edits after Ready counted per sprint',
+    );
+    const editedNow = (await page.textContent('#dashboard-ba-requirement-change tr[data-period]:last-child')) ?? '';
+    check(editedNow.includes(`#${onTaiga.ref} ${onTaiga.subject} (2 lần)`), `dashboard BA: the table lists the story edited in the sprint (${editedNow})`);
+    check((await page.locator(`${ba} [data-metric="businessAnalyst.requirementChange"]`).count()) === 0, 'dashboard BA: requirement change is no longer a "Chưa có" cell');
 
     // No verdict anywhere but REVIEW-APPROVE's stale one: the 15 items of the backlog all await review.
     const review = await items('#dashboard-ba-review');
@@ -106,6 +133,7 @@ export async function smokeBusinessAnalyst({ app, page, work, project, shots, ch
       'dashboard BA: without a backlog manifest the statuses on Taiga stay, without "Chưa apply"',
     );
     check((await page.locator('#dashboard-ba-coverage, #dashboard-ba-criteria, #dashboard-ba-review, #dashboard-ba-clarification').count()) === 0, 'dashboard BA: the widgets of the manifest give way to the note');
+    check((await page.getAttribute('#dashboard-ba-requirement-change [data-slot="chart"]', 'data-series')) === '1,2', 'dashboard BA: without a backlog manifest the requirement change trend stays (it comes from Taiga)');
     await page.locator('#dashboard-ba-backlog').scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(shots, 'dashboard-ba-2-no-backlog.png') });
   } finally {

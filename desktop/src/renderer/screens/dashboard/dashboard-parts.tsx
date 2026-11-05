@@ -79,7 +79,6 @@ const UNAVAILABLE_LABEL: Record<string, string> = {
   'productOwner.planned.sprintStart': 'Planned lúc sprint bắt đầu',
   'productOwner.scopeChange': 'Scope change',
   'productOwner.bugTrend.reopened': 'Bug reopen trong bug trend',
-  'businessAnalyst.requirementChange': 'Requirement change',
 };
 
 /** Why a metric is missing, in Vietnamese; the CLI's own message stays in the cell's title. */

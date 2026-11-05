@@ -196,18 +196,18 @@ test('businessAnalyst: story statuses from Taiga, complete acceptance criteria, 
     { type: 'epic', key: 'AUTH', subject: 'Authentication', ref: null, comments: [{ id: 'c1', by: 'Lan', at: AT, text: 'Which providers?' }] },
   ]);
   assert.deepEqual(report.warnings, []);
-  assert.deepEqual(report.unavailable.filter(({ metric }) => metric.startsWith('businessAnalyst.')).map(({ metric }) => metric), ['businessAnalyst.requirementChange']);
+  assert.deepEqual(report.unavailable.filter(({ metric }) => metric.startsWith('businessAnalyst.')).map(({ metric }) => metric), []);
   assert.deepEqual(writes(h.fake), []);
 });
 
-test('businessAnalyst without a backlog manifest: story statuses only, the manifest metrics unavailable', async (t) => {
+test('businessAnalyst without a backlog manifest: story statuses and requirement changes only, the manifest metrics unavailable', async (t) => {
   const h = await startHarness(t);
   const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha' });
   addStory(h.fake, alpha.id, 'Log in', 'Ready');
 
   const report = await metrics(h);
 
-  assert.deepEqual(Object.keys(report.businessAnalyst), ['statuses']);
+  assert.deepEqual(Object.keys(report.businessAnalyst), ['statuses', 'requirementChange']);
   assert.deepEqual(report.businessAnalyst.statuses.stories.find(({ status }) => status === 'Ready'), { status: 'Ready', closed: false, count: 1 });
   assert.equal(report.businessAnalyst.statuses.notApplied, undefined);
   const missing = report.unavailable.filter(({ reason }) => reason === 'backlog-missing');
@@ -225,7 +225,7 @@ test('businessAnalyst with an invalid manifest: the manifest metrics unavailable
 
   const report = await metrics(h);
 
-  assert.deepEqual(Object.keys(report.businessAnalyst), ['statuses']);
+  assert.deepEqual(Object.keys(report.businessAnalyst), ['statuses', 'requirementChange']);
   const invalid = report.unavailable.filter(({ reason }) => reason === 'backlog-invalid');
   assert.deepEqual(invalid.map(({ metric }) => metric), MANIFEST_METRICS);
   assert.match(invalid[0]!.message, /taigent validate --project alpha/);

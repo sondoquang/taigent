@@ -708,6 +708,13 @@ empty (its sprints are not read).
   the project in its order: `New` is a story still being analysed, `Ready` one with complete acceptance criteria.
   `statuses.notApplied`: the backlog's stories not on Taiga ("Chưa apply"): not in `state.json` yet, or recorded there
   with a story Taiga no longer has.
+- `requirementChange`: per period, the **Requirement changes**: edits of a user story's description on Taiga after the
+  story first reached the status `Ready`, from each story's history: `changes` (the edits whose local day falls in the
+  period) and `stories`, the stories edited in it by ref (`ref`, `subject`, `changes`). A story reached `Ready` at its
+  first status change into it, or at its creation when its first status change leaves `Ready` (or it has none and is in
+  `Ready`); an edit saved together with the move into `Ready` does not count, later edits do whatever the status then.
+  A status goes by its id in the project's status list (the history may name it in another language). Taken from
+  Taiga, so it is there without a backlog manifest too.
 - `acceptanceCriteria`: how many of the backlog's stories (`stories`) have **Complete acceptance criteria**
   (`complete`, and `rate` = complete / stories rounded to 3 decimals, null without any story), and the others
   (`incomplete`) with their `epic` and `reason`: `legacy` (the legacy format never counts), `no-scenario`, or
@@ -721,15 +728,15 @@ empty (its sprints are not read).
   `text`); a resolved comment no longer counts.
 
 Each backlog item there is `{ type, key, subject, ref }`, `ref` being its Taiga ref from `state.json` (null while new).
-Without `backlog.yaml` only `statuses.stories` is there: the other metrics are listed in `unavailable` with
-`reason: "backlog-missing"`, with a `backlog-missing` warning. When a manifest of the project or `review.yaml` is
-invalid, likewise with `reason: "backlog-invalid"` (and that warning); the message names the first issue and says to
-run `taigent validate --project <slug>`. The command still exits 0.
+Without `backlog.yaml` only `statuses.stories` and `requirementChange` are there: the other metrics are listed in
+`unavailable` with `reason: "backlog-missing"`, with a `backlog-missing` warning. When a manifest of the project or
+`review.yaml` is invalid, likewise with `reason: "backlog-invalid"` (and that warning); the message names the first
+issue and says to run `taigent validate --project <slug>`. The command still exits 0.
 
 `unavailable` lists the metrics the run could not compute, with a `reason` code and a message: those that need the
 Taiga history of each item and are not computed from it yet (`reason: "history"`: bug reopen rate, planned points at
-sprint start and scope change (both left out on a kanban project), the reopened part of the bug trend, requirement
-change), and those that need the backlog manifest (`backlog-missing`, `backlog-invalid`). `warnings` holds
+sprint start and scope change (both left out on a kanban project), the reopened part of the bug trend), and those that
+need the backlog manifest (`backlog-missing`, `backlog-invalid`). `warnings` holds
 the `kanban` warning, the release warnings: `release-undeclared` (a `release:` tag `project.yaml` does not declare;
 drawn without an ideal line), `release-empty` (a declared release no story carries) and `release-multiple` (one per
 story with two release tags or more), and the `backlog-missing` and `backlog-invalid` warnings. `--json` prints:
@@ -844,6 +851,12 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
       ],
       "notApplied": 2
     },
+    "requirementChange": [
+      { "period": "sprint:30", "changes": 1, "stories": [{ "ref": 41, "subject": "Reset password", "changes": 1 }] },
+      { "period": "sprint:31", "changes": 3, "stories": [
+        { "ref": 41, "subject": "Reset password", "changes": 2 }, { "ref": 44, "subject": "SSO", "changes": 1 }
+      ] }
+    ],
     "acceptanceCriteria": {
       "stories": 12, "complete": 9, "rate": 0.75,
       "incomplete": [
@@ -881,9 +894,9 @@ story with two release tags or more), and the `backlog-missing` and `backlog-inv
 Without `--json` it prints a summary: the periods, the developer figures (team, then `mine`; lead time, then cycle
 time), the workload, the blocked and overdue items, the bug resolution per period, the product owner figures (current
 sprint, velocity, completed/planned points, health, then `report`'s tables as `report` prints them), the bug trend,
-one line per release, the Business Analyst's figures (stories by status, the stories with incomplete acceptance
-criteria and why, the uncovered epics, the items awaiting review and pending clarification), the warnings and the
-metrics not available yet.
+one line per release, the Business Analyst's figures (stories by status, the requirement changes per period, the
+stories with incomplete acceptance criteria and why, the uncovered epics, the items awaiting review and pending
+clarification), the warnings and the metrics not available yet.
 
 Read-only on Taiga, so it runs under `TAIGENT_READ_ONLY=1`; it writes only the history cache of `--cache-dir`. Errors:
 exit 2 when not logged in (kind `login`), without `--project` (kind `usage`), with `--cache-dir` on another command or

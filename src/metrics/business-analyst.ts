@@ -1,12 +1,16 @@
 // The `businessAnalyst` section of `taigent metrics` (GLOSSARY.md, Dashboards): the user stories on Taiga by status,
-// and from the backlog manifest and review.yaml (the preview, backlog.ts): complete acceptance criteria, requirements
-// coverage, the items awaiting review and those pending clarification. Without a valid backlog manifest only the
-// statuses remain; the metrics of the manifest are unavailable, with why.
+// the requirement changes of each period (from each story's Taiga history), and from the backlog manifest and
+// review.yaml (the preview, backlog.ts): complete acceptance criteria, requirements coverage, the items awaiting review
+// and those pending clarification. Without a valid backlog manifest only the statuses and requirement changes remain;
+// the metrics of the manifest are unavailable, with why.
 
+import { localDay } from '../days.ts';
 import type { ItemType } from '../items.ts';
 import type { Scenario } from '../manifest/backlog.ts';
 import type { Preview, PreviewItem, PreviewStory, ReviewComment } from '../review.ts';
-import { HISTORY_UNAVAILABLE, type MetricsContext, type UnavailableMetric } from './context.ts';
+import type { TaigaHistoryEntry, TaigaStatus } from '../taiga/client.ts';
+import type { MetricsContext, UnavailableMetric } from './context.ts';
+import { inPeriod, type Period } from './periods.ts';
 import type { WorkItem } from './work.ts';
 
 /** How many of the project's user stories are in one status, in the project's order of statuses. */
@@ -46,10 +50,21 @@ export interface PendingClarification extends BacklogRef {
   comments: Pick<ReviewComment, 'id' | 'by' | 'at' | 'text'>[];
 }
 
+/** The Requirement changes (GLOSSARY.md) of one period: edits of a story's description after it first reached Ready. */
+export interface RequirementChangeEntry {
+  period: string;
+  /** Description edits in the period. */
+  changes: number;
+  /** The stories edited, by ref, with their edits in the period. */
+  stories: { ref: number; subject: string; changes: number }[];
+}
+
 /** The metrics of the backlog manifest are absent without a valid one (see `unavailable`). */
 export interface BusinessAnalystMetrics {
   /** `notApplied`: the backlog's stories that are not on Taiga (new, or their recorded story is gone). */
   statuses: { stories: StatusCount[]; notApplied?: number };
+  /** One per period, in the order of the report's `periods`. */
+  requirementChange: RequirementChangeEntry[];
   /** `rate`: complete over stories, null without any story. */
   acceptanceCriteria?: { stories: number; complete: number; rate: number | null; incomplete: IncompleteStory[] };
   /** `rate`: covered over epics, null without any epic. */
@@ -78,6 +93,38 @@ function storyStatuses({ snapshot, work }: MetricsContext): StatusCount[] {
   return [...counts.values()];
 }
 
+/** The story status after which a description edit is a Requirement change (GLOSSARY.md). */
+const READY = 'Ready';
+
+/**
+ * The local days of a story's Requirement changes: the description edits after the entry where it first reached
+ * Ready, or every one when it was in Ready from its creation (its first status change leaves Ready, or it has none and
+ * is in Ready). An edit saved with the move into Ready is not one. A status goes by its name in the project's list
+ * (by id; the history may name it in another language), and by the history's name for a status no longer in it.
+ */
+function requirementChangeDays(history: TaigaHistoryEntry[], statusId: number | null, statuses: Map<number, TaigaStatus>): string[] {
+  const isReady = (status: { id: number; name: string | null } | null) => status !== null && (statuses.get(status.id)?.name ?? status.name) === READY;
+  const moves = history.flatMap((entry, index) => (entry.status ? [{ index, ...entry.status }] : []));
+  const readySinceCreation = moves.length === 0 ? statusId !== null && statuses.get(statusId)?.name === READY : isReady(moves[0]!.from);
+  const after = readySinceCreation ? -1 : moves.find((move) => isReady(move.to))?.index;
+  if (after === undefined) return [];
+  return history.flatMap((entry, index) => (index > after && entry.description ? [localDay(new Date(entry.at))] : []));
+}
+
+function requirementChange({ snapshot, periods }: MetricsContext): RequirementChangeEntry[] {
+  const statuses = new Map(snapshot.statuses.story.map((status) => [status.id, status]));
+  const edited = [...snapshot.stories]
+    .sort((a, b) => a.ref - b.ref)
+    .map((story) => ({ story, days: requirementChangeDays(snapshot.history.story.get(story.id) ?? [], story.statusId, statuses) }));
+  return periods.map((period) => {
+    const stories = edited.flatMap(({ story, days }) => {
+      const changes = days.filter((day) => inPeriod(day, period)).length;
+      return changes === 0 ? [] : [{ ref: story.ref, subject: story.subject, changes }];
+    });
+    return { period: period.id, changes: stories.reduce((sum, { changes }) => sum + changes, 0), stories };
+  });
+}
+
 function backlogRef(item: PreviewItem): BacklogRef {
   return { type: item.type, key: item.key, subject: item.subject, ref: item.applied?.ref ?? null };
 }
@@ -102,7 +149,7 @@ function incompleteness(story: PreviewStory): Pick<IncompleteStory, 'reason' | '
 
 const rate = (part: number, whole: number) => (whole === 0 ? null : Math.round((part / whole) * 1000) / 1000);
 
-function manifestMetrics(preview: Preview, work: WorkItem[]): Required<Omit<BusinessAnalystMetrics, 'statuses'>> & { notApplied: number } {
+function manifestMetrics(preview: Preview, work: WorkItem[]): Required<Omit<BusinessAnalystMetrics, 'statuses' | 'requirementChange'>> & { notApplied: number } {
   const onTaiga = new Set(work.filter((item) => item.type === 'story').map((story) => story.id));
   const stories = preview.epics.flatMap((epic) => epic.stories.map((story) => ({ epic, story, incomplete: incompleteness(story) })));
   const incomplete = stories.flatMap(({ epic, story, incomplete }) => (incomplete ? [{ ...backlogRef(story), epic: epic.key, ...incomplete }] : []));
@@ -133,12 +180,12 @@ function manifestMetrics(preview: Preview, work: WorkItem[]): Required<Omit<Busi
 
 export function businessAnalystMetrics(context: MetricsContext): BusinessAnalystMetrics {
   const { local, snapshot, notes } = context;
-  notes.unavailable.push({ metric: 'businessAnalyst.requirementChange', reason: 'history', message: HISTORY_UNAVAILABLE });
   const statuses = storyStatuses(context);
+  const changes = requirementChange(context);
   const { backlog } = local;
   if (backlog.status === 'ok') {
     const { notApplied, ...metrics } = manifestMetrics(backlog.preview, context.work);
-    return { statuses: { stories: statuses, notApplied }, ...metrics };
+    return { statuses: { stories: statuses, notApplied }, requirementChange: changes, ...metrics };
   }
   let reason: UnavailableMetric['reason'];
   let message: string;
@@ -154,7 +201,7 @@ export function businessAnalystMetrics(context: MetricsContext): BusinessAnalyst
   }
   notes.warnings.push({ code: reason, message: `the metrics of the backlog manifest are unavailable: ${message}` });
   for (const metric of MANIFEST_METRICS) notes.unavailable.push({ metric, reason, message });
-  return { statuses: { stories: statuses } };
+  return { statuses: { stories: statuses }, requirementChange: changes };
 }
 
 const percent = (value: number | null) => (value === null ? '' : ` (${Math.round(value * 100)}%)`);
@@ -172,10 +219,15 @@ function describeIncomplete(story: IncompleteStory): string {
 }
 
 /** The businessAnalyst section in text form. */
-export function formatBusinessAnalystText(ba: BusinessAnalystMetrics): string[] {
+export function formatBusinessAnalystText(ba: BusinessAnalystMetrics, periods: Period[]): string[] {
   const statuses = ba.statuses.stories.map(({ status, count }) => `${status} ${count}`).join(', ') || 'none';
   const notApplied = ba.statuses.notApplied === undefined ? '' : `; not applied ${ba.statuses.notApplied}`;
   const lines = ['Business Analyst:', `  Stories by status: ${statuses}${notApplied}`];
+  lines.push('  Requirement changes (story description edits after Ready):');
+  ba.requirementChange.forEach(({ changes, stories }, index) => {
+    const period = periods[index]!;
+    lines.push(`    ${period.name}${period.current ? ' (current)' : ''}: ${changes} edit${changes === 1 ? '' : 's'} of ${stories.length} stor${stories.length === 1 ? 'y' : 'ies'}`);
+  });
   const { acceptanceCriteria: criteria, requirementsCoverage: coverage, awaitingReview, pendingClarification } = ba;
   if (criteria) {
     lines.push(`  Complete acceptance criteria: ${criteria.complete} of ${criteria.stories} stories${percent(criteria.rate)}`);
