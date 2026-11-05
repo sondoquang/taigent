@@ -31,6 +31,7 @@ const VELOCITY_CONFIG = {
 const BUG_CONFIG = {
   created: { label: 'Bug tạo', color: 'var(--chart-4)' },
   resolved: { label: 'Bug resolved', color: 'var(--chart-2)' },
+  reopened: { label: 'Bug reopened', color: 'var(--chart-5)' },
   open: { label: 'Bug mở cuối kỳ', color: 'var(--chart-3)' },
 } satisfies ChartConfig;
 
@@ -421,7 +422,7 @@ export function ProductOwnerDashboard({ report }: { report: MetricsReport }) {
     const period = periodOf.get(id);
     return period ? periodLabel(period) : id;
   };
-  const bugTrend = productOwner.bugTrend.map((entry) => ({ label: label(entry.period), created: entry.created, resolved: entry.resolved, open: entry.open }));
+  const bugTrend = productOwner.bugTrend.map((entry) => ({ label: label(entry.period), created: entry.created, resolved: entry.resolved, reopened: entry.reopened, open: entry.open }));
 
   return (
     <div id="dashboard-product-owner" className="flex min-w-0 flex-col gap-6" data-cadence={report.cadence}>
@@ -440,7 +441,11 @@ export function ProductOwnerDashboard({ report }: { report: MetricsReport }) {
 
       <ReleaseWidget burndown={productOwner.releaseBurndown} />
 
-      <Widget id="dashboard-bug-trend" title="Bug trend" description="Mỗi kỳ: bug tạo trong kỳ, bug resolved (Ready for test hoặc Closed) trong kỳ và bug còn mở ở cuối kỳ.">
+      <Widget
+        id="dashboard-bug-trend"
+        title="Bug trend"
+        description="Mỗi kỳ: bug tạo trong kỳ, bug resolved (Ready for test hoặc Closed) trong kỳ, bug reopened (từ Ready for test hoặc Closed quay lại status đang mở) trong kỳ và bug còn mở ở cuối kỳ, theo history của Taiga."
+      >
         {bugTrend.length === 0 ? (
           <p className="empty text-muted-foreground">Chưa có kỳ nào.</p>
         ) : (
@@ -449,8 +454,8 @@ export function ProductOwnerDashboard({ report }: { report: MetricsReport }) {
             config={BUG_CONFIG}
             className="aspect-auto h-56 w-full"
             role="img"
-            aria-label={`Bug trend: ${bugTrend.map((row) => `${row.label} ${row.created} tạo, ${row.resolved} resolved, ${row.open} mở`).join('; ')}`}
-            data-series={bugTrend.map((row) => `${row.created}/${row.resolved}/${row.open}`).join(',')}
+            aria-label={`Bug trend: ${bugTrend.map((row) => `${row.label} ${row.created} tạo, ${row.resolved} resolved, ${row.reopened} reopened, ${row.open} mở`).join('; ')}`}
+            data-series={bugTrend.map((row) => `${row.created}/${row.resolved}/${row.reopened}/${row.open}`).join(',')}
           >
             <ComposedChart accessibilityLayer data={bugTrend}>
               <CartesianGrid vertical={false} />
@@ -460,20 +465,20 @@ export function ProductOwnerDashboard({ report }: { report: MetricsReport }) {
               <ChartLegend content={<ChartLegendContent />} />
               <Bar dataKey="created" fill="var(--color-created)" radius={4} />
               <Bar dataKey="resolved" fill="var(--color-resolved)" radius={4} />
+              <Bar dataKey="reopened" fill="var(--color-reopened)" radius={4} />
               <Line dataKey="open" type="linear" stroke="var(--color-open)" isAnimationActive={false} />
             </ComposedChart>
           </ChartContainer>
         )}
         <WidgetTable
-          head={['Kỳ', 'Tạo', 'Resolved', 'Rejected', 'Mở cuối kỳ']}
+          head={['Kỳ', 'Tạo', 'Resolved', 'Rejected', 'Reopened', 'Mở cuối kỳ']}
           empty="Chưa có kỳ nào."
           rows={productOwner.bugTrend.map((entry) => ({
             key: entry.period,
             data: { 'data-period': entry.period },
-            cells: [label(entry.period), String(entry.created), String(entry.resolved), String(entry.rejected), String(entry.open)],
+            cells: [label(entry.period), String(entry.created), String(entry.resolved), String(entry.rejected), String(entry.reopened), String(entry.open)],
           }))}
         />
-        <UnavailableStats unavailable={unavailable} metrics={['productOwner.bugTrend.reopened']} />
       </Widget>
 
       <ReportTables report={productOwner.report} />

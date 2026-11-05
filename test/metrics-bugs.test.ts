@@ -10,13 +10,14 @@ interface BugResolutionJson {
   resolved: number;
   rejected: number;
   resolutionTime: { medianDays: number | null; count: number };
+  reopened: number;
+  reopenRate: number | null;
 }
 
 interface MetricsJson {
   periods: { id: string }[];
   developer: { bugs: { periods: { period: string; all: BugResolutionJson; mine: BugResolutionJson }[] } };
-  productOwner: { bugTrend: { period: string; created: number; resolved: number; rejected: number; open: number }[] };
-  unavailable: { metric: string }[];
+  productOwner: { bugTrend: { period: string; created: number; resolved: number; rejected: number; reopened: number; open: number }[] };
 }
 
 /** Today in `TZ`, as YYYY-MM-DD (`en-CA` formats dates that way). */
@@ -67,6 +68,8 @@ const resolution = (resolved: number, rejected: number, medianDays: number | nul
   resolved,
   rejected,
   resolutionTime: { medianDays, count },
+  reopened: 0,
+  reopenRate: resolved === 0 ? null : 0,
 });
 
 test('bug resolution per period: Ready for test and Closed are resolved, Rejected counted apart with no resolution time', async (t) => {
@@ -112,12 +115,10 @@ test('bug trend per period: created, resolved, rejected and open at the period e
   const report = result.json<MetricsJson>();
   assert.deepEqual(report.productOwner.bugTrend, [
     // At day -7: Old open, Fixed now and Rejected now are open; Old fixed closed on day -8.
-    { period: `sprint:${past.id}`, created: 2, resolved: 1, rejected: 0, open: 3 },
+    { period: `sprint:${past.id}`, created: 2, resolved: 1, rejected: 0, reopened: 0, open: 3 },
     // At day 7: Old open and New one.
-    { period: `sprint:${current.id}`, created: 1, resolved: 1, rejected: 1, open: 2 },
+    { period: `sprint:${current.id}`, created: 1, resolved: 1, rejected: 1, reopened: 0, open: 2 },
   ]);
-  assert.ok(report.unavailable.some(({ metric }) => metric === 'productOwner.bugTrend.reopened'));
-  assert.ok(report.unavailable.some(({ metric }) => metric === 'developer.bugs.reopenRate'));
 });
 
 test('bug figures read every issue of the project, beyond Taiga’s 30-item page', async (t) => {
@@ -130,7 +131,7 @@ test('bug figures read every issue of the project, beyond Taiga’s 30-item page
   assert.equal(result.code, 0, result.stderr);
   const { developer, productOwner } = result.json<MetricsJson>();
   assert.deepEqual(developer.bugs.periods.at(-1)!.all, resolution(35, 0, 2, 35));
-  assert.deepEqual(productOwner.bugTrend.at(-1), { period: productOwner.bugTrend.at(-1)!.period, created: 35, resolved: 35, rejected: 0, open: 0 });
+  assert.deepEqual(productOwner.bugTrend.at(-1), { period: productOwner.bugTrend.at(-1)!.period, created: 35, resolved: 35, rejected: 0, reopened: 0, open: 0 });
 });
 
 test('bug figures in the text summary', async (t) => {
@@ -143,6 +144,6 @@ test('bug figures in the text summary', async (t) => {
   const result = await h.taigent(['metrics', '--project', 'alpha'], { env: { TZ } });
 
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /Bugs, Sprint 2 \(current\): 1 resolved \(median 4 days\), 1 rejected\n {4}mine: 1 resolved \(median 4 days\), 0 rejected/);
-  assert.match(result.stdout, /Bug trend:\n(?: {2}.*\n)* {2}Sprint 2 \(current\): 3 created, 1 resolved, 1 rejected, 1 open at the end/);
+  assert.match(result.stdout, /Bugs, Sprint 2 \(current\): 1 resolved \(median 4 days\), 1 rejected, 0 reopened \(reopen rate 0%\)\n {4}mine: 1 resolved \(median 4 days\), 0 rejected, 0 reopened \(reopen rate 0%\)/);
+  assert.match(result.stdout, /Bug trend:\n(?: {2}.*\n)* {2}Sprint 2 \(current\): 3 created, 1 resolved, 1 rejected, 0 reopened, 1 open at the end/);
 });

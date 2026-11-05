@@ -75,10 +75,8 @@ export function WidgetTable({ head, rows, empty }: { head: string[]; rows: Widge
 
 /** How the dashboards name each metric of the report's `unavailable` (its path in the JSON). */
 const UNAVAILABLE_LABEL: Record<string, string> = {
-  'developer.bugs.reopenRate': 'Reopen rate của bug',
   'productOwner.planned.sprintStart': 'Planned lúc sprint bắt đầu',
   'productOwner.scopeChange': 'Scope change',
-  'productOwner.bugTrend.reopened': 'Bug reopen trong bug trend',
   'businessAnalyst.requirementChange': 'Requirement change',
 };
 

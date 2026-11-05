@@ -156,8 +156,6 @@ test('metrics of a scrum project: periods are the started sprints, phase 2 metri
     [
       ['productOwner.planned.sprintStart', 'history'],
       ['productOwner.scopeChange', 'history'],
-      ['developer.bugs.reopenRate', 'history'],
-      ['productOwner.bugTrend.reopened', 'history'],
       ['businessAnalyst.requirementChange', 'history'],
     ],
   );

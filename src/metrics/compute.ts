@@ -5,7 +5,7 @@
 import { localDay } from '../days.ts';
 import { type BugTrendEntry, bugMetrics, type DeveloperBugs } from './bugs.ts';
 import { type BusinessAnalystMetrics, businessAnalystMetrics } from './business-analyst.ts';
-import { HISTORY_UNAVAILABLE, type MetricsContext, type MetricsLocal, type MetricsWarning, type UnavailableMetric } from './context.ts';
+import type { MetricsContext, MetricsLocal, MetricsWarning, UnavailableMetric } from './context.ts';
 import { type DeveloperMetrics, developerMetrics } from './developer.ts';
 import { type Cadence, type Period, sprintPeriods, weekPeriods } from './periods.ts';
 import { type ProductOwnerMetrics, productOwnerMetrics } from './product-owner.ts';
@@ -28,12 +28,6 @@ export interface MetricsReport {
   unavailable: UnavailableMetric[];
 }
 
-/** Metrics of sections still to come that need the Taiga history of each item; each moves into its section. */
-const NEED_HISTORY = [
-  'developer.bugs.reopenRate',
-  'productOwner.bugTrend.reopened',
-];
-
 export function computeMetrics(snapshot: MetricsSnapshot, local: MetricsLocal, now: Date): MetricsReport {
   const today = localDay(now);
   const cadence: Cadence = snapshot.project.sprints ? 'sprint' : 'week';
@@ -53,7 +47,6 @@ export function computeMetrics(snapshot: MetricsSnapshot, local: MetricsLocal, n
   const bugs = bugMetrics(context);
   const burndown = releaseBurndown(context);
   const productOwner = productOwnerMetrics(context, developer, bugs.bugTrend);
-  for (const metric of NEED_HISTORY) context.notes.unavailable.push({ metric, reason: 'history', message: HISTORY_UNAVAILABLE });
   const businessAnalyst = businessAnalystMetrics(context);
   const { id, slug, name } = snapshot.project;
   return {

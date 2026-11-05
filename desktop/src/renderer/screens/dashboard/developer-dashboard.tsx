@@ -19,6 +19,11 @@ const TREND_CONFIG = {
 
 const TYPE_TEXT: Record<DeveloperItem['type'], string> = { story: 'Story', task: 'Task' };
 
+/** A reopen rate as a whole percentage; "—" without a bug resolved. */
+function percent(rate: number | null): string {
+  return rate === null ? '—' : `${Math.round(rate * 100)}%`;
+}
+
 /** A median time cell (lead time, cycle time); `metric` is its hook for the smoke, e.g. `developer.cycleTime.stories`. */
 function timeCell(label: string, time: MedianDays, metric: string): ReactNode {
   return (
@@ -137,7 +142,11 @@ export function DeveloperDashboard({ report }: { report: MetricsReport }) {
         )}
       </Widget>
 
-      <Widget id="dashboard-bugs" title="Bug" description="Resolved: chuyển sang Ready for test hoặc Closed. Rejected đếm riêng, không tính là resolved.">
+      <Widget
+        id="dashboard-bugs"
+        title="Bug"
+        description="Resolved: chuyển sang Ready for test hoặc Closed. Rejected đếm riêng, không tính là resolved. Reopened: từ Ready for test hoặc Closed quay lại status đang mở (theo history của Taiga)."
+      >
         <Stats>
           <StatCell label="Bug resolved trong kỳ" value={bugs?.resolved ?? 0} tone="approved" />
           <StatCell label="Bug bị Rejected trong kỳ" value={bugs?.rejected ?? 0} />
@@ -146,10 +155,15 @@ export function DeveloperDashboard({ report }: { report: MetricsReport }) {
           ) : (
             <StatCell label={`Resolution time (trung vị của ${bugs.resolutionTime.count} bug)`} value={days(bugs.resolutionTime.medianDays)} />
           )}
-          <UnavailableCells unavailable={unavailable} metrics={['developer.bugs.reopenRate']} />
+          <div className="min-w-0" data-metric="developer.bugs.reopenRate" data-value={bugs?.reopenRate ?? ''}>
+            <StatCell
+              label={bugs?.reopenRate == null ? 'Reopen rate (chưa có bug resolved)' : `Reopen rate (${bugs.reopened} reopened / ${bugs.resolved} resolved)`}
+              value={percent(bugs?.reopenRate ?? null)}
+            />
+          </div>
         </Stats>
         <WidgetTable
-          head={['Kỳ', 'Resolved', 'Rejected', 'Resolution time']}
+          head={['Kỳ', 'Resolved', 'Rejected', 'Resolution time', 'Reopened', 'Reopen rate']}
           empty="Chưa có kỳ nào."
           rows={developer.bugs.periods.map((entry) => ({
             key: entry.period,
@@ -159,6 +173,8 @@ export function DeveloperDashboard({ report }: { report: MetricsReport }) {
               String(entry[scope].resolved),
               String(entry[scope].rejected),
               entry[scope].resolutionTime.medianDays === null ? '—' : days(entry[scope].resolutionTime.medianDays),
+              String(entry[scope].reopened),
+              percent(entry[scope].reopenRate),
             ],
           }))}
         />
