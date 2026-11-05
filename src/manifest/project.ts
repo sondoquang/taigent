@@ -1,12 +1,14 @@
 // Project manifest `taiga/<slug>/project.yaml`: the desired Taiga project that `taigent bootstrap` creates
 // or completes. Schema checks live here; naming/template/module/tag rules come from conventions.ts.
 
+import { parseDay } from '../days.ts';
 import { isRecord } from '../guards.ts';
 import { ITEM_TYPES, type ItemType } from '../items.ts';
 import {
   checkModules,
   checkProjectName,
   checkProjectSlug,
+  checkReleaseVersion,
   checkTag,
   checkTagColor,
   checkTemplate,
@@ -42,6 +44,12 @@ export interface MemberSpec {
   role: string;
 }
 
+/** A release (ADR 0005): the stories tagged `release:<version>` on Taiga, due on `target` (YYYY-MM-DD). */
+export interface ReleaseSpec {
+  version: string;
+  target: string;
+}
+
 export interface ProjectManifest {
   name: string;
   slug: string;
@@ -55,15 +63,18 @@ export interface ProjectManifest {
   members: MemberSpec[];
   /** Markdown of the wiki page `home`, when declared. */
   wikiHome: string | undefined;
+  /** Releases the dashboards draw a burndown for, in the order declared; none when not declared. */
+  releases: ReleaseSpec[];
 }
 
 const PROJECT_FIELDS: Record<string, true> = {
   name: true, slug: true, description: true, template: true, is_private: true, modules: true, tags: true,
-  custom_attributes: true, members: true, wiki_home: true,
+  custom_attributes: true, members: true, wiki_home: true, releases: true,
 };
 const TAG_FIELDS: Record<string, true> = { name: true, color: true };
 const ATTRIBUTE_FIELDS: Record<string, true> = { name: true, description: true, type: true };
 const MEMBER_FIELDS: Record<string, true> = { username: true, email: true, role: true };
+const RELEASE_FIELDS: Record<string, true> = { version: true, target: true };
 
 /** Reads and validates the project manifest at `path`; `dirSlug` is the name of its directory. */
 export async function loadProject(path: string, dirSlug: string): Promise<ProjectManifest> {
@@ -82,7 +93,7 @@ export async function loadProject(path: string, dirSlug: string): Promise<Projec
     throw new ManifestError(issues);
   }
   unknownFields(doc, PROJECT_FIELDS, '', 'project');
-  const { name, slug, description, template, is_private: isPrivate = true, modules, tags = [], custom_attributes: attributes = {}, members = [], wiki_home: wikiHome } = doc;
+  const { name, slug, description, template, is_private: isPrivate = true, modules, tags = [], custom_attributes: attributes = {}, members = [], wiki_home: wikiHome, releases = [] } = doc;
 
   checkProjectName(name, 'name', issue);
   checkProjectSlug(slug, name, 'slug', issue);
@@ -166,6 +177,22 @@ export async function loadProject(path: string, dirSlug: string): Promise<Projec
     });
   }
 
+  const releaseSpecs: ReleaseSpec[] = [];
+  if (!Array.isArray(releases)) issue('releases', 'type', 'must be a list of { version, target }');
+  else {
+    const seen = new Set<string>();
+    releases.forEach((raw: unknown, index) => {
+      const at = `releases[${index}]`;
+      if (!isRecord(raw)) return void issue(at, 'type', 'release must be a mapping { version, target }');
+      unknownFields(raw, RELEASE_FIELDS, at, 'release');
+      const versionOk = checkReleaseVersion(raw.version, `${at}.version`, issue, seen);
+      const target = raw.target;
+      const targetOk = typeof target === 'string' && parseDay(target) !== undefined;
+      if (!targetOk) issue(`${at}.target`, 'release-target', 'target is required and must be a calendar day YYYY-MM-DD (e.g. 2026-12-01)');
+      if (versionOk && targetOk) releaseSpecs.push({ version: raw.version as string, target });
+    });
+  }
+
   if (issues.length > 0) throw new ManifestError(issues);
   return {
     name: name as string,
@@ -178,5 +205,6 @@ export async function loadProject(path: string, dirSlug: string): Promise<Projec
     customAttributes,
     members: memberSpecs,
     wikiHome: wikiHome as string | undefined,
+    releases: releaseSpecs,
   };
 }
