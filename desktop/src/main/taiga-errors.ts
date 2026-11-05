@@ -1,4 +1,4 @@
-// The CLI's Taiga errors as the Taiga screens (Project, Ticket của tôi, Báo cáo) say them: in Vietnamese, with how
+// The CLI's Taiga errors as the Taiga screens (Project, Ticket của tôi, Dashboard) say them: in Vietnamese, with how
 // to fix them. The CLI's own message stays in the Failure's detail.
 
 import type { Failure } from '../shared/api.ts';

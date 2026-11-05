@@ -2,7 +2,7 @@
 // it copies the committed fixture `scripts/fixture/smoke-taigent-desktop` (or `taiga/<slug>` of the repository with
 // --project) to a temporary folder and points the app there with TAIGENT_MANIFESTS_DIR, and it uses a temporary
 // user-data folder. It never writes to a real Taiga: every native confirm dialog (push, bootstrap, wiki upload) is
-// stubbed to "Huỷ", "Xem thay đổi trên Taiga", bootstrap --dry-run, the Báo cáo report and Ticket của tôi (read-only)
+// stubbed to "Huỷ", "Xem thay đổi trên Taiga", bootstrap --dry-run and Ticket của tôi (read-only)
 // use the login only when the app reports one, and "Đẩy wiki lên Taiga" and Ticket của tôi's writes (status, comment)
 // run against an in-process fake Taiga (test/support/fake-taiga.ts; smoke-tickets.mjs for the tickets).
 // Terminal steps: scripts/smoke-terminal.mjs; Git: scripts/smoke-git.mjs; headless skill buttons (run-skill --dry-run,
@@ -246,7 +246,6 @@ try {
       window.taigent.readWiki('../outside'),
       window.taigent.openProject('..'),
       window.taigent.readBacklog('taiga\\..\\..'),
-      window.taigent.readTaigaReport('Upper'),
       window.taigent.readMetrics('../x'),
       window.taigent.cachedMetrics('..'),
       window.taigent.saveProjectSettings({ slug: '../x', settings: {}, baseDigest: null }),
@@ -295,22 +294,9 @@ try {
     log('skipped bootstrap: not logged in');
   }
 
-  // Taiga > Báo cáo, below Project: its project choice lists the Taiga projects read above. Logged in, the first one's
-  // report (read-only `taigent report`) opens; without a login there is nothing to choose.
-  check(await page.isVisible('#taiga-report'), 'Taiga shows the Báo cáo panel');
-  const reportSlugs = await page.locator('#taiga-report-project option').evaluateAll((options) => options.map((option) => option.value));
-  if (login.loggedIn && reportSlugs.length > 0) {
-    await page.selectOption('#taiga-report-project', reportSlugs[0]);
-    await page.click('#taiga-report-run');
-    await page.waitForSelector('#taiga-report-body :is(#taiga-report-result, .failure)', { timeout: 120_000 });
-    check(await page.isVisible('#taiga-report-result'), `report of ${reportSlugs[0]} shown`);
-    log('report:', (await page.textContent('#taiga-report-status'))?.trim());
-    await page.locator('#taiga-report').scrollIntoViewIfNeeded();
-    await page.screenshot({ path: join(shots, '12-report.png') });
-  } else {
-    check(reportSlugs.length === 0 && (await page.isDisabled('#taiga-report-run')), 'Báo cáo has no project to choose');
-    log('skipped report:', (await page.textContent('#taiga-report-status'))?.trim());
-  }
+  // The sprint and epic tables (`productOwner.report`) moved to the Product Owner dashboard (smoke-dashboard-po.mjs).
+  const cards = await page.locator('#screen-taiga [data-slot="card"]').evaluateAll((items) => items.map((item) => item.id));
+  check((await page.locator('#screen-taiga :is(#taiga-report, [id^="dashboard-report"])').count()) === 0, `Taiga has no Báo cáo nor sprint and epic tables (cards: ${cards.join(', ')})`);
   await smokeTickets({ app, page, work, shots, check, log, login });
   await smokeGit({ app, page, work, project, source, shots, check, goTo, log });
   await smokeWizard({ app, page, repo, work, shots, check, goTo, log });

@@ -5,8 +5,8 @@
 //   2. The Developer dashboard shows the fake project's numbers, cycle time from the items' history (kept in the app's
 //      metrics-cache by --cache-dir), the metrics `taigent metrics` cannot compute yet as "Chưa có" cells with their
 //      reason, and "Chỉ tôi" narrows the workload and the lists to the user.
-//   3. The Role menu switches to the Product Owner and Business Analyst frames (tickets #71 and #72); Settings shows
-//      the Role and changes it too.
+//   3. The Role menu switches to the Product Owner dashboard (smoke-dashboard-po.mjs) and the Business Analyst
+//      dashboard (smoke-dashboard-ba.mjs); Settings shows the Role and changes it too.
 //   4. Làm mới reads again: the numbers follow what Taiga holds.
 //   5. A reload (the app opened again) keeps the Role and shows the saved numbers with their time while the next read
 //      runs (held by a server that never answers); that read failing, and then a login Taiga refuses, show the
@@ -16,6 +16,8 @@ import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { startFakeTaiga } from '../../test/support/fake-taiga.ts';
+import { smokeBusinessAnalyst } from './smoke-dashboard-ba.mjs';
+import { smokeProductOwner } from './smoke-dashboard-po.mjs';
 
 const pad = (n) => String(n).padStart(2, '0');
 /** The local day `offset` days from today, YYYY-MM-DD. */
@@ -211,10 +213,9 @@ export async function smokeDashboard({ app, page, work, project, shots, check, l
       await page.waitForSelector(`#dashboard[data-role="${role}"]`);
     };
     await pickFromMenu('productOwner');
-    check(((await page.textContent('#dashboard-product-owner[data-placeholder="71"]')) ?? '').includes('#71'), 'dashboard: the Product Owner frame names ticket #71');
-    await page.screenshot({ path: join(shots, 'dashboard-4-product-owner.png') });
+    await smokeProductOwner({ page, fake, work, project, shots, check, log, refresh });
     await pickFromMenu('businessAnalyst');
-    check(((await page.textContent('#dashboard-business-analyst[data-placeholder="72"]')) ?? '').includes('#72'), 'dashboard: the Business Analyst frame names ticket #72');
+    await smokeBusinessAnalyst({ app, page, work, project, shots, check, refresh, stats, setEnv, onTaiga: sso });
     check(JSON.parse(await readFile(settingsFile, 'utf8')).role === 'businessAnalyst', 'dashboard: the Role picked from the menu is saved');
     await goTo(page, 'settings');
     check(await page.isChecked('#settings-role [role="radio"][value="businessAnalyst"]'), 'Settings shows the Role picked on the Dashboard');

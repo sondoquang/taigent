@@ -34,7 +34,6 @@ import { headlessAgent, lastRepo, readRepo, rememberRepo, repoEnv, reviewerName,
 import { loadCore, parseCliJson, runCli, taigentVersion } from './taigent.ts';
 import { registerTerminalIpc, terminals } from './terminal.ts';
 import { bootstrapProject, listTaigaProjects, readTaigaProject, saveProjectFile } from './taiga-projects.ts';
-import { readTaigaReport } from './taiga-report.ts';
 import { gitCommitPush, gitPull, gitPush, gitStatus } from './git.ts';
 import { cloneRepo, createRepo, openInstall, openNpmInstall, runInit, setupStatus } from './setup.ts';
 import { checkTools } from './tools.ts';
@@ -299,7 +298,6 @@ function registerIpc(): void {
     (input.slug === undefined ? undefined : slugFailure(input.slug)) ?? saveProjectFile(requireRepo(), input),
   );
   handleProject(CHANNELS.bootstrapProject, async (slug) => bootstrapProject(requireRepo(), slug, window!));
-  handleProject(CHANNELS.readTaigaReport, async (slug) => readTaigaReport(requireRepo(), slug));
   handle(CHANNELS.gitStatus, async () => gitStatus(requireRepo()));
   handle(CHANNELS.gitPull, async () => gitPull(requireRepo()));
   handle(CHANNELS.gitCommitPush, async (message: string) => gitCommitPush(requireRepo(), String(message)));

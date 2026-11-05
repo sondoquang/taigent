@@ -120,8 +120,8 @@ Bố cục gồm bốn phần, từ trên xuống:
   - **Dashboard**: số liệu của dự án đang mở theo vai trò của bạn (xem [Dashboard](#dashboard)). Ứng dụng mở vào mục
     này.
   - **Backlog**: review backlog (xem bên dưới).
-  - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)), **Ticket của tôi** (xem
-    [Ticket của tôi](#ticket-của-tôi)) và **Báo cáo** (xem [Báo cáo tiến độ](#báo-cáo-tiến-độ)).
+  - **Taiga**: mục **Project** (xem [Project trên Taiga](#project-trên-taiga)) và **Ticket của tôi** (xem
+    [Ticket của tôi](#ticket-của-tôi)). Bảng tiến độ theo sprint và theo epic nằm ở dashboard Product Owner.
   - **Wiki**: các trang của `docs.yaml`, form tạo/sửa trang và nút **Đẩy wiki lên Taiga** (xem [Wiki](#wiki)).
   - **Git**: pull, commit và push thư mục manifest (xem [Git](#git)).
   - **Thay đổi**: xem thay đổi và đẩy lên Taiga (xem [Xem thay đổi và đẩy lên Taiga](#xem-thay-đổi-và-đẩy-lên-taiga)).
@@ -204,9 +204,50 @@ workload của bạn, các item block và quá hạn của bạn. Công tắc l�
 `taigent metrics` chưa tính được (danh sách `unavailable`, ví dụ reopen rate cần history của Taiga) hiện ô **Chưa có**
 kèm lý do.
 
-**Product Owner** và **Business Analyst** hiện tại là khung tạm, ghi ticket sẽ lấp đầy: #71 (sprint progress,
-velocity, planned vs completed, release burndown, bug trend, sức khoẻ project, bảng theo sprint và theo epic) và #72
-(phân bố status, độ phủ yêu cầu, acceptance criteria, mục chờ review và chờ làm rõ).
+**Product Owner** (từ phần `productOwner` của `taigent metrics`):
+
+- **Sức khoẻ project**: bốn tín hiệu, mỗi tín hiệu có màu (xanh, vàng, đỏ) và lý do bằng số liệu: tiến độ sprint so
+  với đường lý tưởng (chậm hơn 10% tổng point là vàng, hơn 25% là đỏ), story và task quá hạn (1–2 là vàng, từ 3 là
+  đỏ), bug mở cuối kỳ (tăng 1 kỳ là vàng, tăng 2 kỳ liên tiếp là đỏ), story bị block (1 là vàng, từ 2 là đỏ);
+- **Sprint hiện tại**: point, story và task xong trên tổng, số ngày đã qua, và biểu đồ đường lý tưởng (giảm đều từ
+  tổng point về 0) kèm số point còn lại hôm nay;
+- **Velocity**: point đã đóng của tối đa 6 sprint đã đóng gần nhất;
+- **Planned vs completed**: point planned và point đã đóng của từng sprint. Nhãn ghi theo `basis` của CLI: khi là
+  `current`, planned là point *hiện tại* của sprint, chưa phải point đã cam kết lúc sprint bắt đầu; khi là
+  `sprint-start`, planned là point của các story nằm trong sprint vào ngày bắt đầu;
+- **Release burndown**: mỗi release (story mang đúng một tag `release:<version>`, ngày đích khai báo ở `releases` của
+  `project.yaml`, ADR 0005) có số story đóng, point còn lại và biểu đồ point còn lại theo ngày cùng đường lý tưởng tới
+  ngày đích. Ô cảnh báo liệt kê tag chưa khai báo trong `project.yaml` (vẽ không có đường lý tưởng), release đã khai
+  báo mà chưa có story, và story mang từ hai tag release trở lên (không tính vào burndown nào), kèm cách sửa;
+- **Bug trend**: theo từng kỳ, số bug tạo, bug resolved (Ready for test hoặc Closed), bug Rejected và bug còn mở cuối
+  kỳ, dạng biểu đồ và bảng;
+- **Theo sprint**, **Theo epic** và **Story ngoài sprint**: các bảng trước đây ở card Báo cáo của mục Taiga, nay lấy
+  từ `productOwner.report` của cùng lần đọc (không chạy `taigent report` riêng). Theo sprint, sprint mới nhất trước:
+  tên, ngày, đang chạy hay đã đóng, story, task và point xong trên tổng, các story bị block. Theo epic: story xong và
+  đang mở của từng epic, cộng một dòng cho story không thuộc epic nào. Story xong là story Taiga đã đóng; task xong là
+  task có status đã đóng, cùng nghĩa với báo cáo của skill `taiga-status-report`.
+
+Project kanban (module Backlog tắt) không có tiến độ sprint, velocity và planned vs completed: một ghi chú nói lý do,
+các xu hướng tính theo tuần. Chỉ số cần history (planned lúc sprint bắt đầu, scope change, bug reopen trong bug trend)
+hiện ô **Chưa có** kèm lý do khi `taigent metrics` chưa tính được.
+
+**Business Analyst** (từ phần `businessAnalyst` của `taigent metrics`):
+
+- **Pipeline phân tích**: số story trên Taiga theo từng status, theo thứ tự status của project, dạng biểu đồ và bảng.
+  Dashboard đọc *New* là *đang phân tích* và *Ready* là *đủ AC* (tên status trên Taiga giữ nguyên). Thêm nhóm **Chưa
+  apply**: story của backlog chưa có trên Taiga (mới, hoặc story đã ghi trong `state.json` không còn trên Taiga).
+  Requirement change (sửa mô tả story sau khi vào Ready) cần history của Taiga nên hiện ô *Chưa có* kèm lý do;
+- **Độ phủ yêu cầu**: số epic có ít nhất một story đủ acceptance criteria trên tổng số epic, và danh sách epic chưa
+  được phủ;
+- **Acceptance criteria**: số story đủ AC (có ít nhất một scenario đủ Given, When và Then) trên tổng số story, và các
+  story chưa đủ kèm lý do: định dạng cũ (legacy, luôn tính là chưa đủ), chưa có scenario, hoặc scenario thiếu Given,
+  When hay Then;
+- **Chờ review**: item của backlog chưa có verdict, hoặc đã đổi sau khi duyệt (*Đã đổi sau khi duyệt*);
+- **Chờ làm rõ**: item còn góp ý chưa xử lý trong `review.yaml`, kèm các góp ý đó.
+
+Bốn mục sau và nhóm *Chưa apply* tính từ backlog manifest và `review.yaml` của dự án trong repo (cùng bản xem trước
+của mục Backlog). Dự án chưa có `backlog.yaml`, hoặc manifest hay `review.yaml` đang lỗi, thì chỉ còn phân bố status:
+thay vào đó là ghi chú nói lý do và cách sửa (lỗi thì chạy `taigent validate --project <slug>`), kèm lời của CLI.
 
 Biểu đồ dùng component Chart của shadcn/ui (Recharts, đóng gói cùng renderer), màu lấy từ token `--chart-1`…`--chart-5`
 của `globals.css`. Mỗi widget có `id` ổn định (`#dashboard-throughput`, `#dashboard-workload`…) cho smoke.
@@ -437,23 +478,6 @@ Lỗi hiện bằng tiếng Việt kèm cách sửa, chi tiết của CLI để 
 Không cần mở repo để dùng mục này. Khi đã mở repo, CLI chạy trong repo đó nên `.env` của repo (`TAIGA_*`) được dùng,
 như `whoami`. Đăng nhập hay đăng xuất xong, lần mở mục Taiga kế tiếp tự đọc lại.
 
-## Báo cáo tiến độ
-
-Mục **Taiga** › **Báo cáo**, dưới Ticket của tôi, chỉ đọc Taiga. Ô chọn project liệt kê các project trên Taiga mà mục Project
-vừa đọc (chưa đăng nhập thì ô trống, kèm lý do). Chọn project rồi bấm **Xem báo cáo** để chạy
-`taigent report --project <slug> --json` (xem `docs/cli.md` §Report). Báo cáo gồm:
-
-- **Theo sprint**, sprint mới nhất trước: tên, ngày bắt đầu → kết thúc, đang chạy hay đã đóng, story xong/tổng, task
-  xong/tổng, point xong/tổng và các story bị block;
-- **Theo epic**: số story xong và đang mở của từng epic, và một dòng cho các story không thuộc epic nào;
-- **Story ngoài sprint**: số xong/mở và từng story với trạng thái, point, cờ bị block.
-
-Các con số có cùng nghĩa với báo cáo của skill `taiga-status-report`. Story xong là story Taiga đã đóng; task xong là
-task có status đã đóng.
-
-Không đọc được báo cáo thì lỗi hiện bằng tiếng Việt kèm cách sửa, như ở Ticket của tôi (chưa đăng nhập, đăng nhập hết
-hạn hoặc bị từ chối, mạng hay URL API), rồi bấm lại **Xem báo cáo**; chi tiết của CLI để bên dưới.
-
 ## Git
 
 Mục **Git** chia sẻ manifest và kết quả review với team mà không cần biết git. Nó chỉ thao tác trên **phạm vi** gồm:
@@ -666,9 +690,8 @@ mục tạm được xoá và fixture được mở lại). Script gọi vài k�
 `project.yaml` có slug `../x`) và kiểm tra mọi kênh từ chối ngay tại ranh giới. Sau đó script mở Taiga › Project,
 kiểm tra fixture có trong danh sách, mở form `project.yaml`, sửa mô tả, lưu và kiểm tra file giữ comment và tag. Nếu
 đã đăng nhập, script bấm *Bootstrap lên Taiga…*: `bootstrap --dry-run` chạy rồi hộp thoại xác nhận hiện ra. Mọi hộp
-thoại xác nhận với Taiga thật (đẩy, bootstrap) luôn được trả lời *Huỷ*. Sau đó script kiểm tra mục Báo cáo. Nếu đã
-đăng nhập và bạn là thành viên ít nhất một project trên Taiga, script mở báo cáo của project đầu tiên (chỉ đọc). Nếu
-không, script kiểm tra ô chọn project trống.
+thoại xác nhận với Taiga thật (đẩy, bootstrap) luôn được trả lời *Huỷ*. Sau đó script kiểm tra mục Taiga không còn
+card Báo cáo hay bảng theo sprint và theo epic (đã chuyển sang dashboard Product Owner).
 Tiếp theo là **Ticket của tôi** (`scripts/smoke-tickets.mjs`): kiểm tra kỳ mặc định là tuần này (thứ Hai tới Chủ
 nhật). Nếu đã đăng nhập, script đọc ticket thật của tuần này rồi bấm *‹ Tuần trước* và chờ kỳ trước được đọc (chỉ
 đọc); nếu chưa, kiểm tra lỗi *Chưa đăng nhập* kèm cách sửa và kỳ vẫn đổi được. Thao tác ghi chỉ chạy trên FakeTaiga
@@ -692,12 +715,28 @@ request đọc), kết quả được lưu trong `metrics-cache/` của user-dat
 vai trò thì số liệu chờ lựa chọn, chọn Developer trong trang thì `settings.json` lưu `role`; số story/task của kỳ hiện
 tại, bug resolved và Rejected, cycle time của story và của task, ô *Chưa có* kèm lý do của reopen rate, biểu đồ xu
 hướng, workload (kèm *Chưa giao*), danh sách quá hạn và bị block; *Chỉ tôi* chỉ giữ
-hàng workload và item của người dùng mà không chạy lại lệnh; menu vai trò chuyển sang khung Product Owner (#71) và
-Business Analyst (#72) và lưu lựa chọn; Settings hiện vai trò đó và đổi lại được; *Làm mới* thấy story vừa đóng trên
+hàng workload và item của người dùng mà không chạy lại lệnh; menu vai trò chuyển sang dashboard Product Owner và
+Business Analyst (xem bên dưới) và lưu lựa chọn. Ở dashboard Product Owner (`scripts/smoke-dashboard-po.mjs`), script
+xếp các story giả vào hai sprint, gắn tag release, thêm một epic và tạm khai báo hai release trong `project.yaml` của
+thư mục tạm (trả lại sau), đọc lại rồi kiểm tra: bốn tín hiệu sức khoẻ có màu và lý do tiếng Việt; tiến độ sprint hiện
+tại, velocity, planned vs completed có nhãn theo `basis`; burndown của release đã khai báo có đường lý tưởng, tag chưa
+khai báo thì không, kèm đủ ba cảnh báo release; bug trend; bảng theo sprint (cả story bị block), theo epic và story
+ngoài sprint. Tắt module Backlog trên Taiga giả thì các widget sprint biến mất và có ghi chú lý do. Settings hiện vai
+trò đang chọn và đổi lại được; *Làm mới* thấy story vừa đóng trên
 Taiga giả, kèm thời điểm mới. Sau đó script trỏ CLI vào một server không bao giờ trả lời rồi tải lại cửa sổ (như mở
 lại ứng dụng): vai trò còn giữ, số liệu đã lưu hiện kèm thời điểm trong khi lần đọc mới còn chạy. Server ngắt kết nối,
 rồi đăng nhập bị từ chối (sai mật khẩu): cả hai lần đều hiện lỗi tiếng Việt kèm cách sửa mà số liệu cũ vẫn trên màn
 hình. Xong thì trả lại biến môi trường.
+
+Phần **Business Analyst** (`scripts/smoke-dashboard-ba.mjs`) chạy khi menu vừa chuyển sang Business Analyst. Script
+trỏ CLI vào một bản chép riêng của fixture (ứng dụng và mục Backlog không thấy các sửa đổi này): story `SMOKE-FIXTURE`
+mất Then, `review.yaml` có một verdict đã cũ, một góp ý chưa xử lý và một góp ý đã xử lý, `state.json` ghi một story
+có trên Taiga giả và một story không còn. Script kiểm tra: số story theo status, *New* đọc là *đang phân tích* và
+*Ready* là *đủ AC*, nhóm *Chưa apply*, biểu đồ; độ phủ yêu cầu và epic `SMOKE` chưa được phủ; tỉ lệ đủ AC và hai story
+chưa đủ kèm lý do (legacy, thiếu Then); ô *Chưa có* của requirement change; 15 item chờ review (có item đã đổi sau khi
+duyệt); chỉ item còn góp ý chưa xử lý ở *Chờ làm rõ*. Rồi trỏ CLI vào một thư mục không có manifest: phân bố status
+vẫn còn, không còn *Chưa apply*, ghi chú thiếu backlog manifest thay cho các widget kia. Xong thì trả lại biến môi
+trường.
 
 Phần terminal (`scripts/smoke-terminal.mjs`) chạy sau phần form và phần wiki, trước *Xem thay đổi*: panel ẩn lúc mở, bật/tắt bằng
 `` Ctrl+` `` và nút; mở tab shell, gõ lệnh và thấy output, in tiếng Việt, in chữ đỏ bằng mã ANSI, kéo panel cao lên rồi
