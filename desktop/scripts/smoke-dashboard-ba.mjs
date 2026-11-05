@@ -14,14 +14,9 @@
 
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { at } from './smoke-days.mjs';
 
 const AT = '2026-11-02T09:30:00.000Z';
-
-/** Noon (local time) of the day `offset` days from today, ISO 8601. */
-function at(offset) {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + offset, 12).toISOString();
-}
 
 const REVIEW = `items:
   REVIEW-APPROVE:

@@ -8,10 +8,10 @@ import { localDay } from '../days.ts';
 import type { ItemType } from '../items.ts';
 import type { Scenario } from '../manifest/backlog.ts';
 import type { Preview, PreviewItem, PreviewStory, ReviewComment } from '../review.ts';
-import type { TaigaHistoryEntry, TaigaStatus } from '../taiga/client.ts';
+import type { TaigaHistoryEntry, TaigaHistoryStatus, TaigaStatus } from '../taiga/client.ts';
 import type { MetricsContext, UnavailableMetric } from './context.ts';
 import { inPeriod, type Period } from './periods.ts';
-import type { WorkItem } from './work.ts';
+import { historyStatusName, type WorkItem } from './work.ts';
 
 /** How many of the project's user stories are in one status, in the project's order of statuses. */
 export interface StatusCount {
@@ -99,11 +99,10 @@ const READY = 'Ready';
 /**
  * The local days of a story's Requirement changes: the description edits after the entry where it first reached
  * Ready, or every one when it was in Ready from its creation (its first status change leaves Ready, or it has none and
- * is in Ready). An edit saved with the move into Ready is not one. A status goes by its name in the project's list
- * (by id; the history may name it in another language), and by the history's name for a status no longer in it.
+ * is in Ready). An edit saved with the move into Ready is not one. A status goes by `historyStatusName`.
  */
 function requirementChangeDays(history: TaigaHistoryEntry[], statusId: number | null, statuses: Map<number, TaigaStatus>): string[] {
-  const isReady = (status: { id: number; name: string | null } | null) => status !== null && (statuses.get(status.id)?.name ?? status.name) === READY;
+  const isReady = (status: TaigaHistoryStatus | null) => historyStatusName(status, statuses) === READY;
   const moves = history.flatMap((entry, index) => (entry.status ? [{ index, ...entry.status }] : []));
   const readySinceCreation = moves.length === 0 ? statusId !== null && statuses.get(statusId)?.name === READY : isReady(moves[0]!.from);
   const after = readySinceCreation ? -1 : moves.find((move) => isReady(move.to))?.index;

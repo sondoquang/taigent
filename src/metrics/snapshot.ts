@@ -1,10 +1,11 @@
 // What `taigent metrics` reads from Taiga for one project: the snapshot the pure metrics module (compute.ts)
-// computes from, with the history of each story, task and issue (history.ts, cached in `cacheDir` when given).
+// computes from, with the history of each story, task and bug (history.ts, cached in `cacheDir` when given).
 // Read-only on Taiga; the client disables Taiga's pagination, so every list is complete.
 
 import { readReportExtras, type ReportSource } from '../report.ts';
 import type { TaigaClient, TaigaIssueValue, TaigaMilestone, TaigaProjectIssue, TaigaProjectTask, TaigaStatus, TaigaStory } from '../taiga/client.ts';
-import { type ItemHistories, readHistories } from './history.ts';
+import { bugTypeIds } from './bugs.ts';
+import { type HistoryItem, type ItemHistories, readHistories } from './history.ts';
 
 /** The project is not on Taiga or not visible to the user. Maps to ExitCode.Usage, kind `project`. */
 export class ProjectNotFoundError extends Error {}
@@ -31,8 +32,22 @@ export interface MetricsSnapshot {
   issueTypes: TaigaIssueValue[];
   /** What `report`'s tables need besides the sprints and stories: sprint stats (in the order of `sprints`), epics. */
   report: Pick<ReportSource, 'stats' | 'epics' | 'epicStories'>;
-  /** The changes of each story, task and issue above, oldest first, by item id. */
+  /** The changes of each story, task and bug above, oldest first, by item id; none for an issue of another type. */
   history: ItemHistories;
+}
+
+/**
+ * What a cached history is checked against: the item's `modified_date` and the fields Taiga changes without moving
+ * it. Dragging on a board or into a sprint moves the rows without the model's save(), which alone sets
+ * modified_date, though it records the change in the history (taiga-back `taiga/projects/userstories/services.py`:
+ * `update_userstories_kanban_order_in_bulk` runs `queryset.update(status=…)` then `close_userstory`/`open_userstory`
+ * with `save(update_fields=["is_closed", "finish_date"])`; `update_userstories_milestone_in_bulk` runs a raw SQL
+ * `UPDATE … milestone_id` through `db.update_attr_in_bulk_for_ids`). So a cached history holds while all of them are
+ * unchanged; null (never cached) without a modified_date. For the same reason no item is skipped by its
+ * modified_date: an old one may still have been moved in the periods.
+ */
+function fingerprint(item: { modifiedAt: string | null; statusId: number | null; isClosed: boolean; closedAt: string | null; milestone?: number | null }): string | null {
+  return item.modifiedAt === null ? null : JSON.stringify([item.modifiedAt, item.statusId, item.milestone ?? null, item.isClosed, item.closedAt]);
 }
 
 export async function readSnapshot(client: TaigaClient, slug: string, cacheDir?: string): Promise<MetricsSnapshot> {
@@ -50,15 +65,17 @@ export async function readSnapshot(client: TaigaClient, slug: string, cacheDir?:
     client.listProjectTasks(project.id),
     client.listProjectIssues(project.id),
   ]);
-  const historyItems = [
-    ...stories.map(({ id, modifiedAt }) => ({ type: 'story' as const, id, modifiedAt })),
-    ...tasks.map(({ id, modifiedAt }) => ({ type: 'task' as const, id, modifiedAt })),
-    ...issues.map(({ id, modifiedAt }) => ({ type: 'issue' as const, id, modifiedAt })),
+  const bugTypes = bugTypeIds(issueTypes);
+  // No metric reads the history of an issue that is not a bug.
+  const bugs = issues.filter((issue) => issue.typeId !== null && bugTypes.has(issue.typeId));
+  const historyItems: HistoryItem[] = [
+    ...stories.map((story) => ({ type: 'story' as const, id: story.id, fingerprint: fingerprint(story) })),
+    ...tasks.map((task) => ({ type: 'task' as const, id: task.id, fingerprint: fingerprint(task) })),
+    ...bugs.map((bug) => ({ type: 'issue' as const, id: bug.id, fingerprint: fingerprint(bug) })),
   ];
-  const [report, history] = await Promise.all([
-    readReportExtras(client, project.id, milestones),
-    readHistories(client, { id: project.id, slug: project.slug }, historyItems, cacheDir),
-  ]);
+  // One after the other, so no more than TAIGA_CONCURRENCY requests are in flight at once.
+  const report = await readReportExtras(client, project.id, milestones);
+  const history = await readHistories(client, { id: project.id, slug: project.slug }, historyItems, cacheDir);
   return {
     project: { id: project.id, slug: project.slug, name: project.name, sprints },
     me: { id: me.id, username: me.username },

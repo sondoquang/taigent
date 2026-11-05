@@ -610,8 +610,12 @@ whose Backlog module flag decides the cadence), the user it logs in as (`GET /us
 issue types (`GET /issue-types?project=<id>`), and every user story, task and issue (`GET /userstories?project=<id>`,
 `GET /tasks?project=<id>`, `GET /issues?project=<id>`), each list read with pagination disabled so no page is missed;
 then, like `report`, each sprint's stats (`GET /milestones/<id>/stats`), the epics (`GET /epics?project=<id>`) and each
-epic's stories (`GET /epics/<id>/related_userstories`); and the history of every user story, task and issue
-(`GET /history/userstory/<id>`, `GET /history/task/<id>`, `GET /history/issue/<id>`: one request per item, 8 at a time).
+epic's stories (`GET /epics/<id>/related_userstories`), 8 requests at a time; then the history
+(`GET /history/userstory/<id>`, `GET /history/task/<id>`, `GET /history/issue/<id>`: one request per item, 8 at a time)
+of every user story, task and bug; no metric reads the history of an issue that is not a bug. An item is never
+skipped for an old `modified_date`: Taiga's board and sprint drags record the move in the history but leave
+`modified_date` as it was (below). When a history read fails no other one starts, the command fails (exit 5), and
+with `--cache-dir` the histories read so far are kept for the next run.
 Locally it reads the `releases` of `taiga/<slug>/project.yaml` (none when the file does not exist), and, for the
 Business Analyst's metrics, the project's `backlog.yaml`, `state.json` and `review.yaml` through the same preview as
 [`preview`](#review); a missing or invalid backlog manifest never fails the command (see below). The metrics are
@@ -620,10 +624,17 @@ computed by a pure module from that snapshot and the local day (TZ).
 **History cache.** Without `--cache-dir` every history is read on each run and nothing is written anywhere. With
 `--cache-dir <dir>` (created when missing; relative to the working directory) the histories are kept in
 `<dir>/history-<slug>-<hash>.json`, one file per Taiga instance and project (the hash is of the API URL and the
-project id), each history under its item type and id with the item's `modified_date` when it was read. The next run
-reads Taiga's history again only for the items whose `modified_date` changed (any change on Taiga moves it) or that
-are new; the file is rewritten with the items the project still has. A file that cannot be parsed, of another format
-version, or of another instance or project is ignored: every history is read again and the command still succeeds.
+project id), each history under its item type and id with the item's fingerprint when it was read: its
+`modified_date`, status id, sprint (stories and tasks), closed flag and closing date (`finish_date` /
+`finished_date`). The next run reads Taiga's history again only for the items whose fingerprint changed or that are
+new. `modified_date` alone would miss moves: dragging a story on the Kanban board or into a sprint updates its row
+without moving `modified_date`, though Taiga records the change in the history (taiga-back
+`update_userstories_kanban_order_in_bulk`, `update_userstories_milestone_in_bulk`); such a move always changes its
+status, sprint, closed flag or closing date. The file is rewritten with the items the project still has, atomically
+(a temporary file next to it, renamed over it, removed when the write fails). It keeps only what the metrics use:
+status and sprint changes, and that the description changed, not its text. A file that cannot be parsed, of another
+format version, or of another instance or project is ignored: every history is read again and the command still
+succeeds. A directory where the file cannot be written is a usage error (exit 2, below).
 Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`).
 
 - **Periods**: with the Backlog module on (`cadence: "sprint"`), the last 6 sprints that have started, by first day;
@@ -638,7 +649,8 @@ Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`
 - A **Bug** is an issue whose type is named `Bug`; a story tagged `type:bug` is not one. A bug is **resolved** when its
   status is named `Ready for test` or `Closed`, and **rejected** when it is named `Rejected`: the only place the
   metrics go by a status's name, because the glossary defines a resolved bug by it. The day it was resolved or rejected
-  is its `finished_date` (set when it closes), in local time; open at a day means not closed by the status flag then.
+  comes from its history (below), else its `finished_date` (set when it closes), in local time; open at a day means not
+  closed by the status flag then.
 
 `developer` holds, for the whole team (`all`) and for `me` (`mine`):
 
@@ -659,13 +671,14 @@ Taigent Desktop passes its own `<userData>/metrics-cache` (see `docs/desktop.md`
   Each item carries its `assignees` (user ids; `people` names the project's members), so a client narrows the lists
   to `me` itself.
 - `bugs.periods`: per period, the bugs **resolved** in it (moved into `Ready for test` or `Closed` in it, by the
-  issue's history; once each, however often) and the bugs **rejected** in it (counted apart; a rejected bug has no
+  issue's history; once each, however often) and the bugs **rejected** in it (moved into `Rejected` in it, likewise,
+  so a bug rejected and reopened later stays rejected in that period; counted apart: a rejected bug has no
   resolution time), the median **Resolution time** (`resolutionTime.medianDays`, from the local day a bug was created
   to its last resolution in the period) over the resolved ones created on a known day (`count`), the bugs
   **reopened** in it (moved from `Ready for test` or `Closed` back to an open status; out of `Rejected` is not a
   reopen) and the **reopen rate** (`reopenRate`: reopened over resolved in the period, null when none was resolved;
-  it can exceed 1). A bug whose history records no status change is resolved on the day it was closed. `mine` counts
-  the bugs assigned to `me`.
+  it can exceed 1). A bug whose history records no status change is resolved, or rejected, on the day it was closed
+  when its status is now resolved, or `Rejected`. `mine` counts the bugs assigned to `me`.
 
 `productOwner` holds:
 
@@ -911,9 +924,10 @@ uncovered epics, the items awaiting review and pending clarification), the warni
 
 Read-only on Taiga, so it runs under `TAIGENT_READ_ONLY=1`; it writes only the history cache of `--cache-dir`. Errors:
 exit 2 when not logged in (kind `login`), without `--project` (kind `usage`), with `--cache-dir` on another command or
-empty (kind `usage`), or when the project is not on Taiga or not visible to the user (kind `project`; unlike `report`,
-which exits 5); exit 4 when `project.yaml` is invalid (its issues, as `validate` reports them); exit 5 when Taiga
-refuses the login or a read, or cannot be reached (kind `taiga`).
+empty (kind `usage`), when the history cache cannot be written in `--cache-dir` (a file, or no permission; kind
+`usage`, the message names the directory: give a writable one), or when the project is not on Taiga or not visible to
+the user (kind `project`; unlike `report`, which exits 5); exit 4 when `project.yaml` is invalid (its issues, as
+`validate` reports them); exit 5 when Taiga refuses the login or a read, or cannot be reached (kind `taiga`).
 
 ## Tickets
 
@@ -1248,11 +1262,12 @@ skill checks all of it and names each fix.
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `prd-to-taiga`, `ask-taigent`), `.agents/skills/` → `.claude/skills/`; `compareSkillDirs(source, target)` (file by file, `same` included) and `copySkills(source, target, comparison)` for any two directories |
 | Init | `src/init.ts` | `initRepository(root, { dryRun })` → `InitReport` (`files: [{ path, status }]`), `InitError` (exit 2): the offline `init` command, copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed) |
-| Tickets | `src/tickets.ts` | `parseDay`, `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
+| Tickets | `src/tickets.ts` | `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
-| Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
-| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug, cacheDir?)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2), with `history`: each story's, task's and issue's `TaigaHistoryEntry[]` (status, sprint and description changes, oldest first) read by `readHistories` (`history.ts`: `client.listHistory(type, id)`, 8 at a time, and the `--cache-dir` file keyed by API URL, project, type and id, hit while `modified_date` is unchanged); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); `readBacklogData(dir, slug)` → `BacklogData` (`backlog.ts`: the `buildPreview` of the manifests, or why there is none: `missing`, `invalid` with the issues); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, scope change (`sprint-scope.ts`: each story's sprint over time from its sprint changes), health and `report`'s tables, `business-analyst.ts` for `businessAnalyst`); periods (`periods.ts`), work items closed by status flag, with the day they first entered In progress (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
-| Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify` and `metrics` |
+| Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories, `TAIGA_CONCURRENCY` requests at a time) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
+| Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug, cacheDir?)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2), with `history`: each story's, task's and bug's `TaigaHistoryEntry[]` (status and sprint changes, whether the description changed, oldest first) read by `readHistories` (`history.ts`: `client.listHistory(type, id)`, 8 at a time and none started after one fails, and the `--cache-dir` file keyed by API URL, project, type and id, hit while the item's fingerprint (`modified_date`, status, sprint, closed flag and date: `fingerprint` in `snapshot.ts`) is unchanged, written with `writeAtomic`; `HistoryCacheError`, exit 2); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); `readBacklogData(dir, slug)` → `BacklogData` (`backlog.ts`: the `buildPreview` of the manifests, or why there is none: `missing`, `invalid` with the issues); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, scope change (`sprint-scope.ts`: each story's sprint over time from its sprint changes), health and `report`'s tables, `business-analyst.ts` for `businessAnalyst`); periods (`periods.ts`), work items closed by status flag, with the day they first entered In progress, and `historyStatusName`, how every metric names a status of a history (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |
+| Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `localMinute`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify`, the manifests and `metrics` |
+| Concurrency | `src/taiga/concurrency.ts` | `mapLimited(items, limit, read)` and `TAIGA_CONCURRENCY` (8): one read of Taiga per sprint, epic or item, a few at a time, none started after one fails (`report`, `metrics`) |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |

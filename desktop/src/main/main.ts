@@ -40,7 +40,7 @@ import { checkTools } from './tools.ts';
 import { runSkill } from './headless.ts';
 import { commentTicket, readMyTickets, setTicketStatus } from './tickets.ts';
 import { readWiki, saveWikiPage, uploadWiki } from './wiki.ts';
-import { cachedMetrics, readMetrics } from './metrics.ts';
+import { apiUrlFailure, cachedMetrics, readMetrics } from './metrics.ts';
 
 const RENDERER_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'renderer');
 const PRELOAD = join(fileURLToPath(new URL('.', import.meta.url)), 'preload.cjs');
@@ -342,9 +342,10 @@ function registerIpc(): void {
   handle(CHANNELS.commentTicket, async (request: TicketCommentRequest) => commentTicket(repoRoot ?? app.getPath('home'), request, window!));
   handle(CHANNELS.role, role);
   handle(CHANNELS.setRole, async (choice: unknown) => ({ ok: true, value: await setRole(choice) }));
-  // The Dashboard shows the open repository's project; its .env (TAIGA_*) applies, as for every read.
-  handleProject(CHANNELS.cachedMetrics, async (slug) => ({ ok: true, value: await cachedMetrics(slug) }));
-  handleProject(CHANNELS.readMetrics, async (slug) => readMetrics(requireRepo(), slug));
+  // The Dashboard shows the open repository's project; its .env (TAIGA_*) applies, as for every read. The API URL the
+  // renderer's whoami reported keys the saved read; without a login it is absent and nothing is saved or shown.
+  handleProject(CHANNELS.cachedMetrics, async (slug, apiUrl: unknown) => apiUrlFailure(apiUrl) ?? { ok: true, value: await cachedMetrics(slug, apiUrl as string | undefined) });
+  handleProject(CHANNELS.readMetrics, async (slug, apiUrl: unknown) => apiUrlFailure(apiUrl) ?? readMetrics(requireRepo(), slug, apiUrl as string | undefined));
 }
 
 app.enableSandbox();

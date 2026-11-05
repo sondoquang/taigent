@@ -19,6 +19,7 @@ import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, st
 import { serveMcp, startProxy } from './mcp.ts';
 import { readBacklogData } from './metrics/backlog.ts';
 import { computeMetrics } from './metrics/compute.ts';
+import { HistoryCacheError } from './metrics/history.ts';
 import { readReleases } from './metrics/releases.ts';
 import { ProjectNotFoundError, readSnapshot } from './metrics/snapshot.ts';
 import { formatMetricsText } from './metrics/text.ts';
@@ -883,7 +884,9 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (error instanceof ReadOnlyError) return fail(secrets, ExitCode.Usage, 'read-only', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
     if (error instanceof ProjectNotFoundError) return fail(secrets, ExitCode.Usage, 'project', error, json);
-    if (error instanceof TicketError || error instanceof NotifyConfigError || error instanceof InitError) return fail(secrets, ExitCode.Usage, 'usage', error, json);
+    if (error instanceof TicketError || error instanceof NotifyConfigError || error instanceof InitError || error instanceof HistoryCacheError) {
+      return fail(secrets, ExitCode.Usage, 'usage', error, json);
+    }
     if (error instanceof TelegramError) return fail(secrets, ExitCode.Taiga, 'telegram', error, json);
     if (error instanceof TaigaAuthError) {
       const hint = { token: 'check TAIGA_TOKEN', password: 'check TAIGA_USERNAME and TAIGA_PASSWORD', login: LOGIN_HINT }[error.credential];

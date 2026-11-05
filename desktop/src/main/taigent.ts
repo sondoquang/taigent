@@ -9,6 +9,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app } from 'electron';
 import type * as EditModule from '../../../src/edit.ts';
+import type * as FilesModule from '../../../src/files.ts';
 import type * as LoginModule from '../../../src/login.ts';
 import type * as ProjectModule from '../../../src/manifest/project.ts';
 import type * as ReviewModule from '../../../src/review.ts';
@@ -37,6 +38,7 @@ export interface Core {
   login: typeof LoginModule;
   secrets: typeof SecretsModule;
   client: typeof ClientModule;
+  files: typeof FilesModule;
 }
 
 let core: Promise<Core> | undefined;
@@ -47,15 +49,16 @@ export function loadCore(): Promise<Core> {
     const dist = join(taigentRoot(), 'dist');
     const load = (file: string) => import(pathToFileURL(join(dist, file)).href);
     try {
-      const [review, edit, project, login, secrets, client] = await Promise.all([
+      const [review, edit, project, login, secrets, client, files] = await Promise.all([
         load('review.js'),
         load('edit.js'),
         load('manifest/project.js'),
         load('login.js'),
         load('secrets.js'),
         load('taiga/client.js'),
+        load('files.js'),
       ]);
-      return { review, edit, project, login, secrets, client } as Core;
+      return { review, edit, project, login, secrets, client, files } as Core;
     } catch (error) {
       core = undefined;
       throw new Error(

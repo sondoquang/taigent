@@ -1,8 +1,10 @@
 // The Dashboard section (spec #64): the metrics of the open repository's project (`taigent metrics`, read-only),
 // shown as the dashboard of the user's Role. Without a Role yet, the three choices sit in the page (no modal), so every
-// other section stays reachable. The last read saved by the main process shows at once with its time, while the next
-// read runs: the first time the section shows in a session, and each time another project opens (screens stay mounted
-// while hidden, so nothing runs before the section is shown). A failed read keeps the numbers already on screen.
+// other section stays reachable. The last read the main process saved for the Taiga the user is logged in to (whoami)
+// shows at once with its time, while the next read runs: the first time the section shows in a session once the login
+// is checked, and each time another project opens or the login's API URL changes (screens stay mounted while hidden, so
+// nothing runs before the section is shown). Without a login no saved read shows. A failed read keeps the numbers
+// already on screen.
 
 import { ChevronDown, RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -26,12 +28,16 @@ const ROLE_PURPOSE: Record<Role, string> = {
   businessAnalyst: 'Pipeline phân tích, độ phủ acceptance criteria, mục chờ review hoặc chờ làm rõ.',
 };
 
-/** What the Dashboard shows for one project: its last numbers and the failure of the last read, if it failed. */
+/** What the Dashboard shows for one project on one Taiga: its last numbers and the failure of the last read, if it failed. */
 interface Shown {
-  slug: string;
+  /** `readKey` of the project and the login's API URL. */
+  key: string;
   report?: MetricsReport;
   failure?: Failure;
 }
+
+/** One read per project and Taiga API URL (none: not logged in). */
+const readKey = (slug: string, apiUrl: string | undefined) => `${slug}\n${apiUrl ?? ''}`;
 
 function Note({ reason, children }: { reason: string; children: ReactNode }) {
   return (
@@ -106,39 +112,43 @@ export function DashboardScreen() {
   const slug = useApp((s) => s.view?.slug);
   const role = useApp((s) => s.role);
   const shownSection = useApp((s) => s.section === 'dashboard');
+  // Undefined until the first whoami answers: the first read waits for it, so it knows which saved read to show.
+  const loginChecked = useApp((s) => s.login !== undefined);
+  const apiUrl = useApp((s) => (s.login?.loggedIn ? s.login.apiUrl : undefined));
   const [shown, setShown] = useState<Shown>();
   const [loading, setLoading] = useState(false);
   // Reads finished this session, success or failure: `data-reads`, which the smoke waits on.
   const [reads, setReads] = useState(0);
-  // The project read this session (another one triggers a read), and the latest read (older answers are dropped).
-  const readSlug = useRef<string>(undefined);
+  // The project and Taiga read this session (another one triggers a read), and the latest read (older answers are dropped).
+  const readFor = useRef<string>(undefined);
   const latest = useRef(0);
 
-  async function load(target: string, withSaved: boolean): Promise<void> {
+  async function load(target: string, url: string | undefined, withSaved: boolean): Promise<void> {
     const request = ++latest.current;
+    const key = readKey(target, url);
     setLoading(true);
     if (withSaved) {
-      const saved = await api.cachedMetrics(target);
+      const saved = await api.cachedMetrics(target, url);
       if (request !== latest.current) return;
-      setShown({ slug: target, report: saved.ok && saved.value ? saved.value : undefined });
+      setShown({ key, report: saved.ok && saved.value ? saved.value : undefined });
     }
-    const result = await api.readMetrics(target);
+    const result = await api.readMetrics(target, url);
     if (request !== latest.current) return;
     setLoading(false);
     setReads((count) => count + 1);
     setShown((previous) => {
-      const kept = previous?.slug === target ? previous.report : undefined;
-      return result.ok ? { slug: target, report: result.value } : { slug: target, report: kept, failure: result };
+      const kept = previous?.key === key ? previous.report : undefined;
+      return result.ok ? { key, report: result.value } : { key, report: kept, failure: result };
     });
   }
 
   useEffect(() => {
-    if (!shownSection || !slug || readSlug.current === slug) return;
-    readSlug.current = slug;
-    void load(slug, true);
-  }, [shownSection, slug]);
+    if (!shownSection || !slug || !loginChecked || readFor.current === readKey(slug, apiUrl)) return;
+    readFor.current = readKey(slug, apiUrl);
+    void load(slug, apiUrl, true);
+  }, [shownSection, slug, loginChecked, apiUrl]);
 
-  const current = shown && shown.slug === slug ? shown : undefined;
+  const current = shown && slug && shown.key === readKey(slug, apiUrl) ? shown : undefined;
   const report = current?.report;
   const description = !slug ? (
     'Số liệu của dự án đang mở, theo vai trò của bạn. Chỉ đọc Taiga, không ghi gì.'
@@ -175,7 +185,7 @@ export function DashboardScreen() {
             <>
               {role && <RoleMenu role={role} />}
               {slug && (
-                <Button id="dashboard-refresh" type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load(slug, false)}>
+                <Button id="dashboard-refresh" type="button" variant="outline" size="sm" disabled={loading} onClick={() => void load(slug, apiUrl, false)}>
                   {loading ? <Spinner /> : <RefreshCw aria-hidden="true" />}
                   Làm mới
                 </Button>

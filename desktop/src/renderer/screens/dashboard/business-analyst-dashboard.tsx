@@ -11,7 +11,7 @@ import type { MetricsReport } from '../../../shared/api.ts';
 import { Code, formatTime, StatCell, StatusBadge, TYPE_LABEL } from '@/components/common.tsx';
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart.tsx';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty.tsx';
-import { periodLabel, Stats, Widget, type WidgetRow, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
+import { currentPeriod, percent, periodLabel, periodNames, Stats, Widget, type WidgetRow, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
 
 type BusinessAnalyst = MetricsReport['businessAnalyst'];
 type BacklogRef = NonNullable<BusinessAnalyst['requirementsCoverage']>['uncovered'][number];
@@ -23,13 +23,15 @@ const STATUS_READING: Record<string, string> = { New: 'đang phân tích', Ready
 
 const STATUS_CONFIG = { count: { label: 'Story', color: 'var(--chart-1)' } } satisfies ChartConfig;
 
+/**
+ * Heights of the statuses chart (horizontal bars), the fixed scale of the design system (`aspect-auto h-*`): the first
+ * holds 3 bars, each next one 2 more, at about 32px a bar.
+ */
+const STATUS_CHART_HEIGHTS = ['h-32', 'h-48', 'h-64', 'h-80', 'h-96', 'h-112', 'h-128'];
+
 const CHANGE_CONFIG = { changes: { label: 'Lần sửa', color: 'var(--chart-2)' } } satisfies ChartConfig;
 
 const PART_NAME = { given: 'Given', when: 'When', then: 'Then' } as const;
-
-function percent(rate: number | null): string {
-  return rate === null ? '—' : `${Math.round(rate * 100)}%`;
-}
 
 /** An item of the backlog: its subject, its key, and its ref when it is on Taiga (as the Backlog section shows it). */
 function ItemCell({ item }: { item: BacklogRef }) {
@@ -83,12 +85,8 @@ function BacklogNote({ slug, state, message }: { slug: string; state: Exclude<Ba
 function RequirementChangeWidget({ report }: { report: MetricsReport }) {
   // A read saved by an older taigent has no requirement change: the widget waits for the next read.
   const entries = report.businessAnalyst.requirementChange as BusinessAnalyst['requirementChange'] | undefined;
-  const periodOf = new Map(report.periods.map((period) => [period.id, period]));
-  const label = (id: string) => {
-    const period = periodOf.get(id);
-    return period ? periodLabel(period) : id;
-  };
-  const current = report.periods.find((period) => period.current) ?? report.periods.at(-1);
+  const label = periodNames(report.periods);
+  const current = currentPeriod(report.periods);
   const now = entries?.find((entry) => entry.period === current?.id);
   const trend = (entries ?? []).map((entry) => ({ label: label(entry.period), changes: entry.changes }));
   return (
@@ -180,24 +178,32 @@ export function BusinessAnalystDashboard({ report }: { report: MetricsReport }) 
           <StatCell label="Story trên Taiga" value={onTaiga} />
           {notApplied !== undefined && <StatCell label="Chưa apply (story của backlog chưa có trên Taiga)" value={notApplied} tone="new" />}
         </Stats>
-        <ChartContainer
-          id="dashboard-ba-statuses-chart"
-          config={STATUS_CONFIG}
-          className="aspect-auto w-full"
-          style={{ height: chart.length * 32 + 24 }}
-          role="img"
-          aria-label={`Số story theo status: ${chart.map((row) => `${row.label} ${row.count}`).join('; ')}`}
-          data-series={chart.map((row) => row.count).join(',')}
-        >
-          <BarChart accessibilityLayer data={chart} layout="vertical" margin={{ left: 8, right: 16 }}>
-            <CartesianGrid horizontal={false} />
-            <XAxis type="number" allowDecimals={false} tickLine={false} axisLine={false} />
-            <YAxis type="category" dataKey="label" tickLine={false} axisLine={false} width={160} />
-            <ChartTooltip content={<ChartTooltipContent />} />
-            <Bar dataKey="count" fill="var(--color-count)" radius={4} />
-          </BarChart>
-        </ChartContainer>
-        <WidgetTable head={['Status', 'Story']} empty="Project chưa có status nào cho user story." rows={statusRows} />
+        {chart.length === 0 ? (
+          <Empty id="dashboard-ba-statuses-empty" className="border">
+            <EmptyTitle>Chưa có status nào</EmptyTitle>
+            <EmptyDescription>Project trên Taiga chưa có status nào cho user story, nên chưa đếm được story theo status.</EmptyDescription>
+          </Empty>
+        ) : (
+          <>
+            <ChartContainer
+              id="dashboard-ba-statuses-chart"
+              config={STATUS_CONFIG}
+              className={`aspect-auto w-full ${STATUS_CHART_HEIGHTS[Math.min(Math.max(Math.ceil((chart.length - 3) / 2), 0), STATUS_CHART_HEIGHTS.length - 1)]}`}
+              role="img"
+              aria-label={`Số story theo status: ${chart.map((row) => `${row.label} ${row.count}`).join('; ')}`}
+              data-series={chart.map((row) => row.count).join(',')}
+            >
+              <BarChart accessibilityLayer data={chart} layout="vertical" margin={{ left: 8, right: 16 }}>
+                <CartesianGrid horizontal={false} />
+                <XAxis type="number" allowDecimals={false} tickLine={false} axisLine={false} />
+                <YAxis type="category" dataKey="label" tickLine={false} axisLine={false} width={160} />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <Bar dataKey="count" fill="var(--color-count)" radius={4} />
+              </BarChart>
+            </ChartContainer>
+            <WidgetTable head={['Status', 'Story']} empty="Project chưa có status nào cho user story." rows={statusRows} />
+          </>
+        )}
       </Widget>
 
       <RequirementChangeWidget report={report} />

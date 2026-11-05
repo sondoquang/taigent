@@ -57,8 +57,8 @@ const api: TaigentApi = {
   commentTicket: (request) => ipcRenderer.invoke(CHANNELS.commentTicket, request),
   role: () => ipcRenderer.invoke(CHANNELS.role),
   setRole: (role) => ipcRenderer.invoke(CHANNELS.setRole, role),
-  cachedMetrics: (slug) => ipcRenderer.invoke(CHANNELS.cachedMetrics, slug),
-  readMetrics: (slug) => ipcRenderer.invoke(CHANNELS.readMetrics, slug),
+  cachedMetrics: (slug, apiUrl) => ipcRenderer.invoke(CHANNELS.cachedMetrics, slug, apiUrl),
+  readMetrics: (slug, apiUrl) => ipcRenderer.invoke(CHANNELS.readMetrics, slug, apiUrl),
   terminal: {
     shells: () => ipcRenderer.invoke(CHANNELS.terminalShells),
     open: (kind, shell) => ipcRenderer.invoke(CHANNELS.terminalOpen, kind, shell),

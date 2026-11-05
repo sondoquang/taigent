@@ -4,13 +4,14 @@
 // and the sprint and epic tables that the Báo cáo card of the Taiga section used to show (`productOwner.report`: no
 // `taigent report` run). A kanban project has no sprint widgets: a note says why.
 
+import { TriangleAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, LineChart, XAxis, YAxis } from 'recharts';
 import type { MetricsReport } from '../../../shared/api.ts';
 import { StatCell, StatusBadge, type Tone } from '@/components/common.tsx';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert.tsx';
 import { type ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart.tsx';
-import { periodLabel, Stats, Widget, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
+import { periodNames, Stats, Widget, WidgetTable } from '@/screens/dashboard/dashboard-parts.tsx';
 
 type ProductOwner = MetricsReport['productOwner'];
 type Health = ProductOwner['health'];
@@ -224,9 +225,10 @@ function ReleaseWidget({ burndown }: { burndown: ProductOwner['releaseBurndown']
       description="Release là các story mang đúng một tag release:<version> trên Taiga; ngày đích khai báo ở releases của project.yaml. Đường lý tưởng đi từ ngày tạo story sớm nhất tới ngày đích."
     >
       {warnings.length > 0 && (
-        <Alert id="dashboard-release-warnings" className="border-warning-border">
+        <Alert id="dashboard-release-warnings" className="warn-box border-warning-border bg-warning-bg">
+          <TriangleAlert aria-hidden className="text-warning" />
           <AlertTitle>Release lệch giữa Taiga và project.yaml ({warnings.length})</AlertTitle>
-          <AlertDescription>
+          <AlertDescription className="text-foreground">
             <ul className="list-disc space-y-1 pl-4">
               {warnings.map((warning) => (
                 <li key={warning.key} data-warning={warning.code}>
@@ -346,7 +348,7 @@ function ScopeCell({ side }: { side: ScopeSide }) {
 }
 
 function ScopeChangeWidget({ scopeChange, periods }: { scopeChange: NonNullable<ProductOwner['scopeChange']>; periods: MetricsReport['periods'] }) {
-  const periodOf = new Map(periods.map((period) => [period.id, period]));
+  const label = periodNames(periods);
   return (
     <Widget
       id="dashboard-scope"
@@ -356,14 +358,11 @@ function ScopeChangeWidget({ scopeChange, periods }: { scopeChange: NonNullable<
       <WidgetTable
         head={['Sprint', 'Thêm vào', 'Rút ra']}
         empty="Chưa có sprint nào bắt đầu."
-        rows={scopeChange.map((entry) => {
-          const period = periodOf.get(entry.period);
-          return {
-            key: entry.period,
-            data: { 'data-period': entry.period, 'data-added': String(entry.added.points), 'data-removed': String(entry.removed.points) },
-            cells: [period ? periodLabel(period) : entry.period, <ScopeCell side={entry.added} />, <ScopeCell side={entry.removed} />],
-          };
-        })}
+        rows={scopeChange.map((entry) => ({
+          key: entry.period,
+          data: { 'data-period': entry.period, 'data-added': String(entry.added.points), 'data-removed': String(entry.removed.points) },
+          cells: [label(entry.period), <ScopeCell side={entry.added} />, <ScopeCell side={entry.removed} />],
+        }))}
       />
     </Widget>
   );
@@ -371,13 +370,10 @@ function ScopeChangeWidget({ scopeChange, periods }: { scopeChange: NonNullable<
 
 function SprintWidgets({ report }: { report: MetricsReport }): ReactNode {
   const { productOwner, periods } = report;
-  const periodOf = new Map(periods.map((period) => [period.id, period]));
+  const label = periodNames(periods);
   const velocity = (productOwner.velocity ?? []).map((entry) => ({ label: entry.name, points: entry.points }));
   const planned = productOwner.planned;
-  const plannedData = (planned?.sprints ?? []).map((entry) => {
-    const period = periodOf.get(entry.period);
-    return { label: period ? periodLabel(period) : entry.period, planned: entry.planned, completed: entry.completed };
-  });
+  const plannedData = (planned?.sprints ?? []).map((entry) => ({ label: label(entry.period), planned: entry.planned, completed: entry.completed }));
   const basis = planned ? BASIS[planned.basis] : undefined;
   return (
     <>
@@ -442,11 +438,7 @@ function SprintWidgets({ report }: { report: MetricsReport }): ReactNode {
 
 export function ProductOwnerDashboard({ report }: { report: MetricsReport }) {
   const { productOwner, periods } = report;
-  const periodOf = new Map(periods.map((period) => [period.id, period]));
-  const label = (id: string) => {
-    const period = periodOf.get(id);
-    return period ? periodLabel(period) : id;
-  };
+  const label = periodNames(periods);
   const bugTrend = productOwner.bugTrend.map((entry) => ({ label: label(entry.period), created: entry.created, resolved: entry.resolved, reopened: entry.reopened, open: entry.open }));
 
   return (
