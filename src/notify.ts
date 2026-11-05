@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
+import { addDays, localDay, mondayOf } from './days.ts';
 import { isFileNotFound, isRecord } from './guards.ts';
 import type { Ticket, TicketsReport } from './tickets.ts';
 
@@ -18,14 +19,12 @@ export class NotifyConfigError extends Error {}
 /** The Telegram Bot API refused the message or could not be reached. Maps to ExitCode.Taiga (network). Never holds the token. */
 export class TelegramError extends Error {}
 
-const pad = (n: number) => String(n).padStart(2, '0');
-const isoDay = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-
 /** The days a message covers, YYYY-MM-DD in local time: the week of `now` (Monday to Sunday) or the day of `now`. */
 export function notifyRange(kind: NotifyKind, now: Date): { from: string; to: string } {
-  if (kind !== 'week') return { from: isoDay(now), to: isoDay(now) };
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
-  return { from: isoDay(monday), to: isoDay(new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6)) };
+  const today = localDay(now);
+  if (kind !== 'week') return { from: today, to: today };
+  const monday = mondayOf(today);
+  return { from: monday, to: addDays(monday, 6) };
 }
 
 /** `30/10` from `2026-10-30`. */

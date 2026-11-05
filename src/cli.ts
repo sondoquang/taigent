@@ -5,6 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
+import { parseDay } from './days.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
@@ -16,6 +17,9 @@ import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/
 import { initRepository, InitError, type InitStatus } from './init.ts';
 import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
 import { serveMcp, startProxy } from './mcp.ts';
+import { computeMetrics } from './metrics/compute.ts';
+import { ProjectNotFoundError, readSnapshot } from './metrics/snapshot.ts';
+import { formatMetricsText } from './metrics/text.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
 import { buildPlan, describePlanOperation, LegacyStoryCreateError, UnknownIssueValueError, type Plan } from './planner.ts';
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
@@ -28,7 +32,7 @@ import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
 import { commentTicket, parseRef, setTicketStatus, TicketError } from './ticket.ts';
-import { dayRange, formatTicketsText, parseDay, readTickets } from './tickets.ts';
+import { dayRange, formatTicketsText, readTickets } from './tickets.ts';
 import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
 
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
@@ -47,6 +51,8 @@ Commands:
             --project, that project's issue types, severities and priorities (read-only)
   report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
             stories in no sprint (read-only)
+  metrics   Dashboard metrics of --project for every Role, from what Taiga holds now: per period (sprint, or week on
+            a kanban project) throughput, lead time, workload, blocked and overdue work (read-only)
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
@@ -82,16 +88,16 @@ Environment (a variable not set in the environment is read from ./.env):
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
   TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap --yes, status, comment) with
-                                   exit 2; plan, preview, validate and --dry-run still work (Taigent Desktop's headless runs)
+                                   exit 2; plan, preview, validate, metrics and --dry-run still work (Taigent Desktop's headless runs)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
                                    .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
                                    (default: <CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram)
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in,
-            a write under TAIGENT_READ_ONLY), 3 plan/--dry-run/skills check has changes, 4 manifest invalid,
-            5 Taiga/network error`;
+            a write under TAIGENT_READ_ONLY, metrics of an unknown project), 3 plan/--dry-run/skills check has changes,
+            4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'report', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'report', 'metrics', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
@@ -627,6 +633,14 @@ async function runReport(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `metrics`: the dashboards' metrics of the project, computed from one read of Taiga. Read-only. */
+async function runMetrics(run: Run): Promise<number> {
+  const snapshot = await readSnapshot(await connectTaiga(run), run.options.project!);
+  const report = computeMetrics(snapshot, new Date());
+  emit(run, report, () => formatMetricsText(report));
+  return ExitCode.Ok;
+}
+
 /** `status`: move one of the user's tickets to a status, at once (the request is the confirmation). */
 async function runStatus(run: Run): Promise<number> {
   const { options } = run;
@@ -782,6 +796,8 @@ function dispatch(run: Run): Promise<number> {
       return runProjects(run);
     case 'report':
       return runReport(run);
+    case 'metrics':
+      return runMetrics(run);
     case 'status':
       return runStatus(run);
     case 'comment':
@@ -844,6 +860,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
     if (error instanceof ReadOnlyError) return fail(secrets, ExitCode.Usage, 'read-only', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
+    if (error instanceof ProjectNotFoundError) return fail(secrets, ExitCode.Usage, 'project', error, json);
     if (error instanceof TicketError || error instanceof NotifyConfigError || error instanceof InitError) return fail(secrets, ExitCode.Usage, 'usage', error, json);
     if (error instanceof TelegramError) return fail(secrets, ExitCode.Taiga, 'telegram', error, json);
     if (error instanceof TaigaAuthError) {

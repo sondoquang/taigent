@@ -163,6 +163,25 @@ test('fake Taiga gives each project the template issue values and validates issu
   assert.deepEqual([issue.is_closed, issue.version], [true, 2]);
 });
 
+test('fake Taiga gives each project the template story and task statuses, and lists items with their dates', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  fake.addStatus('task', { project: project.id, name: 'Shipped', is_closed: true });
+  const token = await login(fake);
+  const statuses = async (path: string) =>
+    ((await send(fake, token, 'GET', `${path}?project=${project.id}`, undefined)).body as { name: string; is_closed: boolean }[]).map((s) => [s.name, s.is_closed]);
+
+  assert.deepEqual(await statuses('/userstory-statuses'), [['New', false], ['Ready', false], ['In progress', false], ['Ready for test', false], ['Done', true], ['Archived', true]]);
+  assert.deepEqual(await statuses('/task-statuses'), [['New', false], ['In progress', false], ['Ready for test', false], ['Closed', true], ['Needs Info', false], ['Shipped', true]]);
+
+  const before = Date.now();
+  fake.addTask({ project: project.id, subject: 'Step' });
+  const [task] = (await send(fake, token, 'GET', `/tasks?project=${project.id}`, undefined)).body as Record<string, unknown>[];
+  assert.ok(Date.parse(task!.created_date as string) >= before - 1000 && task!.modified_date === task!.created_date);
+  assert.deepEqual([task!.finished_date, task!.due_date, task!.is_blocked, task!.status_extra_info], [null, null, false, { name: 'New', is_closed: false }]);
+});
+
 test('fake Taiga keeps custom attribute values per item: string id keys, full replacement, own OCC version', async (t) => {
   const fake = await startFakeTaiga();
   t.after(() => fake.close());
