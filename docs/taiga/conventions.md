@@ -213,6 +213,10 @@ ghi đè chúng.
 > **Sprint:** người làm có thể tạo và xếp sprint bằng CLI, chỉ qua `taigent sprint create` (tạo milestone) và
 > `taigent sprint add` (đưa user story có sẵn vào sprint), cả hai cần `--yes`; xem [docs/cli.md](../cli.md#sprint).
 > Manifest và `apply` vẫn không bao giờ ghi sprint.
+>
+> **Assignee:** người làm có thể gán user story cho một thành viên bằng CLI, chỉ qua `taigent assign` (cần `--yes`;
+> `taigent members` liệt kê thành viên); xem [docs/cli.md](../cli.md#members-and-assign). Manifest và `apply` vẫn
+> không bao giờ ghi assignee.
 
 Mục này là nguồn chuẩn duy nhất cho user story của Taigent. Chuẩn là format **Mike Cohn** (Use case "As a / I
 want to / so that") kết hợp tiêu chí chấp nhận **Gherkin** (Scenario / Given / When / Then). Đọc mục này là đủ

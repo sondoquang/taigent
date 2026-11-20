@@ -41,6 +41,8 @@ export interface FakeUser {
   username: string;
   password: string;
   email?: string;
+  /** Taiga's `full_name`; serialized as the username when unset (taiga-back `get_full_name`). */
+  full_name?: string;
 }
 
 /** Module flags of a project or template (`is_<module>_activated`). */
@@ -458,7 +460,7 @@ export interface FakeTaiga {
   addEpic(input: FakeItemInput): FakeEpic;
   /** Registers an Application, as the instance admin does in Django admin. */
   addApplication(name: string): FakeApplication;
-  addUser(input: { username: string; email?: string }): FakeUser;
+  addUser(input: { username: string; email?: string; full_name?: string }): FakeUser;
   addCustomAttribute(input: { itemType: FakeCustomAttributeType; project: number; name: string; description?: string; type?: string }): FakeCustomAttribute;
   /** Sets an item's custom attribute values like a Taiga user would (replaces them, bumps `version`). */
   editAttributeValues(itemType: FakeCustomAttributeType, item: number, values: Record<string, unknown>): void;
@@ -537,6 +539,8 @@ const USER_STORY_FIELDS: Record<string, true> = {
   assigned_to: true, backlog_order: true, blocked_note: true, client_requirement: true, description: true,
   is_blocked: true, is_closed: true, kanban_order: true, milestone: true, points: true, project: true,
   sprint_order: true, status: true, subject: true, tags: true, team_requirement: true, watchers: true, comment: true,
+  // Taiga 6: every assignee's user id (a many-to-many of the model, so a list of user pks).
+  assigned_users: true,
 };
 
 const TASK_FIELDS: Record<string, true> = {
@@ -873,8 +877,8 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     return project;
   }
 
-  function addUser(input: { username: string; email?: string }): FakeUser {
-    const added: FakeUser = { id: ++nextId, username: input.username, password: `pw-${input.username}`, email: input.email };
+  function addUser(input: { username: string; email?: string; full_name?: string }): FakeUser {
+    const added: FakeUser = { id: ++nextId, username: input.username, password: `pw-${input.username}`, email: input.email, full_name: input.full_name };
     state.users.push(added);
     return added;
   }
@@ -1105,7 +1109,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       members: project.members.map((id) => {
         const member = state.users.find((u) => u.id === id)!;
         const role = state.roles.find((r) => r.id === state.memberships.find((m) => m.project === project.id && m.user === id)?.role);
-        return { id, username: member.username, full_name: member.username, role: role?.id ?? null, role_name: role?.name ?? null, is_active: true };
+        return { id, username: member.username, full_name: member.full_name ?? member.username, role: role?.id ?? null, role_name: role?.name ?? null, is_active: true };
       }),
       epic_custom_attributes: attributes('epic'),
       userstory_custom_attributes: attributes('userstory'),
@@ -1140,7 +1144,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       user: membership.user,
       email: membership.email,
       user_email: member?.email ?? null,
-      full_name: member?.username ?? null,
+      full_name: member ? (member.full_name ?? member.username) : null,
       is_admin: membership.user !== null && project.admins.includes(membership.user),
     };
   }
@@ -1288,7 +1292,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   function bootstrapRoute(method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
     if (method === 'GET' && path === '/users/me') {
       const me = state.users.find((u) => u.id === userId)!;
-      return { status: 200, body: { id: me.id, username: me.username, email: me.email ?? null, full_name: me.username } };
+      return { status: 200, body: { id: me.id, username: me.username, email: me.email ?? null, full_name: me.full_name ?? me.username } };
     }
     if (method === 'POST' && path === '/projects') return createProject(body, userId);
 
@@ -1647,6 +1651,24 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       const projectId = existing?.project ?? data.project;
       if (!state.milestones.some((m) => m.id === data.milestone && m.project === projectId)) {
         errors.milestone = [`Invalid pk "${String(data.milestone)}" - object does not exist.`];
+      }
+    }
+    // taiga-back AssignedToValidator: `assigned_to` must be a member of the item's project; `assigned_users` is a
+    // model many-to-many, so a list of existing user pks.
+    if (data.assigned_to !== undefined && data.assigned_to !== null) {
+      const projectId = existing?.project ?? data.project;
+      if (!Number.isInteger(data.assigned_to) || !state.users.some((u) => u.id === data.assigned_to)) {
+        errors.assigned_to = [`Invalid pk "${String(data.assigned_to)}" - object does not exist.`];
+      } else if (!state.memberships.some((m) => m.project === projectId && m.user === data.assigned_to)) {
+        errors.assigned_to = ['The user must be a project member.'];
+      }
+    }
+    if (data.assigned_users !== undefined) {
+      const ids = data.assigned_users;
+      if (!Array.isArray(ids)) errors.assigned_users = ['Expected a list of items but got type "' + typeof ids + '".'];
+      else {
+        const bad = ids.find((id) => !Number.isInteger(id) || !state.users.some((u) => u.id === id));
+        if (bad !== undefined) errors.assigned_users = [`Invalid pk "${String(bad)}" - object does not exist.`];
       }
     }
     let tags: string[] | undefined;

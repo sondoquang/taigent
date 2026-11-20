@@ -5,6 +5,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { AdoptError, adoptItem, type AdoptParent } from './adopt.ts';
+import { AssignError, describeAssignee, describeAssignOperation, executeAssign, formatMembersText, planAssign, readMembers } from './assign.ts';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { parseDay } from './days.ts';
 import { ManifestChangedError, readManifestFile } from './edit.ts';
@@ -98,6 +99,9 @@ Commands:
             that name and those days, an error when it has that name and other days)
   sprint add <ref>...  Put the user stories #<ref> of --project into sprint --name (requires --yes; unchanged when
             already in it)
+  members   The members of --project: user id, username, full name and role (read-only)
+  assign <ref>...  Assign the user stories #<ref> of --project to member --user (requires --yes; unchanged when
+            already assigned to exactly that user; --only-unassigned: leave stories assigned to anyone)
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
@@ -115,6 +119,8 @@ Options:
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone); sprint create: the
                     sprint's first and last day
   --name <name>     sprint create, sprint add: the sprint's name
+  --user <user>     assign: the member to assign, by username, full name (any case) or \`me\`
+  --only-unassigned assign: skip the stories already assigned to someone
   --ref <n>, --key <KEY>  adopt: the Taiga ref of the hand-made item and the key of the new backlog item; pull: --key
                     only, the backlog item to pull (default: every blocked item)
   --epic <KEY>, --story <KEY>  adopt: the manifest parent of a user story (an epic) or of a task (a story)
@@ -125,7 +131,7 @@ Options:
   --application <id>  login: store an application token of this Application (created by the instance admin)
                     instead of a refresh token
   --json            Machine-readable output on stdout
-  --yes             Confirm writes (bootstrap, apply, upload, sprint create, sprint add)
+  --yes             Confirm writes (bootstrap, apply, upload, sprint create, sprint add, assign)
   --dry-run         List the operations without writing anything (exit 3 when there are changes; init: the files it
                     would write); notify: print the message without sending it (exit 0)
   -h, --help        Show this help
@@ -140,7 +146,7 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
-  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap/sprint --yes, status, comment) with
+  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap/sprint/assign --yes, status, comment) with
                                    exit 2; plan, preview, validate, metrics and --dry-run still work (Taigent Desktop's headless runs)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
                                    .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
@@ -151,7 +157,7 @@ Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. chang
             4 manifest invalid (pull: Taiga's values do not fit the manifest), 5 Taiga/network error, 6 plan/apply has
             blocked items`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'members', 'assign', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
@@ -185,7 +191,7 @@ class BlockedPlanError extends Error {
  * Commands that write to Taiga with `--yes` (without `--dry-run`), and those that write at once. `sprint` writes with
  * `--yes` too, except `sprint list` (see `writesWithYes`).
  */
-const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap', 'sprint'];
+const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap', 'sprint', 'assign'];
 const IMMEDIATE_WRITES: readonly Command[] = ['status', 'comment'];
 
 /**
@@ -224,7 +230,11 @@ interface Options {
   /** `sprint` subcommand, the sprint's name (`--name`, create/add) and the stories' refs (add). */
   sprintAction?: SprintAction;
   name?: string;
+  /** `sprint add`, `assign`: the user stories' refs. */
   refs?: number[];
+  /** `assign`: the member (`--user`) and `--only-unassigned`. */
+  user?: string;
+  onlyUnassigned: boolean;
   /** `status`, `comment`: the ticket's ref; `adopt`: the hand-made item's ref (`--ref`). */
   ref?: number;
   /** `status`: the status name (its words joined by spaces); `comment`: the comment text. */
@@ -276,6 +286,8 @@ function parseOptions(argv: string[]): Options | 'help' {
         from: { type: 'string' },
         to: { type: 'string' },
         name: { type: 'string' },
+        user: { type: 'string' },
+        'only-unassigned': { type: 'boolean', default: false },
         application: { type: 'string' },
         out: { type: 'string' },
         ref: { type: 'string' },
@@ -326,6 +338,18 @@ function parseOptions(argv: string[]): Options | 'help' {
     }
   } else if (values.name !== undefined) {
     throw new UsageError('--name applies only to sprint create and sprint add');
+  }
+  if (command === 'assign') {
+    if (values.user === undefined || values.user.trim() === '') throw new UsageError('assign needs --user <username|full name|me>, the member to assign');
+    const args = extra.splice(0);
+    if (args.length === 0) throw new UsageError('assign needs the refs of the user stories to assign (e.g. 84 or #84)');
+    refs = args.map((arg) => {
+      const parsed = parseRef(arg);
+      if (parsed === undefined) throw new UsageError(`assign needs user story refs (e.g. 84 or #84), got "${arg}"`);
+      return parsed;
+    });
+  } else if (values.user !== undefined || values['only-unassigned']) {
+    throw new UsageError('--user and --only-unassigned apply only to assign');
   }
   let ref: number | undefined;
   let text: string | undefined;
@@ -397,6 +421,8 @@ function parseOptions(argv: string[]): Options | 'help' {
     sprintAction,
     name: values.name?.trim(),
     refs,
+    user: values.user?.trim(),
+    onlyUnassigned: values['only-unassigned'],
     ref,
     text,
     key,
@@ -947,6 +973,31 @@ async function runSprint(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `members`: the project's members, for `assign --user`. Read-only. */
+async function runMembers(run: Run): Promise<number> {
+  const list = await readMembers(await connectTaiga(run), run.options.project!);
+  emit(run, list, () => formatMembersText(list));
+  return ExitCode.Ok;
+}
+
+/** `assign`: set the assignee of user stories through the review gate (`--yes` writes, `--dry-run` only plans). */
+async function runAssign(run: Run): Promise<number> {
+  const { options } = run;
+  const client = await connectTaiga(run);
+  const plan = await planAssign(client, options.project!, options.user!, options.refs!, { onlyUnassigned: options.onlyUnassigned });
+  const title = `to ${describeAssignee(plan.user)} (id ${plan.user.id}) in project ${plan.project.slug}`;
+  const gate = reviewGate(run, plan, () =>
+    formatPlanText(`Plan: assign user stories ${title}${plan.onlyUnassigned ? ' (only unassigned ones)' : ''}:`, plan, describeAssignOperation, {
+      empty: 'no stories',
+      matches: 'the request: nothing to assign',
+    }),
+  );
+  if (gate !== undefined) return gate;
+  const report = await executeAssign(plan, client);
+  emit(run, report, () => formatReportText(`Assigned user stories ${title}:`, report, describeAssignOperation));
+  return ExitCode.Ok;
+}
+
 /** `status`: move one of the user's tickets to a status, at once (the request is the confirmation). */
 async function runStatus(run: Run): Promise<number> {
   const { options } = run;
@@ -1108,6 +1159,10 @@ function dispatch(run: Run): Promise<number> {
       return runMetrics(run);
     case 'sprint':
       return runSprint(run);
+    case 'members':
+      return runMembers(run);
+    case 'assign':
+      return runAssign(run);
     case 'status':
       return runStatus(run);
     case 'comment':
@@ -1182,6 +1237,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (
       error instanceof TicketError ||
       error instanceof SprintError ||
+      error instanceof AssignError ||
       error instanceof NotifyConfigError ||
       error instanceof InitError ||
       error instanceof HistoryCacheError ||

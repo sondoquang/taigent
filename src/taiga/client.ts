@@ -302,6 +302,9 @@ export interface TaigaMembership {
   email: string | null;
   /** E-mail of the member's account. */
   userEmail: string | null;
+  /** The member's full name (`full_name`; taiga-back falls back to the username) and role name, null for an invitation. */
+  fullName: string | null;
+  roleName: string | null;
 }
 
 export interface NewProject {
@@ -512,6 +515,12 @@ export interface TaigaHistoryEntry {
 export interface StoryEdit {
   status?: number;
   milestone?: number;
+  /**
+   * `taigent assign`: the main assignee and every assignee (user ids). taiga-back keeps both (`assigned_to` must be a
+   * project member; `assigned_users` is the Taiga 6 list), so they are always sent together and consistent.
+   */
+  assigned_to?: number;
+  assigned_users?: number[];
   /** Taiga records it as a comment in the story's history. */
   comment?: string;
 }
@@ -712,6 +721,8 @@ function parseMembership(raw: unknown): TaigaMembership {
     user: typeof r.user === 'number' ? r.user : null,
     email: typeof r.email === 'string' ? r.email : null,
     userEmail: typeof r.user_email === 'string' ? r.user_email : null,
+    fullName: typeof r.full_name === 'string' ? r.full_name : null,
+    roleName: typeof r.role_name === 'string' ? r.role_name : null,
   };
 }
 
@@ -1058,7 +1069,7 @@ export class TaigaClient {
     };
   }
 
-  /** Changes a story's status or sprint and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
+  /** Changes a story's status, sprint or assignees and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
   async editStory(id: number, edit: StoryEdit, version: number): Promise<void> {
     await this.#patch(`/${TAIGA_ITEM.story.collection}/${id}`, { ...edit }, version);
   }
