@@ -998,7 +998,8 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
    * `MilestoneViewSet.stats`: stories by `is_closed`, tasks by their status's `is_closed`. Its `total_points` (points
    * per role) is left out: the report takes points from the milestone itself.
    */
-  function routeMilestones(req: IncomingMessage, method: string, path: string, query: URLSearchParams, userId: number): Reply | undefined {
+  function routeMilestones(req: IncomingMessage, method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
+    if (path === '/milestones' && method === 'POST') return createMilestone(body, userId);
     if (method !== 'GET') return undefined;
     if (path === '/milestones') {
       const projectId = queryNumber(query, 'project');
@@ -1025,6 +1026,30 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
         days: [],
       },
     };
+  }
+
+  /**
+   * `POST /milestones` (taiga-back MilestoneViewSet/MilestoneValidator): `project`, `name`, `estimated_start` and
+   * `estimated_finish` required, the name unique in its project, the start not after the finish; the slug is derived
+   * server-side. Unknown fields are rejected, like everywhere in the fake.
+   */
+  function createMilestone(body: unknown, userId: number): Reply {
+    const data = requireObject(body);
+    const errors: Record<string, string[]> = {};
+    unknownFields(data, { project: true, name: true, estimated_start: true, estimated_finish: true, disponibility: true, order: true }, errors);
+    if (data.project === undefined) errors.project = ['This field is required.'];
+    else if (!Number.isInteger(data.project) || !visibleProject(data.project, userId)) errors.project = [`Invalid pk "${String(data.project)}" - object does not exist.`];
+    if (typeof data.name !== 'string' || data.name.trim() === '') errors.name = ['This field is required.'];
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    for (const field of ['estimated_start', 'estimated_finish'] as const) {
+      if (data[field] === undefined) errors[field] = ['This field is required.'];
+      else if (typeof data[field] !== 'string' || !day.test(data[field])) errors[field] = ['Date has wrong format. Use one of these formats instead: YYYY-MM-DD.'];
+    }
+    if (Object.keys(errors).length > 0) throw fieldErrors(errors);
+    const input = { project: data.project as number, name: data.name as string, estimated_start: data.estimated_start as string, estimated_finish: data.estimated_finish as string };
+    if (state.milestones.some((m) => m.project === input.project && m.name === input.name)) throw fieldErrors({ name: ['Name duplicated for the project'] });
+    if (input.estimated_start > input.estimated_finish) throw fieldErrors({ estimated_start: ['The estimated start must be previous to the estimated finish.'] });
+    return { status: 201, body: milestoneJson(addMilestone(input)) };
   }
 
   function addIssue(input: Parameters<FakeTaiga['addIssue']>[0]): FakeIssue {
@@ -1615,6 +1640,12 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
         errors.user_story = [`Invalid pk "${String(data.user_story)}" - object does not exist.`];
       }
     }
+    if (data.milestone !== undefined && data.milestone !== null) {
+      const projectId = existing?.project ?? data.project;
+      if (!state.milestones.some((m) => m.id === data.milestone && m.project === projectId)) {
+        errors.milestone = [`Invalid pk "${String(data.milestone)}" - object does not exist.`];
+      }
+    }
     let tags: string[] | undefined;
     if (data.tags !== undefined) {
       try {
@@ -2041,7 +2072,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     if (valuesReply) return valuesReply;
     const reply =
       routeStoriesAndTasks(req, method, path, query, body, userId) ??
-      routeMilestones(req, method, path, query, userId) ??
+      routeMilestones(req, method, path, query, body, userId) ??
       routeIssues(req, method, path, query, body, userId) ??
       routeHistory(req, method, path, query, userId) ??
       routeApplicationTokens(req, method, path, query, body, userId);

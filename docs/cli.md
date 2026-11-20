@@ -378,6 +378,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   project; read-only. See [Projects](#projects).
 - `taigent report --project <slug> [--json]`: the project's progress by sprint and by epic, and its stories in no
   sprint; read-only. See [Report](#report).
+- `taigent sprint list|create|add --project <slug> …`: lists the sprints with their stories, creates
+  a sprint, or puts user stories into one (`create`/`add` need `--yes`). See [Sprint](#sprint).
 - `taigent snapshot --project <slug> [--json]`: writes every epic and every open story, task and issue of the
   project, hand-made ones too, to `taiga/<slug>/snapshot.json`; read-only on Taiga. See [Snapshot](#snapshot).
 - `taigent metrics --project <slug> [--cache-dir <dir>] [--json]`: the dashboards' metrics of the project (Taigent
@@ -453,7 +455,7 @@ project does not define (rule `issue-value`), see [Reconciliation](#reconciliati
 
 With `TAIGENT_READ_ONLY=1` (environment or `.env`), every command that would write to Taiga refuses before it
 contacts Taiga, with exit 2 and `error.kind` `read-only` under `--json`: `apply --yes`, `upload --yes` and
-`bootstrap --yes` (without `--dry-run`), `status` and `comment`. `validate`, `preview`, `plan`, every `--dry-run`, the
+`bootstrap --yes`, `sprint create --yes` and `sprint add --yes` (without `--dry-run`), `status` and `comment`. `validate`, `preview`, `plan`, every `--dry-run`, the
 writing commands without `--yes` (they print the plan and exit 2 as usual), `pull` (it writes local files only) and
 the read-only commands (`metrics` among them) still work.
 Taigent Desktop sets it on its headless skill runs, so the agent's shell and every `npx taigent` it runs inherit it:
@@ -728,6 +730,34 @@ missed. `--json` prints:
 
 Read-only, with the errors of every command that reads Taiga (exit 2 when not logged in, 5 when Taiga refuses the
 login or cannot be reached).
+
+## Sprint
+
+Sprints belong to the people doing the work (conventions §6): manifests and `apply` never write them. `taigent sprint`
+is the one place that does, run by a person through the review gate (`--yes` writes, `--dry-run` only plans).
+
+- `taigent sprint list --project <slug> [--json]`: every sprint (Taiga milestone) of the project, newest first, with
+  the refs and subjects of its user stories (`GET /milestones?project=<id>` and `GET /userstories?project=<id>`).
+  Read-only. `--json` prints `{ "project": { "id", "slug", "name" }, "sprints": [{ "id", "name", "start", "finish",
+  "closed", "stories": [{ "ref", "subject" }] }] }` (days as YYYY-MM-DD).
+- `taigent sprint create --project <slug> --name <name> --from YYYY-MM-DD --to YYYY-MM-DD [--yes|--dry-run] [--json]`:
+  creates the sprint with `POST /milestones` `{ project, name, estimated_start, estimated_finish }` (Taiga derives the
+  slug). `--from` must not be after `--to`. A sprint with that exact name and those days already there: unchanged,
+  nothing written. That name with other days: exit 2 (`error.kind` `usage`), the sprint is never changed.
+- `taigent sprint add --project <slug> --name <sprint name> <ref> [<ref>…] [--yes|--dry-run] [--json]`: puts each
+  user story `#<ref>` (`84` or `#84`) into the sprint named exactly `--name`, with `PATCH /userstories/<id>`
+  `{ milestone, version }` (the version read with the story, OCC like `status`; a story changed on Taiga meanwhile is
+  a `conflict`, exit 5, naming `#<ref>`). A story already in the sprint is unchanged; one in another sprint is moved.
+  An unknown sprint name, or a ref that is no user story of the project (a task, an issue, another project's), is
+  exit 2 before anything is written.
+
+`create` and `add` go through the same review gate as `bootstrap` and `upload`: without `--yes` they print the plan
+(`+` create, `~` update, `skip`) and exit 2 when there are changes, 0 when none; `--dry-run` prints it and exits 3 when
+there are changes; `--yes` writes and prints the report (`created`/`updated`/`unchanged` counts). Under
+`TAIGENT_READ_ONLY` their `--yes` runs are refused (see [Read-only runs](#read-only-runs)). `--json` prints the plan
+(`project`, `operations` with `action`, `changes`, `summary`; `add` also `sprint: { id, name }` and per story `ref`,
+`id`, `subject`, `from` sprint or null, `version`) or the report (the same operations with `result`). `sprint` is not in
+the headless allowlist (`tools/taiga/allowlist.txt`): it is run by a person, not by a headless skill.
 
 ## Adopt
 
@@ -1515,7 +1545,7 @@ skill checks all of it and names each fix.
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, a flag on a command that does not take it (e.g. `--epic`, `--story`, `--ref` or `--keep-manifest` elsewhere than `adopt`/`pull`), missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `adopt` refusals ([Adopt](#adopt): closed or already tagged item, unknown ref, key or ref taken, missing or wrong parent, a story whose Taiga epics do not include `--epic`), `pull --key` naming an item not in `backlog.yaml` or not on Taiga yet, `backlog.yaml` changed while adopting or pulling (kind `usage`), `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
+| 2 | Usage or configuration error: unknown command/flag, a flag on a command that does not take it (e.g. `--epic`, `--story`, `--ref` or `--keep-manifest` elsewhere than `adopt`/`pull`), missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `adopt` refusals ([Adopt](#adopt): closed or already tagged item, unknown ref, key or ref taken, missing or wrong parent, a story whose Taiga epics do not include `--epic`), `pull --key` naming an item not in `backlog.yaml` or not on Taiga yet, `backlog.yaml` changed while adopting or pulling (kind `usage`), `tickets` or `sprint create` without valid `--from`/`--to`, `--from`/`--to` with another command, `sprint create`/`sprint add` with changes but no `--yes`, `sprint create` on a name taken with other days, `sprint add` with an unknown sprint name or a ref that is no user story of the project, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
 | 3 | `plan` or `--dry-run` found changes (`init --dry-run`: a file would change); `skills check` found differing copies |
 | 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); `pull`: Taiga's values do not fit the manifest (kind `pull`, [Pull](#pull)), no file written; nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project (except for `metrics`: exit 2), version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
@@ -1555,6 +1585,7 @@ skill checks all of it and names each fix.
 | Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `localMinute`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify`, the manifests and `metrics` |
 | Concurrency | `src/taiga/concurrency.ts` | `mapLimited(items, limit, read)` and `TAIGA_CONCURRENCY` (8): one read of Taiga per sprint, epic or item, a few at a time, none started after one fails (`report`, `metrics`) |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
+| Sprints | `src/sprint.ts` | `readSprints`/`formatSprintListText` (`sprint list`), `planSprintCreate`/`executeSprintCreate` (`POST /milestones`, idempotent by name and days), `planSprintAdd`/`executeSprintAdd` (story `milestone` via `editStory`, OCC), `SprintError` (exit 2) |
 | Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |
 
@@ -1589,7 +1620,8 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   defaults otherwise), `addEpicRelatedUserStory(epic, story)`, `addMilestone({ project, name, estimated_start,
   estimated_finish, closed? })` (a sprint: set `milestone` on stories and tasks to put them in it; `GET /milestones`
   embeds its stories and their summed `total_points`/`closed_points`, `GET /milestones/<id>/stats` counts its stories
-  by `is_closed` and its tasks by `is_closed`); bootstrap fixtures `addUser`, `addProject({ slug,
+  by `is_closed` and its tasks by `is_closed`; `POST /milestones` creates one like taiga-back, name unique per project, start not after finish,
+  and a story PATCH with `milestone` must name a sprint of its project); bootstrap fixtures `addUser`, `addProject({ slug,
   name?, members?, admins?, is_private?, modules?, tagsColors? })` (`GET /projects?member=<user id>` lists the projects
   of that member the caller can see, like taiga-back's `member` filter, with `i_am_admin`), `addCustomAttribute`, `addMembership`,
   `addWikiPage`; upload fixtures `addAttachment({ project, objectType: "epics" | "userstories" | "tasks" | "wiki",

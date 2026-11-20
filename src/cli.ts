@@ -44,6 +44,17 @@ import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { formatProjectDetailText, formatProjectsText, readProjectDetail, readProjects } from './projects.ts';
 import { formatProjectReportText, readProjectReport } from './report.ts';
 import { readBacklogRemote } from './remote.ts';
+import {
+  describeSprintAddOperation,
+  describeSprintCreateOperation,
+  executeSprintAdd,
+  executeSprintCreate,
+  formatSprintListText,
+  planSprintAdd,
+  planSprintCreate,
+  readSprints,
+  SprintError,
+} from './sprint.ts';
 import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE, reviewKeys } from './review.ts';
 import { formatSnapshotText, readSnapshot, summarizeSnapshot, writeSnapshot } from './snapshot.ts';
 import { Secrets } from './secrets.ts';
@@ -82,6 +93,11 @@ Commands:
             overdue work; release burndown with the releases of project.yaml (read-only)
             Business Analyst: stories by status, and from backlog.yaml and review.yaml complete acceptance
             criteria, requirements coverage, items awaiting review or pending clarification
+  sprint list    Every sprint (milestone) of --project with the refs and subjects of its user stories (read-only)
+  sprint create  Create sprint --name from --from to --to in --project (requires --yes; unchanged when a sprint has
+            that name and those days, an error when it has that name and other days)
+  sprint add <ref>...  Put the user stories #<ref> of --project into sprint --name (requires --yes; unchanged when
+            already in it)
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
@@ -96,7 +112,9 @@ Commands:
 
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets, notify and projects)
-  --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
+  --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone); sprint create: the
+                    sprint's first and last day
+  --name <name>     sprint create, sprint add: the sprint's name
   --ref <n>, --key <KEY>  adopt: the Taiga ref of the hand-made item and the key of the new backlog item; pull: --key
                     only, the backlog item to pull (default: every blocked item)
   --epic <KEY>, --story <KEY>  adopt: the manifest parent of a user story (an epic) or of a task (a story)
@@ -107,7 +125,7 @@ Options:
   --application <id>  login: store an application token of this Application (created by the instance admin)
                     instead of a refresh token
   --json            Machine-readable output on stdout
-  --yes             Confirm writes (bootstrap, apply, upload)
+  --yes             Confirm writes (bootstrap, apply, upload, sprint create, sprint add)
   --dry-run         List the operations without writing anything (exit 3 when there are changes; init: the files it
                     would write); notify: print the message without sending it (exit 0)
   -h, --help        Show this help
@@ -122,7 +140,7 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
-  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap --yes, status, comment) with
+  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap/sprint --yes, status, comment) with
                                    exit 2; plan, preview, validate, metrics and --dry-run still work (Taigent Desktop's headless runs)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
                                    .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
@@ -133,12 +151,14 @@ Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. chang
             4 manifest invalid (pull: Taiga's values do not fit the manifest), 5 Taiga/network error, 6 plan/apply has
             blocked items`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
+const SPRINT_ACTIONS = ['list', 'create', 'add'] as const;
+type SprintAction = (typeof SPRINT_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
@@ -161,8 +181,11 @@ class BlockedPlanError extends Error {
   }
 }
 
-/** Commands that write to Taiga with `--yes` (without `--dry-run`), and those that write at once. */
-const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap'];
+/**
+ * Commands that write to Taiga with `--yes` (without `--dry-run`), and those that write at once. `sprint` writes with
+ * `--yes` too, except `sprint list` (see `writesWithYes`).
+ */
+const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap', 'sprint'];
 const IMMEDIATE_WRITES: readonly Command[] = ['status', 'comment'];
 
 /**
@@ -171,12 +194,22 @@ const IMMEDIATE_WRITES: readonly Command[] = ['status', 'comment'];
  */
 function refuseReadOnlyWrite({ options, env }: Run): void {
   if (env.TAIGENT_READ_ONLY !== '1') return;
-  const writes = IMMEDIATE_WRITES.includes(options.command) || (CONFIRMED_WRITES.includes(options.command) && options.yes && !options.dryRun);
+  const writes = IMMEDIATE_WRITES.includes(options.command) || (writesWithYes(options) && options.yes && !options.dryRun);
   if (!writes) return;
   throw new ReadOnlyError(
-    `${options.command} writes to Taiga, refused because TAIGENT_READ_ONLY is set (a headless run of Taigent Desktop); ` +
+    `${commandName(options)} writes to Taiga, refused because TAIGENT_READ_ONLY is set (a headless run of Taigent Desktop); ` +
       'plan, preview, validate and --dry-run still work. Push from the app, or run it in a terminal without TAIGENT_READ_ONLY',
   );
+}
+
+/** Whether the command writes to Taiga once confirmed with `--yes`. */
+function writesWithYes(options: Options): boolean {
+  return CONFIRMED_WRITES.includes(options.command) && !(options.command === 'sprint' && options.sprintAction === 'list');
+}
+
+/** The command as messages name it: `sprint create`, not `sprint`. */
+function commandName(options: Options): string {
+  return options.command === 'sprint' ? `sprint ${options.sprintAction}` : options.command;
 }
 
 interface Options {
@@ -188,6 +221,10 @@ interface Options {
   to?: string;
   /** `skills` subcommand. */
   skillsAction?: SkillsAction;
+  /** `sprint` subcommand, the sprint's name (`--name`, create/add) and the stories' refs (add). */
+  sprintAction?: SprintAction;
+  name?: string;
+  refs?: number[];
   /** `status`, `comment`: the ticket's ref; `adopt`: the hand-made item's ref (`--ref`). */
   ref?: number;
   /** `status`: the status name (its words joined by spaces); `comment`: the comment text. */
@@ -238,6 +275,7 @@ function parseOptions(argv: string[]): Options | 'help' {
         project: { type: 'string' },
         from: { type: 'string' },
         to: { type: 'string' },
+        name: { type: 'string' },
         application: { type: 'string' },
         out: { type: 'string' },
         ref: { type: 'string' },
@@ -265,6 +303,29 @@ function parseOptions(argv: string[]): Options | 'help' {
     const action = extra.shift();
     if (!SKILLS_ACTIONS.includes(action as SkillsAction)) throw new UsageError(`skills needs one of: ${SKILLS_ACTIONS.join(', ')}`);
     skillsAction = action as SkillsAction;
+  }
+  let sprintAction: SprintAction | undefined;
+  let refs: number[] | undefined;
+  if (command === 'sprint') {
+    const action = extra.shift();
+    if (!SPRINT_ACTIONS.includes(action as SprintAction)) throw new UsageError(`sprint needs one of: ${SPRINT_ACTIONS.join(', ')}`);
+    sprintAction = action as SprintAction;
+    if (sprintAction === 'list') {
+      if (values.name !== undefined) throw new UsageError('--name applies only to sprint create and sprint add');
+    } else {
+      if (values.name === undefined || values.name.trim() === '') throw new UsageError(`sprint ${sprintAction} needs --name <name>, the sprint's name`);
+    }
+    if (sprintAction === 'add') {
+      const args = extra.splice(0);
+      if (args.length === 0) throw new UsageError('sprint add needs the refs of the user stories to add (e.g. 84 or #84)');
+      refs = args.map((arg) => {
+        const parsed = parseRef(arg);
+        if (parsed === undefined) throw new UsageError(`sprint add needs user story refs (e.g. 84 or #84), got "${arg}"`);
+        return parsed;
+      });
+    }
+  } else if (values.name !== undefined) {
+    throw new UsageError('--name applies only to sprint create and sprint add');
   }
   let ref: number | undefined;
   let text: string | undefined;
@@ -317,7 +378,7 @@ function parseOptions(argv: string[]): Options | 'help' {
   if (values.out === '') throw new UsageError('--out needs a file path');
   if (values['cache-dir'] !== undefined && command !== 'metrics') throw new UsageError('--cache-dir applies only to metrics');
   if (values['cache-dir'] === '') throw new UsageError('--cache-dir needs a directory');
-  if (command === 'tickets') {
+  if (command === 'tickets' || (command === 'sprint' && sprintAction === 'create')) {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
       if (value === undefined) throw new UsageError(`${command} needs --${name} <YYYY-MM-DD>`);
@@ -325,7 +386,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     }
     if (parseDay(values.from!)! > parseDay(values.to!)!) throw new UsageError(`--from ${values.from} is after --to ${values.to}`);
   } else if (values.from !== undefined || values.to !== undefined) {
-    throw new UsageError('--from and --to apply only to tickets');
+    throw new UsageError('--from and --to apply only to tickets and sprint create');
   }
   return {
     command: command as Command,
@@ -333,6 +394,9 @@ function parseOptions(argv: string[]): Options | 'help' {
     from: values.from,
     to: values.to,
     skillsAction,
+    sprintAction,
+    name: values.name?.trim(),
+    refs,
     ref,
     text,
     key,
@@ -519,7 +583,7 @@ function reviewGate(run: Run, plan: { changes: boolean }, text: () => string): n
   emit(run, plan, text);
   if (!plan.changes) return ExitCode.Ok;
   if (review) return ExitCode.Changes;
-  throw new UsageError(`refusing to ${options.command} without --yes; review the operations above, then re-run with --yes`);
+  throw new UsageError(`refusing to ${commandName(options)} without --yes; review the operations above, then re-run with --yes`);
 }
 
 /**
@@ -846,6 +910,43 @@ async function runMetrics(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/**
+ * `sprint list|create|add`: list the sprints with their stories, or create a sprint / put stories
+ * into one through the review gate (`--yes` writes, `--dry-run` only plans), like bootstrap and upload.
+ */
+async function runSprint(run: Run): Promise<number> {
+  const { options } = run;
+  const slug = options.project!;
+  const client = await connectTaiga(run);
+  if (options.sprintAction === 'list') {
+    const list = await readSprints(client, slug);
+    emit(run, list, () => formatSprintListText(list));
+    return ExitCode.Ok;
+  }
+  if (options.sprintAction === 'create') {
+    const plan = await planSprintCreate(client, slug, { name: options.name!, start: options.from!, finish: options.to! });
+    const gate = reviewGate(run, plan, () =>
+      formatPlanText(`Sprint plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describeSprintCreateOperation, {
+        empty: 'nothing to create',
+        matches: 'the sprint',
+      }),
+    );
+    if (gate !== undefined) return gate;
+    const report = await executeSprintCreate(plan, client);
+    emit(run, report, () => formatReportText(`Sprint of project ${report.project.slug} (id ${report.project.id}):`, report, describeSprintCreateOperation));
+    return ExitCode.Ok;
+  }
+  const plan = await planSprintAdd(client, slug, options.name!, options.refs!);
+  const title = `into sprint "${plan.sprint.name}" (id ${plan.sprint.id}) of project ${plan.project.slug}`;
+  const gate = reviewGate(run, plan, () =>
+    formatPlanText(`Plan: put user stories ${title}:`, plan, describeSprintAddOperation, { empty: 'no stories', matches: 'the request: every story is in the sprint' }),
+  );
+  if (gate !== undefined) return gate;
+  const report = await executeSprintAdd(plan, client);
+  emit(run, report, () => formatReportText(`Put user stories ${title}:`, report, describeSprintAddOperation));
+  return ExitCode.Ok;
+}
+
 /** `status`: move one of the user's tickets to a status, at once (the request is the confirmation). */
 async function runStatus(run: Run): Promise<number> {
   const { options } = run;
@@ -1005,6 +1106,8 @@ function dispatch(run: Run): Promise<number> {
       return runSnapshot(run);
     case 'metrics':
       return runMetrics(run);
+    case 'sprint':
+      return runSprint(run);
     case 'status':
       return runStatus(run);
     case 'comment':
@@ -1078,6 +1181,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (error instanceof ProjectNotFoundError) return fail(secrets, ExitCode.Usage, 'project', error, json);
     if (
       error instanceof TicketError ||
+      error instanceof SprintError ||
       error instanceof NotifyConfigError ||
       error instanceof InitError ||
       error instanceof HistoryCacheError ||

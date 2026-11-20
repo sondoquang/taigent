@@ -376,6 +376,8 @@ export interface TaigaAssignedStory {
 export interface TaigaStory {
   id: number;
   ref: number;
+  /** OCC version, for a later edit (`editStory`, e.g. by `taigent sprint add`). */
+  version: number;
   subject: string;
   /** Its status's id, and the status's name and closed flag as the story embeds them. */
   statusId: number | null;
@@ -450,6 +452,15 @@ export interface TaigaMilestone {
   closedPoints: number;
 }
 
+/** A new sprint (`POST /milestones`, taiga-back MilestoneViewSet); Taiga derives its slug from the name. */
+export interface NewMilestone {
+  project: number;
+  name: string;
+  /** First and last day, YYYY-MM-DD. */
+  estimated_start: string;
+  estimated_finish: string;
+}
+
 /** A sprint's counts (`GET /milestones/{id}/stats`): stories closed and tasks whose status is closed. */
 export interface TaigaMilestoneStats {
   totalStories: number;
@@ -489,9 +500,13 @@ export interface TaigaHistoryEntry {
   description: boolean;
 }
 
-/** What `taigent status` and `taigent comment` change on a story: its status (by id), and/or a comment. */
+/**
+ * What `taigent status` and `taigent comment` change on a story: its status (by id), and/or a comment; `taigent
+ * sprint add` its sprint (milestone id).
+ */
 export interface StoryEdit {
   status?: number;
+  milestone?: number;
   /** Taiga records it as a comment in the story's history. */
   comment?: string;
 }
@@ -526,6 +541,7 @@ function parseStory(raw: unknown): TaigaStory {
   return {
     id: field(r, 'id', 'number', what),
     ref: field(r, 'ref', 'number', what),
+    version: field(r, 'version', 'number', what),
     subject: field(r, 'subject', 'string', what),
     statusId: typeof r.status === 'number' ? r.status : null,
     status: field(record(r.status_extra_info, `${what}.status_extra_info`), 'name', 'string', `${what} status`),
@@ -998,6 +1014,11 @@ export class TaigaClient {
     return parseList(await this.#request('GET', '/milestones', { query: { project: projectId } }), 'milestone', parseMilestone);
   }
 
+  /** Creates a sprint (`POST /milestones`); only `taigent sprint create` writes sprints. */
+  async createMilestone(milestone: NewMilestone): Promise<TaigaMilestone> {
+    return parseMilestone(await this.#request('POST', '/milestones', { body: milestone }));
+  }
+
   async getMilestoneStats(milestoneId: number): Promise<TaigaMilestoneStats> {
     const what = 'milestone stats';
     const r = record(await this.#request('GET', `/milestones/${milestoneId}/stats`), what);
@@ -1009,7 +1030,7 @@ export class TaigaClient {
     };
   }
 
-  /** Changes a story's status and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
+  /** Changes a story's status or sprint and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
   async editStory(id: number, edit: StoryEdit, version: number): Promise<void> {
     await this.#patch(`/${TAIGA_ITEM.story.collection}/${id}`, { ...edit }, version);
   }

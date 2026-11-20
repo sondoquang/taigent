@@ -210,6 +210,10 @@ releases:
 Manifest không có field status, assignee, sprint hay points. Các field đó thuộc về người làm và `apply` không
 ghi đè chúng.
 
+> **Sprint:** người làm có thể tạo và xếp sprint bằng CLI, chỉ qua `taigent sprint create` (tạo milestone) và
+> `taigent sprint add` (đưa user story có sẵn vào sprint), cả hai cần `--yes`; xem [docs/cli.md](../cli.md#sprint).
+> Manifest và `apply` vẫn không bao giờ ghi sprint.
+
 Mục này là nguồn chuẩn duy nhất cho user story của Taigent. Chuẩn là format **Mike Cohn** (Use case "As a / I
 want to / so that") kết hợp tiêu chí chấp nhận **Gherkin** (Scenario / Given / When / Then). Đọc mục này là đủ
 để viết đúng chuẩn, không cần cài skill nào khác.
