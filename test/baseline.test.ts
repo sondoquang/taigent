@@ -61,6 +61,50 @@ test('baseline present, Taiga and manifest unchanged: skip, nothing blocked', as
   assert.deepEqual(blocked, []);
 });
 
+test('items applied with a description plan as unchanged although Taiga lists them without one: read from their detail', async (t) => {
+  const h = await startHarness(t);
+  await applied(
+    h,
+    `epics:
+  - key: AUTH
+    subject: Authentication
+    description: Users can sign in.
+    stories:
+      - key: AUTH-LOGIN
+        subject: User can log in
+        use_case: { as_a: user, i_want_to: log in, so_that: I see my projects }
+        description: With a password.
+        scenarios:
+          - { scenario: Sign in, given: [I am signed out], when: I submit my password, then: I see my projects }
+        tasks:
+          - key: AUTH-LOGIN-API
+            subject: Login endpoint
+            description: POST /login returns a session.
+issues:
+  - key: LOGIN-500
+    subject: Login fails with a long password
+    description: Steps to reproduce.
+    type: Bug
+    severity: Normal
+    priority: Normal
+`,
+  );
+  const project = h.fake.state.projects[0]!;
+  const handMade = h.fake.addUserStory({ project: project.id, subject: 'Hand-made story', description: 'Not in the backlog.', tags: [] });
+  h.fake.requests.length = 0;
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+
+  assert.equal(plan.code, 0, plan.stderr);
+  const { operations, blocked } = plan.json<Plan>();
+  assert.deepEqual(blocked, []);
+  assert.deepEqual(operations.map((op) => [op.action, op.key]), [['skip', 'AUTH'], ['skip', 'AUTH-LOGIN'], ['skip', 'AUTH-LOGIN-API'], ['skip', 'LOGIN-500']]);
+  // One detail read per compared item, none for the hand-made story the plan only lists.
+  const details = h.fake.requests.filter((r) => r.method === 'GET' && /^\/(epics|userstories|tasks|issues)\/\d+$/.test(r.path)).map((r) => r.path);
+  const ids = { epic: h.fake.state.epics[0]!.id, story: h.fake.state.userStories.find((s) => s.id !== handMade.id)!.id, task: h.fake.state.tasks[0]!.id, issue: h.fake.state.issues[0]!.id };
+  assert.deepEqual(details.sort(), [`/epics/${ids.epic}`, `/issues/${ids.issue}`, `/tasks/${ids.task}`, `/userstories/${ids.story}`]);
+});
+
 test('baseline present, manifest changed: update, and apply moves the baseline to the written values', async (t) => {
   const h = await startHarness(t);
   const epic = await appliedEpic(h);

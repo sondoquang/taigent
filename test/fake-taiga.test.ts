@@ -221,6 +221,32 @@ test('fake Taiga keeps custom attribute values per item: string id keys, full re
   });
 });
 
+test('fake Taiga lists epics, user stories, tasks and issues without their description, which only the detail has, like taiga-back', async (t) => {
+  const fake = await startFakeTaiga();
+  t.after(() => fake.close());
+  const project = fake.addProject({ slug: 'demo' });
+  const token = await login(fake);
+  const epic = fake.addEpic({ project: project.id, subject: 'Epic', description: 'Epic text', tags: [] });
+  const story = fake.addUserStory({ project: project.id, subject: 'Story', description: 'Story text', tags: [] });
+  const task = fake.addTask({ project: project.id, user_story: story.id, subject: 'Task', description: 'Task text', tags: [] });
+  const issue = fake.addIssue({ project: project.id, subject: 'Issue', description: 'Issue text', tags: [] });
+  const get = async (path: string): Promise<unknown> => {
+    const response = await fetch(`${fake.url}${path}`, { headers: { authorization: `Bearer ${token}`, 'x-disable-pagination': 'True' } });
+    assert.equal(response.status, 200, path);
+    return response.json();
+  };
+
+  for (const [collection, item, text] of [['epics', epic, 'Epic text'], ['userstories', story, 'Story text'], ['tasks', task, 'Task text'], ['issues', issue, 'Issue text']] as const) {
+    const listed = await get(`/${collection}?project=${project.id}`);
+    assert.ok(Array.isArray(listed) && isRecord(listed[0]));
+    assert.equal(listed[0].subject, item.subject);
+    assert.ok(!('description' in listed[0]), `${collection} list has no description`);
+    const detail = await get(`/${collection}/${item.id}`);
+    assert.ok(isRecord(detail));
+    assert.equal(detail.description, text);
+  }
+});
+
 test('fake Taiga filters the epic, user story and task lists by tags= like taiga-back (any listed tag, exact match)', async (t) => {
   const fake = await startFakeTaiga();
   t.after(() => fake.close());

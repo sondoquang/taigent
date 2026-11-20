@@ -8,6 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from '../items.ts';
 import { Secrets } from '../secrets.ts';
+import { mapLimited, TAIGA_CONCURRENCY } from './concurrency.ts';
 
 /** Thrown for any Taiga/network failure. Maps to ExitCode.Taiga. Never contains credentials. */
 export class TaigaError extends Error {
@@ -112,7 +113,11 @@ export interface TaigaItem {
   version: number;
   project: number;
   subject: string;
-  description: string;
+  /**
+   * Undefined when the item was read from a list (`GET /userstories?project=`, …): taiga-back's list serializers
+   * leave the description out, only the detail (`GET /userstories/{id}`) has it; `describeItems` reads it.
+   */
+  description: string | undefined;
   /** Tag names (Taiga stores them lowercased). */
   tags: string[];
   /** Name of the item's status (`status_extra_info.name`), null when Taiga sends none. */
@@ -192,7 +197,7 @@ function parseItem(raw: unknown, what: string): TaigaItem {
     version: field(raw, 'version', 'number', what),
     project: field(raw, 'project', 'number', what),
     subject: field(raw, 'subject', 'string', what),
-    description: typeof raw.description === 'string' ? raw.description : '',
+    description: typeof raw.description === 'string' ? raw.description : undefined,
     tags,
     status: typeof status.name === 'string' ? status.name : null,
     isClosed: typeof status.is_closed === 'boolean' ? status.is_closed : raw.is_closed === true,
@@ -864,6 +869,29 @@ export class TaigaClient {
   async listItems(type: ItemType, projectId: number): Promise<TaigaItem[]> {
     const raw = await this.#request('GET', `/${TAIGA_ITEM[type].collection}`, { query: { project: projectId } });
     return parseList(raw, TAIGA_ITEM[type].what, (item) => parseItemOf(type, item));
+  }
+
+  /** One item, as Taiga's detail endpoint returns it (with its description, which lists leave out). */
+  getItem(type: 'task', id: number): Promise<TaigaTask>;
+  getItem(type: 'issue', id: number): Promise<TaigaIssue>;
+  getItem(type: ItemType, id: number): Promise<TaigaItem>;
+  async getItem(type: ItemType, id: number): Promise<TaigaItem> {
+    return parseItemOf(type, await this.#request('GET', `/${TAIGA_ITEM[type].collection}/${id}`));
+  }
+
+  /**
+   * `items` (read by `listItems`) with the description of each `wanted` one that has none, read from its detail,
+   * TAIGA_CONCURRENCY at a time; the other items are left as they are.
+   */
+  async describeItems<T extends TaigaItem>(type: ItemType, items: readonly T[], wanted: (item: T) => boolean): Promise<T[]> {
+    const missing = items.filter((item) => item.description === undefined && wanted(item));
+    const details = await mapLimited(missing, TAIGA_CONCURRENCY, (item) => this.getItem(type, item.id));
+    const descriptions = new Map<number, string>();
+    for (const detail of details) {
+      if (detail.description === undefined) throw new TaigaError(`unexpected Taiga response: ${TAIGA_ITEM[type].what} #${detail.ref} has no description`);
+      descriptions.set(detail.id, detail.description);
+    }
+    return items.map((item) => (descriptions.has(item.id) ? { ...item, description: descriptions.get(item.id)! } : item));
   }
 
   /** The issue types, severities or priorities a project defines, in Taiga's order. */

@@ -96,6 +96,15 @@ export function manifestManagedValues(entry: ManifestItem): ManagedValues {
 }
 
 /**
+ * The description of a Taiga item that must have one: read from its detail (`TaigaClient.getItem`) or filled in by
+ * `TaigaClient.describeItems`. An item read only from a list has none, which is never taken for an empty one.
+ */
+export function descriptionOf(item: TaigaItem): string {
+  if (item.description === undefined) throw new Error(`the description of item #${item.ref} (id ${item.id}) was not read from Taiga`);
+  return item.description;
+}
+
+/**
  * The managed values of a Taiga item. `attributes`: names of the custom attributes the manifest declares for it;
  * only those the project defines are projected (their values must have been read into `remote.attributeValues`).
  * `backlogKey`: the key of the backlog item a Taiga epic or story is, for epic links and a task's story.
@@ -111,7 +120,7 @@ export function remoteManagedValues(type: ItemType, item: TaigaItem, remote: Rem
     if (!current) throw new Error(`custom attribute values of ${type} #${item.ref} were not read from Taiga`);
     for (const { name, id } of defined) custom[name] = (current.values[String(id)] ?? null) as JsonValue;
   }
-  const values: ManagedValues = { subject: item.subject, description: item.description, tags: managedTags(item.tags), custom_attributes: custom };
+  const values: ManagedValues = { subject: item.subject, description: descriptionOf(item), tags: managedTags(item.tags), custom_attributes: custom };
   if (type === 'story') {
     values.epics = remote.epics.flatMap((epic) => {
       const key = backlogKey('epic', epic.ref, keyOf(epic));

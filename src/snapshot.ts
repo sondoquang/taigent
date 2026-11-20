@@ -8,7 +8,7 @@ import { dirname } from 'node:path';
 import { writeAtomic } from './files.ts';
 import { isFileNotFound } from './guards.ts';
 import { ISSUE_VALUE_FIELDS, type IssueValueField } from './items.ts';
-import { issueValueName, keyOf } from './managed.ts';
+import { descriptionOf, issueValueName, keyOf } from './managed.ts';
 import type { PlanProject } from './planner.ts';
 import type { TaigaClient, TaigaIssueValue, TaigaItem } from './taiga/client.ts';
 
@@ -77,7 +77,7 @@ function snapshotItem(item: TaigaItem): SnapshotItem {
     closed: item.isClosed,
     tags: item.tags,
     key: keyOf(item) ?? null,
-    description: item.description,
+    description: descriptionOf(item),
   };
 }
 
@@ -85,11 +85,20 @@ function snapshotItem(item: TaigaItem): SnapshotItem {
 export async function readSnapshot(client: TaigaClient, slug: string): Promise<Snapshot> {
   const project = await client.getProjectBySlug(slug);
   const readAt = new Date().toISOString();
-  const [epics, stories, tasks, issues] = await Promise.all([
+  const listed = await Promise.all([
     client.listItems('epic', project.id),
     client.listItems('story', project.id),
     client.listItems('task', project.id),
     client.listItems('issue', project.id),
+  ]);
+  // Taiga's lists leave the description out: it is read from the detail of each item the snapshot holds (every
+  // epic; open stories, tasks and issues).
+  const open = (item: TaigaItem) => !item.isClosed;
+  const [epics, stories, tasks, issues] = await Promise.all([
+    client.describeItems('epic', listed[0], () => true),
+    client.describeItems('story', listed[1], open),
+    client.describeItems('task', listed[2], open),
+    client.describeItems('issue', listed[3], open),
   ]);
 
   const epicRefs = new Map<number, number[]>();

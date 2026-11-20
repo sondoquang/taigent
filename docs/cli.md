@@ -256,6 +256,11 @@ part of it, so changing them on Taiga never blocks anything. `apply --yes` write
 update, adopt and link, and for each skipped item whose manifest equals Taiga: that is how a `state.json` from before
 baselines is migrated. A baseline counts only for the Taiga item of the same type and id.
 
+Taiga's item lists (`GET /epics?project=<id>`, `/userstories`, `/tasks`, `/issues`) leave the description out; only
+an item's detail (`GET /userstories/<id>`, …) has it. `plan`, `apply` and `pull` therefore read the detail of each
+item they compare (tagged `src:<key>`, or adopted by `ref`), 8 requests at a time, and never take a description
+missing from a list for an empty one; hand-made items they only list are not read one by one.
+
 `plan` compares each item tagged `src:<key>` three ways, B = baseline, T = Taiga, M = manifest. An item adopted by
 `ref` (no `src:<key>` tag yet) is compared the same way against its `adopted` baseline, the values `adopt` copied: an
 edit on Taiga between `adopt` and `apply` blocks it. An item with a hand-written `ref` and no `adopted` entry has no
@@ -863,7 +868,9 @@ most 30 stories and no tasks. It holds:
 - hand-made items (no `src:<key>` tag, `key: null`) and backlog items alike.
 
 It reads `GET /epics`, `/userstories`, `/tasks` and `/issues?project=<id>`, `GET /epics/<id>/related_userstories` for
-each epic, and the issue types, severities and priorities, every list with pagination disabled. It never writes to
+each epic, the detail of every item it holds (`GET /epics/<id>`, `/userstories/<id>`, `/tasks/<id>`,
+`/issues/<id>`, 8 at a time: the lists leave the description out), and the issue types, severities and priorities,
+every list with pagination disabled. It never writes to
 Taiga (it works under `TAIGENT_READ_ONLY` too) and touches no other file. Each run replaces the file atomically. The
 file is git-ignored ([`init`](#using-the-skills-in-another-project) adds `taiga/*/snapshot.json` to `.gitignore`): it
 is a local copy of Taiga at `readAt`, never a manifest.

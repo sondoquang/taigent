@@ -13,6 +13,7 @@ import {
 import {
   backlogKeyOf,
   blockedFields,
+  descriptionOf,
   differingFields,
   isSrcTag,
   keyOf,
@@ -406,8 +407,10 @@ export function buildPlan(backlog: Backlog, remote: RemoteState, state: Pick<Sta
     for (const field of differing) {
       switch (field) {
         case 'subject':
-        case 'description':
           changes[field] = { from: existing[field], to: want[field] };
+          break;
+        case 'description':
+          changes[field] = { from: descriptionOf(existing), to: want[field] };
           break;
         case 'tags':
           changes.tags = { from: existing.tags, to: [...existing.tags, ...want.tags.filter((t) => !existing.tags.includes(t))] };

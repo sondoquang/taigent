@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { ManifestChangedError, readManifestFile, saveItem, type BacklogItem } from './edit.ts';
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
-import { backlogKeyOf, issueValueName, keyOf, managedTags, type ManagedValues } from './managed.ts';
+import { backlogKeyOf, descriptionOf, issueValueName, keyOf, managedTags, type ManagedValues } from './managed.ts';
 import { checkBacklog, type Backlog } from './manifest/backlog.ts';
 import { checkTag } from './manifest/conventions.ts';
 import { ManifestError } from './manifest/errors.ts';
@@ -80,8 +80,9 @@ async function backlogItem(type: ItemType, item: TaigaItem, key: string, context
   const backlogKey = backlogKeyOf(backlog);
   // Only the tags a manifest may hold (`type:`/`area:` ones that follow the conventions); the others stay on Taiga.
   const tags = item.tags.filter((tag) => checkTag(tag, '', () => {}));
-  const fields = { ref: item.ref, subject: item.subject, description: item.description, tags };
-  const baseline: ManagedValues = { subject: item.subject, description: item.description, tags: managedTags(item.tags), custom_attributes: {} };
+  const description = descriptionOf(item);
+  const fields = { ref: item.ref, subject: item.subject, description, tags };
+  const baseline: ManagedValues = { subject: item.subject, description, tags: managedTags(item.tags), custom_attributes: {} };
   if ((type === 'epic' || type === 'issue') && parent) throw new AdoptError(`${what} sits at the top of backlog.yaml: drop --${parent.type}`);
   switch (type) {
     case 'epic':
@@ -149,7 +150,9 @@ export async function adoptItem(dir: string, slug: string, client: TaigaClient, 
     if (item) found = { type, item };
   }
   if (!found) throw new AdoptError(`no epic, user story, task or issue #${ref} in project ${slug}`);
-  const { type, item } = found;
+  const { type } = found;
+  // Taiga's lists leave the description out: the item's own is read from its detail.
+  const [item] = (await client.describeItems(type, [found.item], () => true)) as [TaigaItem];
   const taggedKey = keyOf(item);
   if (taggedKey !== undefined) {
     throw new AdoptError(`${TYPE_NAME[type]} #${ref} already carries ${srcTag(taggedKey)}: it is backlog item ${taggedKey}; one Taiga item is never bound to two backlog items`);

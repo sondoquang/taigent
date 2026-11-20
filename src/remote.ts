@@ -6,15 +6,27 @@ import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } f
 import { isSrcTag } from './managed.ts';
 import type { Backlog } from './manifest/backlog.ts';
 import { srcTag, type RemoteState } from './planner.ts';
-import type { TaigaAttributeValues, TaigaClient, TaigaIssueValue } from './taiga/client.ts';
+import type { TaigaAttributeValues, TaigaClient, TaigaIssueValue, TaigaItem } from './taiga/client.ts';
 
 export async function readBacklogRemote(backlog: Backlog, client: TaigaClient, slug: string): Promise<RemoteState> {
   const project = await client.getProjectBySlug(slug);
-  const [epics, stories, tasks, issues] = await Promise.all([
+  const listed = await Promise.all([
     client.listItems('epic', project.id),
     client.listItems('story', project.id),
     client.listItems('task', project.id),
     client.listItems('issue', project.id),
+  ]);
+  // Taiga's lists leave the description out: it is read from the detail of each item the plan compares (the ones
+  // carrying a `src:` tag, and those the backlog adopts by `ref`), not of the hand-made ones it only lists.
+  const backlogRefs = new Set(
+    [...backlog.epics.flatMap((epic) => [epic, ...epic.stories, ...epic.stories.flatMap((story) => story.tasks)]), ...backlog.issues].flatMap((item) => item.ref ?? []),
+  );
+  const compared = (item: TaigaItem) => item.tags.some(isSrcTag) || backlogRefs.has(item.ref);
+  const [epics, stories, tasks, issues] = await Promise.all([
+    client.describeItems('epic', listed[0], compared),
+    client.describeItems('story', listed[1], compared),
+    client.describeItems('task', listed[2], compared),
+    client.describeItems('issue', listed[3], compared),
   ]);
 
   // The project's issue types, severities and priorities, to resolve the names of the manifest's issues.
