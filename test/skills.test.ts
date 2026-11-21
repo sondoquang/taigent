@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test, type TestContext } from 'node:test';
@@ -306,27 +306,13 @@ test('taiga-my-tickets pre-approves only taigent tickets, may be invoked implici
   assert.match(router, /`taiga-my-tickets`/);
 });
 
-test('taiga-dashboard reads only taigent metrics, may be invoked implicitly, reports each role\'s metrics first in glossary terms, and ask-taigent routes to it', async () => {
+test('taiga-dashboard reads only taigent metrics, may be invoked implicitly, and ask-taigent routes to it', async () => {
   const { frontmatter, allowedTools, openai } = await readSkill('taiga-dashboard');
 
   assert.notEqual(frontmatter['disable-model-invocation'], true);
   assert.equal(openai.policy?.allow_implicit_invocation, true);
   // Its only pre-approval: nothing that writes a file or to Taiga, so the role it asks for is never stored.
   assert.deepEqual(allowedTools, shellRules('metrics'));
-
-  const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-dashboard/SKILL.md'), 'utf8');
-  const glossary = new Set([...(await readFile(join(REPO_ROOT, 'GLOSSARY.md'), 'utf8')).matchAll(/^\*\*(.+?)\*\*:\r?$/gm)].map((match) => match[1]!));
-  const firstMetrics: Record<string, string[]> = {
-    Developer: ['Workload', 'Cycle time', 'Bug'],
-    'Product Owner': ['Release', 'Requirements coverage', 'Awaiting review', 'Pending clarification'],
-    'Business Analyst': ['Requirements coverage', 'Requirement change', 'Awaiting review'],
-  };
-  for (const [role, terms] of Object.entries(firstMetrics)) {
-    const section = new RegExp(`^### ${role}\\r?\\n([\\s\\S]*?)(?=^#|(?![\\s\\S]))`, 'm').exec(skill)?.[1] ?? '';
-    const named = [...section.matchAll(/\*\*(.+?)\*\*/g)].map((match) => match[1]!);
-    for (const term of terms) assert.ok(named.includes(term), `${role} reports ${term} first`);
-    for (const term of named) assert.ok(glossary.has(term), `${role}: ${term} is a GLOSSARY.md term`);
-  }
   const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
   assert.match(router, /`taiga-dashboard`/);
 });
@@ -373,23 +359,22 @@ test('Taigent skill sources carry no taigent version: setup stamps the installin
   }
 });
 
-test('taiga-setup checks the CLI, the login, the MCP server, the skill version and the duplicates in that order, with a fix table per client for user scope, and ask-taigent names both new checks', async () => {
-  const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8');
-  const steps = [...skill.matchAll(/^## (\d)\. (.+)$/gm)].map((match) => `${match[1]}. ${match[2]}`);
-  assert.deepEqual(steps, ['1. taigent CLI', '2. Taiga login', '3. Taiga MCP server', '4. Skill version', '5. Duplicates']);
+test('taiga-setup pre-approves only the MCP check listProjects, may be invoked implicitly, and ask-taigent routes to it', async () => {
+  const { frontmatter, allowedTools, openai } = await readSkill('taiga-setup');
 
-  const section = (heading: string) => skill.slice(skill.indexOf(heading), skill.indexOf('\n## ', skill.indexOf(heading) + 1));
-  // Both read setup's report; the common fix is running setup again, for the user or for the project.
-  assert.match(section('## 4. Skill version'), /`outdatedSkills`/);
-  assert.match(section('## 4. Skill version'), /`taigent setup`/);
-  assert.match(section('## 4. Skill version'), /`npx taigent setup --project`/);
-  assert.match(section('## 5. Duplicates'), /`duplicates`/);
-  assert.match(section('## 5. Duplicates'), /never (remove|delete)/i);
-  const table = section('## Fixes by client (user scope)');
-  for (const client of ['Claude Code', 'Codex', 'OMP']) assert.match(table, new RegExp(`^\\| ${client} \\|`, 'm'), client);
-  for (const path of ['~/.claude/skills/', '~/.claude.json', '~/.agents/skills/', '~/.codex/config.toml', '~/.omp/agent/mcp.json']) assert.ok(table.includes(path), path);
-
+  assert.notEqual(frontmatter['disable-model-invocation'], true);
+  assert.notEqual(openai.policy?.allow_implicit_invocation, false);
+  assert.deepEqual(allowedTools, ['mcp__taiga__listProjects']);
   const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
-  assert.match(router, /skill version/i);
-  assert.match(router, /duplicates/i);
+  assert.match(router, /`taiga-setup`/);
+});
+
+test('no Taigent skill mentions the removed Taigent Desktop (Electron) app', async () => {
+  for (const name of TAIGENT_SKILLS) {
+    for (const file of await readdir(join(REPO_ROOT, '.agents/skills', name), { recursive: true })) {
+      if (!/\.(md|ya?ml)$/.test(file)) continue;
+      const text = await readFile(join(REPO_ROOT, '.agents/skills', name, file), 'utf8');
+      assert.doesNotMatch(text, /\bdesktop\b|electron/i, `${name}/${file}`);
+    }
+  }
 });

@@ -142,13 +142,16 @@ export async function copySkills(sourceDir: string, targetDir: string, compariso
   return { synced, removed };
 }
 
+/** The YAML frontmatter of a `SKILL.md`: the whole `---` block, its line ending and its body. */
+const FRONTMATTER = /^---(\r?\n)([\s\S]*?)\r?\n---(?=\r?\n|$)/;
+
 /**
  * A skill's `SKILL.md` text with `metadata.taigent-version` set to `version` (a string, as Agent Skills requires) in its
  * frontmatter: added at the end of the frontmatter, or first in an existing block-style `metadata` map. The sources
  * carry no version (`test/skills.test.ts`); everything else stays byte for byte, line endings included.
  */
 export function stampSkillVersion(text: string, version: string): string {
-  const match = /^---(\r?\n)([\s\S]*?)\r?\n---(?=\r?\n|$)/.exec(text);
+  const match = FRONTMATTER.exec(text);
   if (!match) throw new Error('SKILL.md has no YAML frontmatter');
   const [frontmatter, eol, body] = [match[0], match[1]!, match[2]!];
   const lines = body.split(/\r?\n/);
@@ -162,11 +165,11 @@ export function stampSkillVersion(text: string, version: string): string {
 
 /** The `metadata.taigent-version` of a `SKILL.md` text; undefined when it has none (installed before versions) or no readable frontmatter. */
 export function skillVersion(text: string): string | undefined {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  const match = FRONTMATTER.exec(text);
   if (!match) return undefined;
   let frontmatter: unknown;
   try {
-    frontmatter = parseYaml(match[1]!);
+    frontmatter = parseYaml(match[2]!);
   } catch {
     return undefined;
   }
