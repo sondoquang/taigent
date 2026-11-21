@@ -157,9 +157,9 @@ Environment (a variable not set in the environment is read from ./.env):
                                    (default: <CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram)
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in,
-            metrics of an unknown project), 3 plan/--dry-run/skills check has changes, 4 manifest invalid (pull:
-            Taiga's values do not fit the manifest), 5 Taiga/network error (setup: login or MCP check), 6 plan/apply
-            has blocked items`;
+            metrics of an unknown project, review of an unknown key or comment), 3 plan/--dry-run/skills check has
+            changes, 4 manifest invalid (pull: Taiga's values do not fit the manifest), 5 Taiga/network error (setup:
+            login or MCP check), 6 plan/apply has blocked items`;
 
 const COMMANDS = ['setup', 'validate', 'preview', 'review', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */

@@ -456,10 +456,11 @@ Slug chuẩn:
 ## 10. Lệnh được phép và tool MCP bị cấm
 
 Lệnh `taigent` skill được dùng (allowlist của skill và wrapper headless): `validate`, `preview`, `plan`, `snapshot`
-(chỉ đọc Taiga, chỉ ghi `snapshot.json`), `adopt` và `pull` (chỉ đọc Taiga, chỉ ghi file local), `tickets`, `status`,
-`comment`, và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi người dùng đồng ý (§1). `review`
-(offline, chỉ ghi `review.yaml`) không có trong allowlist headless: `review approve|request-changes|comment` chỉ
-trong skill `taiga-review-backlog` mà người review tự gọi, `review resolve` chỉ trong `taiga-plan-backlog`.
+(chỉ đọc Taiga, chỉ ghi `snapshot.json`), `adopt` và `pull` (chỉ đọc Taiga, chỉ ghi file local), `metrics` (chỉ đọc,
+skill `taiga-dashboard`), `tickets`, `status`, `comment`, `review resolve` (offline, chỉ ghi `review.yaml`: trả lời
+comment review, skill `taiga-plan-backlog`), và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi
+người dùng đồng ý (§1). `review approve|request-changes|comment` không có trong allowlist headless: chỉ trong skill
+`taiga-review-backlog` mà người review tự gọi.
 
 Các tool sau của `taiga-mcp-server@1.9.20` đang hỏng hoặc nguy hiểm. Agent **không được gọi** chúng; skill và wrapper
 headless không đưa chúng vào allowlist.

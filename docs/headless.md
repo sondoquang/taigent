@@ -103,6 +103,10 @@ It holds:
   `adopted` map of `state.json`), `pull`
   (Taiga's values of backlog items, written into `backlog.yaml` and `state.json`) and `metrics` (one project's
   dashboard metrics, for `taiga-dashboard`).
+- `Bash(npx taigent review resolve *)` and `PowerShell(npx taigent review resolve *)`: a headless
+  `taiga-plan-backlog` answers the review comments of `review.yaml` (offline; marks one comment resolved with a
+  reply). `review approve`, `review request-changes` and `review comment` are never allowed: verdicts and comments
+  are the reviewer's own, recorded with `taiga-review-backlog`, which runs only when the reviewer invokes it.
 - The Taiga MCP read tools of `taiga-mcp-server@1.9.20` (`list*`, `get*`, `getMilestoneStats`,
   `getIssuesByMilestone`, `advancedSearch`, `queryHelp`, `validateQuery`) as `mcp__taiga__<tool>`.
 
@@ -178,7 +182,7 @@ How Codex decides a shell command under `codex exec`:
    (`codex-rs/core/src/exec_policy.rs`, `policy_files`). A matching `decision = "allow"` rule runs the command
    **outside the sandbox** without prompting (`Decision::Allow` → `ExecApprovalRequirement::Skip { bypass_sandbox:
    true }`, then `SandboxOverride::BypassSandboxFirstAttempt` in `codex-rs/core/src/tools/sandboxing.rs`), so it has
-   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets|status|comment|preview|projects|report|snapshot|adopt|pull|metrics …`; its
+   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets|status|comment|preview|projects|report|snapshot|adopt|pull|metrics …` and, in a second rule, `npx taigent review resolve …`; its
    `match`/`not_match` examples are checked by Codex when it loads the file.
 3. A command that **no rule matches** is decided by `render_decision_for_unmatched_command_for_platform`
    (`exec_policy.rs`): under `never` it is *allowed* inside the sandbox unless flagged dangerous. Rules cannot

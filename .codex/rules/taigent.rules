@@ -32,3 +32,19 @@ prefix_rule(
         "npm test",
     ],
 )
+
+# review resolve answers a review comment in taiga/<slug>/review.yaml (taiga-plan-backlog); the other review
+# subcommands (verdicts, new comments) are the reviewer's own and are never allowed.
+prefix_rule(
+    pattern = ["npx", "taigent", "review", "resolve"],
+    decision = "allow",
+    justification = "taigent review resolve of the standard allowlist (tools/taiga/allowlist.txt): answers a review comment",
+    match = [
+        "npx taigent review resolve --project vigo-auth AUTH-LOGIN c1 -- 'Đã thêm tiêu chí'",
+    ],
+    not_match = [
+        "npx taigent review approve --project vigo-auth AUTH",
+        "npx taigent review request-changes --project vigo-auth AUTH",
+        "npx taigent review comment --project vigo-auth AUTH",
+    ],
+)
