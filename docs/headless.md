@@ -28,8 +28,8 @@ tools/taiga/run-skill.sh --output-format text codex taiga-plan-backlog docs/spec
 | `--dry-run` | Print the command as a JSON array of arguments instead of running it (no agent starts) |
 
 Options go before the agent. The **repository is the current directory**: run the wrapper from the repository root,
-wherever the script itself lives (`tools/taiga/` of this repository, `node_modules/taigent/tools/taiga/` in a repository
-set up by `taigent init`, or the copy bundled in Taigent Desktop). It reads that repository's `.agents/skills/` and
+wherever the script itself lives (`tools/taiga/` of this repository, or `node_modules/taigent/tools/taiga/` in a
+repository set up by `taigent init`). It reads that repository's `.agents/skills/` and
 `tools/taiga/allowlist.txt` (the one `init` installed), the agent starts there (where `.mcp.json`,
 `.codex/config.toml` and the skills live), and the wrapper exits with the agent's exit code. Wrapper errors (unknown
 option, output format, agent or skill; missing arguments; no `tools/taiga/allowlist.txt` in the current directory, or
@@ -101,7 +101,7 @@ It holds:
   `report` (one project's progress by sprint and by epic), `snapshot` (the whole backlog, written to the
   git-ignored `taiga/<slug>/snapshot.json`), `adopt` (one hand-made item, written into `backlog.yaml` and the
   `adopted` map of `state.json`) and `pull`
-  (Taiga's values of backlog items, written into `backlog.yaml` and `state.json`; allowed under `TAIGENT_READ_ONLY`).
+  (Taiga's values of backlog items, written into `backlog.yaml` and `state.json`).
 - The Taiga MCP read tools of `taiga-mcp-server@1.9.20` (`list*`, `get*`, `getMilestoneStats`,
   `getIssuesByMilestone`, `advancedSearch`, `queryHelp`, `validateQuery`) as `mcp__taiga__<tool>`.
 
@@ -116,41 +116,6 @@ commands in Codex's rule language, which cannot read files (`test/headless.test.
 paths, with the Taigent skills and the MCP entries (`docs/cli.md` §Using the skills in another project); re-running
 it after a taigent upgrade brings them up to date.
 
-## Taigent Desktop buttons
-
-The Backlog section of Taigent Desktop has three buttons that run this wrapper (the copy bundled with the app, so its
-version matches the app) in the opened repository, with the agent picked in the agent bar beside them or in
-**Settings** (`omp` by default, `claude` or `codex`) and `--output-format text`. Each run opens a `skill` tab of the
-app's terminal; **Huỷ** kills its process tree
-([docs/desktop.md § Nút chạy skill headless](desktop.md#nút-chạy-skill-headless)).
-
-| Button | Skill | Skill arguments (one line) |
-|---|---|---|
-| Plan backlog từ spec… | `taiga-plan-backlog` | `Spec: <picked file, repo-relative>. Project: <open project>.` |
-| Nhờ agent xử lý góp ý | `taiga-plan-backlog` | `Xử lý các góp ý còn mở trong review.yaml của project <slug>.` |
-| Tạo user story… | `taiga-create-user-story` | `<one-line need> Project: <slug>. Tự chọn persona và epic phù hợp nhất, ghi story vào backlog.yaml rồi dừng ở bước hỏi xác nhận.` |
-
-Every request ends with `Chạy headless từ Taigent Desktop: không chờ ai trả lời, chỉ sửa file trong repo, không chạy
-apply, upload hay bootstrap.` No button runs `taiga-apply-backlog`, `taiga-upload-docs` or `taiga-bootstrap-project`,
-and a single `-p`/`exec` turn cannot carry the user's confirmation that `apply`/`upload`/`bootstrap --yes` need, so
-`taiga-create-user-story` stops at its confirmation question and the story stays in the manifest. The run gets the same
-allowlist as the wrapper outside the app: nothing is added. The app refuses `"` and line breaks in the texts it puts in
-the request (Windows PowerShell 5.1, below). On Windows the app runs the script with
-`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command`, switching the console output to UTF-8
-first; elsewhere with `/bin/sh`.
-
-The prompt is not the guard: the allowlist still allows `npx taigent apply *`. The app starts every run with
-`TAIGENT_READ_ONLY=1` in its environment; the agent and the shell it runs commands in inherit it, and under it the CLI
-refuses `apply --yes`, `upload --yes`, `bootstrap --yes`, `status` and `comment` with exit 2 before contacting Taiga,
-while `plan`, `validate`, `preview` and `--dry-run` still work (`docs/cli.md` §Read-only runs, tested in
-`test/read-only.test.ts`). Writes to Taiga then go through the app's own confirmation (**Đẩy lên Taiga**). Claude Code
-and OMP pass their environment to their shell commands (OMP 18.16.0 on Windows: `npx taigent apply --yes` run by the
-agent under the wrapper exited 2 with the read-only refusal). `[UNVERIFIED]` for Codex: its
-`shell_environment_policy` inherits the environment by default and drops only names with `KEY`, `SECRET` or `TOKEN` in
-them ([Config reference](https://learn.chatgpt.com/docs/config-file/config-reference)), so the variable passes; a personal
-policy that inherits nothing (`inherit = "none"`, `include_only`) would drop it. The wrapper outside the app does not
-set it: there the user confirms in their own session.
-
 ## Platform notes
 
 - **Git Bash/MSYS** would rewrite the prompt `/taiga-…` into a Windows path (`C:/Program Files/Git/taiga-…`)
@@ -161,7 +126,7 @@ set it: there the user confirms in their own session.
   Codex overrides use TOML single-quoted strings).
 - **Windows PowerShell** writes the `--dry-run` command in the console's code page when its output is piped, so
   non-ASCII skill arguments (Vietnamese) come out mangled in it (observed with Windows PowerShell 5.1). Set
-  `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)` first to read them, as Taigent Desktop does.
+  `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)` first to read them.
 
 ## `codex exec` and MCP approvals when unattended
 

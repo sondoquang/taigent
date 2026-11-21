@@ -26,10 +26,9 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
      chỉ vào manifest qua `taigent adopt`, sau khi người dùng xác nhận **từng item** (§5).
    - Kết thúc bằng `taigent validate --project <slug>`. Phải ra exit 0.
 2. **Review.** Business Analyst / Product Owner duyệt backlog trước khi apply:
-   - **Taigent Desktop** (`docs/desktop.md`) hoặc `taigent preview --project <slug>` (offline, in một trang Markdown
-     đúng những gì `apply` sẽ ghi, kèm trạng thái review). Mỗi item được đánh dấu **approved** (đồng ý) hoặc
-     **changes** (cần sửa) và có thể kèm comment. Tất cả nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest
-     (định dạng: `docs/cli.md` mục Review).
+   - `taigent preview --project <slug>` (offline, in một trang Markdown đúng những gì `apply` sẽ ghi, kèm trạng thái
+     review). Mỗi item được đánh dấu **approved** (đồng ý) hoặc **changes** (cần sửa) và có thể kèm comment. Tất cả
+     nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest (định dạng: `docs/cli.md` mục Review).
    - Agent đọc `review.yaml`, xử lý từng comment chưa resolved bằng cách sửa manifest, rồi đặt `resolved: true` và
      `reply` (trả lời ngắn bằng tiếng Việt) cho comment đó. Agent **không bao giờ** đổi verdict; verdict chỉ do người
      review đặt. Item sửa sau khi đã approved thì verdict thành **stale** (digest khác) và cần duyệt lại.
@@ -69,7 +68,7 @@ chuyển legacy sang user story format. Lần `plan` đầu sau khi nâng cấp 
 
 | Rule | Quy tắc |
 |---|---|
-| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá item thì xoá mục review của nó; đổi key item thì chuyển comment sang key mới và bỏ verdict (item cần duyệt lại). Taigent Desktop tự làm việc này khi form đổi key hoặc xoá item. |
+| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá item thì xoá mục review của nó; đổi key item thì chuyển comment sang key mới và bỏ verdict (item cần duyệt lại). |
 | `review-verdict` | `verdict` là `approved` hoặc `changes`, và đi kèm `digest` của item lúc duyệt. |
 | `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 
@@ -102,8 +101,7 @@ hai với slug `<slug>-1`). Đổi tên project về sau **không** đổi slug.
 `existing: true` trong `project.yaml`. Khi đó `project-name` và `project-slug` không áp dụng: `name` chỉ cần không rỗng,
 `slug` là slug thật của project trên Taiga (chữ thường, số, `-`, `_`); `project-dir` vẫn áp dụng. `taigent bootstrap`
 không bao giờ tạo project có `existing: true`: không tìm thấy slug trên Taiga thì dừng (exit 5, không ghi gì); tìm
-thấy thì chỉ bổ sung module, tag, custom attribute, thành viên và wiki còn thiếu. Form project của Taigent Desktop tự
-đặt cờ này khi lấy tên project từ Taiga.
+thấy thì chỉ bổ sung module, tag, custom attribute, thành viên và wiki còn thiếu.
 
 ## 3. Template và module
 
@@ -176,11 +174,10 @@ releases:
 | `key-format` | Mỗi epic, story, task, issue có `key`: chữ hoa, số, gạch ngang giữa các nhóm (`^[A-Z0-9]+(-[A-Z0-9]+)*$`), ví dụ `AUTH`, `AUTH-LOGIN`, `AUTH-LOGIN-API`. |
 | `key-unique` | Key duy nhất trong cả project (epic, story, task, issue dùng chung một không gian key). |
 | `key-reference` | Mọi chỗ tham chiếu key (ví dụ `target` của attachment trong `docs.yaml`) phải trỏ tới key có trong `backlog.yaml`. Attachment chỉ gắn vào epic, story hoặc task, không gắn vào issue. |
-| `key-locked` | Item đã có trên Taiga (key có trong `state.json`) không đổi key: đổi key = item mới + item cũ thành mồ côi. Form của Taigent Desktop kiểm rule này khi lưu. |
 | `ref-unique` | `ref` (nếu có) là số nguyên dương và mỗi ref chỉ thuộc một backlog item: một item trên Taiga không bao giờ gắn với hai backlog item. |
 | `item-ref` | Kiểm sau khi đọc Taiga (`plan`/`apply`, exit 4): item mang tag `src:<key>` phải có đúng ref trong manifest; nếu chưa có item nào mang tag đó thì ref phải là một item **cùng loại**, **chưa có tag `src:`** trong project. |
 
-- Key **không đổi** sau khi đã apply (rule `key-locked`).
+- Key **không đổi** sau khi đã apply (key có trong `state.json`): đổi key = item mới + item cũ thành mồ côi.
 - Gợi ý đặt key: epic là tên mảng (`AUTH`), story là `<EPIC>-<việc>` (`AUTH-LOGIN`), task là
   `<STORY>-<bước>` (`AUTH-LOGIN-API`), issue là `<tiền tố>-<việc>` với tiền tố theo `type`: `Question` → `ASK`,
   `Enhancement` → `ENH`, type khác (kể cả `Bug`) → `BUG`. Ví dụ `BUG-LONG-PASSWORD`.

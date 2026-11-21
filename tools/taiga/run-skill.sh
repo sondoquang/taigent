@@ -4,8 +4,8 @@
 #
 #   tools/taiga/run-skill.sh [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]
 #
-# The repository is the current directory, wherever this script lives (this repository, node_modules/taigent, or the
-# copy bundled in Taigent Desktop): its .agents/skills and the allowlist `taigent init` installed there.
+# The repository is the current directory, wherever this script lives (this repository or node_modules/taigent): its
+# .agents/skills and the allowlist `taigent init` installed there.
 
 usage="usage: run-skill [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]"
 

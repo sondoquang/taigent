@@ -20,10 +20,10 @@ npm install
 The first command installs the `taigent` CLI and the Taiga MCP server into `node_modules` (nothing system-wide) and
 creates `package.json` if the project has none. `taigent init` then adds the eleven Taigent skills to `.agents/skills/`
 (Codex) and `.claude/skills/` (Claude Code), the `taiga` MCP server to `.mcp.json` and `.codex/config.toml`, the
-headless kit (`tools/taiga/allowlist.txt`, `.codex/hooks/`, `.codex/rules/`), the `.gitignore` lines of the BA preview
-working copies (`taiga/*/preview.md`, `taiga/*/.preview/`), and pins `taigent` in `package.json` to its release tag,
-which `npm install` installs. It keeps your other skills, servers and dependencies, and lists every
-file it wrote (`--dry-run` shows them first).
+headless kit (`tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`, `.codex/hooks/`, `.codex/rules/`), the
+`.gitignore` lines of the BA preview working copies (`taiga/*/preview.md`, `taiga/*/.preview/`), and pins `taigent` in
+`package.json` to its release tag, which `npm install` installs. It keeps your other skills, servers and dependencies,
+and lists every file it wrote (`--dry-run` shows them first).
 
 ### 2. Log in to Taiga
 
@@ -198,25 +198,6 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
   the pin) and `npm install`.
 - Details: [docs/cli.md](docs/cli.md) (commands, credentials, manifests, exit codes) and
   [§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).
-
-## Taigent Desktop (review app for BA/PO)
-
-`desktop/` holds **Taigent Desktop**, an Electron app for Business Analysts and Product Owners: open the repository
-folder, read the backlog the agent wrote exactly as `apply` would write it, comment and mark each item **Đạt**
-(approved) or **Cần sửa** (changes) in `taiga/<slug>/review.yaml`, log in, see the Taiga plan and push after an
-explicit confirmation, and pull, commit and push `taiga/` plus the files `docs.yaml` references with git (never
-merging, rebasing or force-pushing). A terminal panel (`` Ctrl+` ``) runs shells and `claude`, `codex` or `omp` in
-the repository, in tabs. It runs the taigent CLI and core bundled inside it (no Node needed for the installed app).
-Its **Setup repo** wizard creates a repository (`git init` + `taiga/`), clones one or opens one, installs Taigent there
-with its bundled `taigent init`, runs `npm install` in a terminal tab, and checks `git`, `claude`, `codex`, `omp` and the
-Taiga login (it never installs an agent CLI itself).
-
-```sh
-npm run build && cd desktop && npm install && npm start   # from source
-npm run dist                                              # in desktop/: Windows installer in desktop/release/
-```
-
-Guide (Vietnamese): [docs/desktop.md](docs/desktop.md).
 
 ## Develop taigent
 

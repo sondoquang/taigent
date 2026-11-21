@@ -3,8 +3,8 @@
 #
 #   tools/taiga/run-skill.ps1 [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]
 #
-# The repository is the current directory, wherever this script lives (this repository, node_modules/taigent, or the
-# copy bundled in Taigent Desktop): its .agents/skills and the allowlist `taigent init` installed there.
+# The repository is the current directory, wherever this script lives (this repository or node_modules/taigent): its
+# .agents/skills and the allowlist `taigent init` installed there.
 # No param() block on purpose: GNU-style options parse identically to the sh version.
 
 $ErrorActionPreference = 'Stop'

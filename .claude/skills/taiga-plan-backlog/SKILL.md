@@ -75,7 +75,7 @@ Done when every requirement of the spec maps to a story or task, every reported 
 
 ## 5. Answer the review
 
-`taiga/<slug>/review.yaml` holds, per item key, the reviewer's `verdict` (`approved` or `changes`) and their `comments`; Taigent Desktop or the reviewer writes it. Skip this step when the file is absent. `npx taigent preview --project <slug>` (offline) shows every item with its review status and open comments.
+`taiga/<slug>/review.yaml` holds, per item key, the reviewer's `verdict` (`approved` or `changes`) and their `comments`; the reviewer writes it. Skip this step when the file is absent. `npx taigent preview --project <slug>` (offline) shows every item with its review status and open comments.
 
 For each comment whose `resolved` is `false` or missing:
 
@@ -99,6 +99,6 @@ Tell the user:
 - items the spec no longer covers;
 - hand-made Taiga work that overlaps the spec (adopted, or left hand-made and why), blocked items settled and how (pulled, kept manifest, merged, rewritten after a pull parse failure), and any part of Taiga that could not be read;
 - review comments answered (key, comment id, reply), comments left open with your question, and approved items you changed (now stale);
-- next step: the reviewer checks the backlog in Taigent Desktop or with `npx taigent preview --project <slug>` (and `git diff taiga/<slug>/`), then run `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`). An `approved` verdict is not the user's consent to apply.
+- next step: the reviewer checks the backlog with `npx taigent preview --project <slug>` (and `git diff taiga/<slug>/`), then run `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`). An `approved` verdict is not the user's consent to apply.
 
 Taiga stays read-only in this skill: read it only through `npx taigent snapshot`, `npx taigent plan` and `listProjects`; `adopt` and `pull` write local files only (conventions §10).
