@@ -932,7 +932,7 @@ the user (kind `project`; unlike `report`, which exits 5); exit 4 when `project.
 
 ## Tickets
 
-`taigent tickets --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--json]` lists the **Period's tickets**
+`taigent tickets --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--eod] [--json]` lists the **Period's tickets**
 (`GLOSSARY.md`) of the user the CLI logs in as: every **Planned ticket** (a user story assigned to them in `Ready`,
 `In progress` or `Ready for test`, whatever its due date) plus the stories that Taiga closed in `Done` between the two
 days, each with its progress group, **Finishing day** and **Due status**, plus the **Plan** of their **Remaining work**
@@ -984,7 +984,10 @@ not finished (`Ready` or `In progress`) that has points; it is null for a finish
 **Working days** (Monday to Friday, 8 hours, ending at 17:00; holidays are not modelled):
 
 - `plan.start` is today when now is before 17:00 local time on a working day, else the next working day (after 17:00,
-  and on Saturday or Sunday, the plan starts on the next Monday-to-Friday day).
+  and on Saturday or Sunday, the plan starts on the next Monday-to-Friday day). With `--eod` it is the next working day
+  whatever the hour, as after 17:00: the plan of the **End-of-day reminder** ([Notify](#notify)), so every ticket due
+  today and not finished is At risk and has its re-plan entry. `--eod` changes only the plan and what follows from it
+  (`plannedFinishDay`, `atRisk`, `sharingTickets`, `warnings.atRisk`, `replan`); it applies only to `tickets`.
 - Order: due date ascending; on the same date `In progress` before `Ready`; then ref.
 - Each day is filled forward up to 8 hours, a ticket split across days when it does not fit; the plan goes on past
   the end of the week until all remaining work is placed. `plan.days` lists each working day from `plan.start` that
@@ -1007,11 +1010,11 @@ date passed), `noDueDate` and `noPoints` (not finished, so out of the plan; a ti
 
 `replan` has one entry per At risk ticket, in the same order as `warnings.atRisk`: `ref`, `project` (slug), `id`,
 `subject`, `dueDate` (current), `proposedDueDate` (its `plannedFinishDay`), `sharingTickets` and `comment`, a drafted
-comment in English, like the rest of the report, naming the reason and the sharing tickets (`#12` in the same project,
-`alpha#12` in another), e.g. `Due date moved from 2026-11-20 to 2026-11-23: the remaining 5h, planned at 8 hours per
-working day in due-date order, finish on 2026-11-23, after the due date. It shares its days with beta#1, #3.` (an
-Overdue ticket reads `the due date has passed and the remaining 4h, …, finish on …`; with no sharing ticket,
-`No other ticket shares its days.`). Nothing is written: once the user approves, each entry is written with
+comment in Vietnamese (the team's language: it is written to Taiga and shown in the end-of-day reminder) with dates as
+`DD/MM/YYYY`, naming the reason and the sharing tickets (`#12` in the same project, `alpha#12` in another), e.g.
+`Dời hạn từ 20/11/2026 sang 23/11/2026: còn 5h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày
+23/11/2026. Trùng ngày với vigo-auth#1, #3.` (an Overdue ticket reads `…: đã quá hạn, còn 4h việc, …`; with no sharing
+ticket, `Không trùng ngày với ticket nào.`). Nothing is written: once the user approves, each entry is written with
 `taigent due --project <project> <ref> <proposedDueDate> <comment>` ([Due](#due)).
 
 ### Text and JSON
@@ -1082,10 +1085,10 @@ per entry (`alpha#2 due 2026-11-20 -> 2026-11-23: <comment>`); each section is l
     { "ref": 2, "project": "vigo-medical-hub", "id": 290, "subject": "Export", "dueDate": "2026-11-20",
       "proposedDueDate": "2026-11-23",
       "sharingTickets": [{ "ref": 1, "project": "vigo-auth" }, { "ref": 3, "project": "vigo-medical-hub" }],
-      "comment": "Due date moved from 2026-11-20 to 2026-11-23: the remaining 5h, planned at 8 hours per working day in due-date order, finish on 2026-11-23, after the due date. It shares its days with vigo-auth#1, #3." },
+      "comment": "Dời hạn từ 20/11/2026 sang 23/11/2026: còn 5h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày 23/11/2026. Trùng ngày với vigo-auth#1, #3." },
     { "ref": 7, "project": "vigo-medical-hub", "id": 288, "subject": "Audit log", "dueDate": "2026-11-18",
       "proposedDueDate": "2026-11-19", "sharingTickets": [{ "ref": 1, "project": "vigo-auth" }],
-      "comment": "Due date moved from 2026-11-18 to 2026-11-19: the due date has passed and the remaining 4h, planned at 8 hours per working day in due-date order, finish on 2026-11-19. It shares its days with vigo-auth#1." }
+      "comment": "Dời hạn từ 18/11/2026 sang 19/11/2026: đã quá hạn, còn 4h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày 19/11/2026. Trùng ngày với vigo-auth#1." }
   ],
   "notes": {
     "bulkCloses": [{ "count": 3, "first": "2026-11-18T04:26:30.101Z", "last": "2026-11-18T04:27:41.880Z",
@@ -1173,11 +1176,14 @@ text, split at line breaks into messages of at most 4096 characters). Meant for 
 
 | Kind | Days read | Message |
 |---|---|---|
-| `week` | Monday to Sunday of today | The counts by progress group, the whole **plan** day by day (hours and tickets), then every warning: Overdue, no due date, no points, still in `Ready` on or after the latest start day, and **At risk** (planned finish day and the tickets sharing its days) |
+| `week` | Monday to Sunday of today | The counts by progress group, the whole **plan** day by day (hours and tickets), then every warning: Overdue, no due date, no points, **Late start**, and **At risk** (planned finish day and the tickets sharing its days) |
 | `day` | today | The plan's entries of today (hours per ticket), the tickets whose latest start day is today, the **Due today** and the **Overdue** ones |
 | `eod` | today | The **end-of-day reminder**: unfinished planned tickets due today or earlier, the **re-plan** entries among them, and the hint: reply "đóng hết"/"đóng #<số>" to move them to `Ready for test`, or "duyệt re-plan" to approve the re-plan (`taiga-update-ticket`); nothing is sent when there are none |
 
-All three come from the same `TicketsReport` as [`tickets`](#tickets), at `TAIGENT_NOW` when set.
+All three come from the same `TicketsReport` as [`tickets`](#tickets), at `TAIGENT_NOW` when set. `week` and `day` plan
+from now; `eod` plans from the next working day, as after 17:00 (`tickets --eod`): sent near the end of the day, it
+gives every ticket due today and not finished a re-plan entry to approve. The plan names a ticket `#12` when all the
+tickets belong to one project (or `--project` is given), else `alpha#12`.
 
 The bot token is `TELEGRAM_BOT_TOKEN` (environment or `.env`), else the one the Claude Code Telegram plugin saved
 (`/telegram:configure` writes `<TELEGRAM_STATE_DIR>/.env`). The chat is `TELEGRAM_CHAT_ID`, else the one user paired
@@ -1210,8 +1216,10 @@ use the same bot:
   stop at a permission prompt; other prompts reach Telegram as buttons (the plugin relays them).
 
 The chat session does not see what `notify` sent (a bot receives no copy of its own messages, and the Bot API keeps
-no history), so `taiga-update-ticket` rebuilds "close them" from `taigent tickets`: the open tickets due today or
-earlier, exactly the end-of-day reminder's list at that moment.
+no history), so `taiga-update-ticket` rebuilds the end-of-day reminder from `taigent tickets --eod`: "close them" means
+the planned tickets not finished whose due date is today or earlier, moved to `Ready for test` (`Done` only on the
+user's explicit request once they were tested), and "duyệt re-plan" means the `replan` entries of those tickets,
+exactly the reminder's lists at that moment.
 
 ## Login and the MCP server
 

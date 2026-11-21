@@ -77,7 +77,7 @@ async function pluginState(h: Harness, allowFrom: string[]): Promise<string> {
   return dir;
 }
 
-test('notify eod sends your unfinished planned tickets due by today with their re-plan to the paired chat', async (t) => {
+test('notify eod sends your unfinished planned tickets due by today with their re-plan, planned from the next working day, to the paired chat', async (t) => {
   const h = await startHarness(t);
   const telegram = await startFakeTelegram(t);
   const tickets = seed(h.fake);
@@ -97,7 +97,14 @@ test('notify eod sends your unfinished planned tickets due by today with their r
     `• #${tickets.overdue.ref} overdue — Ready · Overdue · hạn 18/11 (alpha)`,
     `• #${tickets.dueToday.ref} due today — In progress · Due today · hạn 19/11 (alpha)`,
   ].join('\n'));
-  assert.match(replan!, new RegExp(`^Đề xuất dời hạn \\(re-plan\\):\\n• #${tickets.overdue.ref} overdue: 18/11 → 19/11 — .+$`));
+  // Planned from Friday 20/11, as after 17:00: the ticket due today is At risk too, with its re-plan.
+  const [o, d, s] = [tickets.overdue, tickets.dueToday, tickets.startToday].map((story) => story.ref);
+  const how = 'xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày 20/11/2026';
+  assert.equal(replan, [
+    'Đề xuất dời hạn (re-plan):',
+    `• #${o} overdue: 18/11 → 20/11 — Dời hạn từ 18/11/2026 sang 20/11/2026: đã quá hạn, còn 2h việc, ${how}. Trùng ngày với #${d}, #${s}.`,
+    `• #${d} due today: 19/11 → 20/11 — Dời hạn từ 19/11/2026 sang 20/11/2026: còn 3h việc, ${how}. Trùng ngày với #${o}, #${s}.`,
+  ].join('\n'));
   assert.equal(hint, 'Xong rồi thì nhắn "đóng hết" hoặc "đóng #<số>" để chuyển sang Ready for test (chờ QA/QC); đồng ý dời hạn thì nhắn "duyệt re-plan".');
   assert.ok(!`${result.stdout}${result.stderr}`.includes(TOKEN));
 });
@@ -155,6 +162,24 @@ test('notify day lists the plan of today, what must start today, what is due tod
     `Đến hạn hôm nay (1):\n• #${d} due today — In progress · Due today · hạn 19/11 (alpha)`,
     `Quá hạn (1):\n• #${o} overdue — Ready · Overdue · hạn 18/11 (alpha)\n`,
   ]);
+});
+
+test('notify names a ticket of the plan with its project when the tickets span several projects', async (t) => {
+  const h = await startHarness(t);
+  const me = h.fake.user.id;
+  const story = (slug: string, fields: StoryFields) => {
+    const project = h.fake.addProject({ slug, name: slug, members: [me] });
+    return Object.assign(h.fake.addUserStory({ project: project.id, subject: slug }), { assigned_users: [me], ...fields });
+  };
+  const a = story('alpha', { due_date: '2026-11-18', status_name: 'Ready', total_points: 2 });
+  const b = story('beta', { due_date: '2026-11-20', status_name: 'Ready', total_points: 3 });
+
+  const result = await h.taigent(['notify', 'week', '--dry-run'], { env: { TZ, TAIGENT_NOW: NOW } });
+
+  assert.equal(result.code, 0, result.stderr);
+  const lines = result.stdout.split('\n');
+  assert.ok(lines.includes(`• T5 19/11 — 5h: alpha#${a.ref} (2h), beta#${b.ref} (3h)`), result.stdout);
+  assert.ok(lines.includes(`• #${a.ref} alpha — Ready · Overdue · hạn 18/11 (alpha) · dự kiến xong 19/11, chung ngày với beta#${b.ref}`), result.stdout);
 });
 
 test('notify splits a message longer than Telegram allows at line breaks', async (t) => {

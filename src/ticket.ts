@@ -22,6 +22,8 @@ export interface TicketRef {
   project: { id: number; slug: string; name: string };
 }
 
+const ticketRefOf = ({ id, ref, subject, project }: TaigaAssignedStory): TicketRef => ({ id, ref, subject, project });
+
 /** The `--json` output of `taigent status`. */
 export interface StatusChange {
   ticket: TicketRef;
@@ -84,24 +86,24 @@ export async function setTicketStatus(client: TaigaClient, slug: string, ref: nu
   const status = findStatus(await client.listStatuses('story', story.project.id), statusName, slug);
   const changed = status.name !== story.status;
   if (changed) await withTicketKey(ref, () => client.editStory(story.id, { status: status.id }, story.version));
-  return { ticket: { id: story.id, ref: story.ref, subject: story.subject, project: story.project }, from: story.status, to: status.name, isClosed: status.isClosed, changed };
+  return { ticket: ticketRefOf(story), from: story.status, to: status.name, isClosed: status.isClosed, changed };
 }
 
 /** Adds `comment` to the user's ticket `#ref` of `slug`. */
 export async function commentTicket(client: TaigaClient, slug: string, ref: number, comment: string): Promise<CommentAdded> {
   const story = await findOwnTicket(client, slug, ref);
   await withTicketKey(ref, () => client.editStory(story.id, { comment }, story.version));
-  return { ticket: { id: story.id, ref: story.ref, subject: story.subject, project: story.project }, comment };
+  return { ticket: ticketRefOf(story), comment };
 }
 
 /**
- * Sets the due date of the user's ticket `#ref` of `slug` to `day` (YYYY-MM-DD) and adds `comment` when given, in one
- * write. Writes nothing when the ticket already has that due date and no comment was given.
+ * Sets the due date of the user's ticket `#ref` of `slug` to `dueDate` (YYYY-MM-DD) and adds `comment` when given, in
+ * one write. Writes nothing when the ticket already has that due date and no comment was given.
  */
-export async function setTicketDueDate(client: TaigaClient, slug: string, ref: number, day: string, comment: string | null): Promise<DueDateChange> {
+export async function setTicketDueDate(client: TaigaClient, slug: string, ref: number, dueDate: string, comment: string | null): Promise<DueDateChange> {
   const story = await findOwnTicket(client, slug, ref);
-  const changed = story.dueDate !== day;
-  const edit = { ...(changed ? { dueDate: day } : {}), ...(comment === null ? {} : { comment }) };
+  const changed = story.dueDate !== dueDate;
+  const edit = { ...(changed ? { dueDate } : {}), ...(comment === null ? {} : { comment }) };
   if (changed || comment !== null) await withTicketKey(ref, () => client.editStory(story.id, edit, story.version));
-  return { ticket: { id: story.id, ref: story.ref, subject: story.subject, project: story.project }, from: story.dueDate, to: day, changed, comment };
+  return { ticket: ticketRefOf(story), from: story.dueDate, to: dueDate, changed, comment };
 }
