@@ -4,7 +4,7 @@
 #   tools/taiga/run-skill.ps1 [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]
 #
 # The repository is the current directory, wherever this script lives (this repository or node_modules/taigent): its
-# .agents/skills and the allowlist `taigent init` installed there.
+# .agents/skills and the allowlist `taigent setup --project` installed there.
 # No param() block on purpose: GNU-style options parse identically to the sh version.
 
 $ErrorActionPreference = 'Stop'
@@ -48,11 +48,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $Root ".agents/skills/$Skill/SKILL.m
 }
 $Allowlist = Join-Path $Root 'tools/taiga/allowlist.txt'
 if (-not (Test-Path -LiteralPath $Allowlist -PathType Leaf)) {
-  Stop-Run "no tools/taiga/allowlist.txt in $Root`: run run-skill from the repository root (npx taigent init installs the allowlist)"
+  Stop-Run "no tools/taiga/allowlist.txt in $Root`: run run-skill from the repository root (npx taigent setup --project installs the allowlist)"
 }
 $OmpGuard = 'tools/taiga/omp-guard.mjs'
 if ($Agent -ceq 'omp' -and -not (Test-Path -LiteralPath (Join-Path $Root $OmpGuard) -PathType Leaf)) {
-  Stop-Run "no $OmpGuard in $Root`: run npx taigent init again to install it"
+  Stop-Run "no $OmpGuard in $Root`: run npx taigent setup --project again to install it"
 }
 
 $Rules = @(

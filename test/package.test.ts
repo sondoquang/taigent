@@ -1,4 +1,4 @@
-// The npm package: what `npm i -g taigent` installs must run without compiling and hold everything `taigent init`
+// The npm package: what `npm i -g taigent` installs must run without compiling and hold everything `taigent setup --project`
 // copies and every doc the shipped skills and headless kit cite. Checked on the real `npm pack` file list.
 
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ import { OFFLINE, runTaigent } from './support/harness.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PACKAGE = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
-/** Files `init` writes that it generates rather than copies from the package. */
+/** Files `setup --project` writes that it generates rather than copies from the package. */
 const GENERATED = ['.mcp.json', '.codex/config.toml', 'package.json', '.gitignore'];
 
 /** `npm pack --dry-run` of the repository (runs `prepack`): the paths the published tarball holds. */
@@ -32,19 +32,19 @@ test('installing from npm never compiles: no install-time script, the build runs
   assert.equal(PACKAGE.scripts.prepack, 'npm run build');
 });
 
-test('the package holds the CLI build, everything init copies and every doc the shipped skills and kit cite', async (t) => {
+test('the package holds the CLI build, everything setup --project copies and every doc the shipped skills and kit cite', async (t) => {
   const files = new Set(await packedFiles());
   assert.ok(files.has('bin/taigent.js'));
   assert.ok(files.has('dist/cli.js'), 'dist/cli.js');
 
   const empty = await mkdtemp(join(tmpdir(), 'taigent-package-'));
   t.after(() => rm(empty, { recursive: true, force: true }));
-  const init = await runTaigent(['init', '--dry-run', '--json'], { env: OFFLINE, cwd: empty });
-  const copied = init.json<{ files: { path: string }[] }>().files.map(({ path }) => path).filter((path) => !GENERATED.includes(path));
-  assert.ok(copied.some((path) => path.startsWith('.agents/skills/')), init.stdout);
+  const setup = await runTaigent(['setup', '--project', '--dry-run', '--json'], { env: OFFLINE, cwd: empty });
+  const copied = setup.json<{ files: { path: string }[] }>().files.map(({ path }) => path).filter((path) => !GENERATED.includes(path));
+  assert.ok(copied.some((path) => path.startsWith('.agents/skills/')), setup.stdout);
   for (const path of copied) {
     const source = path.replace(/^\.claude\/skills\//, '.agents/skills/');
-    assert.ok(files.has(source), `${source} (copied by init) is not in the package`);
+    assert.ok(files.has(source), `${source} (copied by setup --project) is not in the package`);
   }
 
   const cited = new Set<string>();

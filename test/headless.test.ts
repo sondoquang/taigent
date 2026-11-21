@@ -306,13 +306,13 @@ for (const shell of SHELLS) {
 
   // Another repository runs the wrapper in node_modules/taigent: the repository is the current directory, not the
   // folder the script sits in.
-  test(`${shell.name}: a copy of the wrapper run in a repository set up by taigent init uses that repository's skills and allowlist`, { skip }, async (t) => {
+  test(`${shell.name}: a copy of the wrapper run in a repository set up by taigent setup --project uses that repository's skills and allowlist`, { skip }, async (t) => {
     const work = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
     t.after(() => rm(work, { recursive: true, force: true }));
     const repo = join(work, 'repo');
     await mkdir(repo);
-    const init = await runTaigent(['init'], { env: OFFLINE, cwd: repo });
-    assert.equal(init.code, 0, init.stderr);
+    const setup = await runTaigent(['setup', '--project'], { env: OFFLINE, cwd: repo });
+    assert.equal(setup.code, 0, setup.stderr);
     // The repository's own allowlist, distinguishable from taigent's: one rule fewer.
     const repoAllowlist = join(repo, 'tools/taiga/allowlist.txt');
     const rules = parseAllowlist(await readFile(repoAllowlist, 'utf8')).slice(0, -1);
@@ -332,7 +332,7 @@ for (const shell of SHELLS) {
     ]);
   });
 
-  test(`${shell.name}: a repository without the allowlist is a usage error (exit 2) naming taigent init`, { skip }, async (t) => {
+  test(`${shell.name}: a repository without the allowlist is a usage error (exit 2) naming taigent setup --project`, { skip }, async (t) => {
     const repo = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
     t.after(() => rm(repo, { recursive: true, force: true }));
     await mkdir(join(repo, '.agents/skills/taiga-plan-backlog'), { recursive: true });
@@ -342,10 +342,10 @@ for (const shell of SHELLS) {
 
     assert.equal(result.code, 2, `${result.stdout}${result.stderr}`);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /allowlist\.txt.*taigent init/);
+    assert.match(result.stderr, /allowlist\.txt.*taigent setup --project/);
   });
 
-  test(`${shell.name}: omp in a repository without the OMP guard is a usage error (exit 2) naming taigent init`, { skip }, async (t) => {
+  test(`${shell.name}: omp in a repository without the OMP guard is a usage error (exit 2) naming taigent setup --project`, { skip }, async (t) => {
     const repo = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
     t.after(() => rm(repo, { recursive: true, force: true }));
     await mkdir(join(repo, '.agents/skills/taiga-plan-backlog'), { recursive: true });
@@ -357,7 +357,7 @@ for (const shell of SHELLS) {
 
     assert.equal(result.code, 2, `${result.stdout}${result.stderr}`);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /omp-guard\.mjs.*taigent init/);
+    assert.match(result.stderr, /omp-guard\.mjs.*taigent setup --project/);
   });
 }
 
