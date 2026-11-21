@@ -63,7 +63,7 @@ The Business Analyst's or Product Owner's check of the planned backlog items bef
 _Avoid_: Approval (a review is not consent to apply)
 
 **Verdict**:
-A reviewer's decision on one backlog item: approved, or changes requested. Only the reviewer sets it.
+A reviewer's decision on one backlog item: approved, or changes requested. Only the reviewer decides it; an agent records it only on the reviewer's explicit word, never on its own judgment.
 
 **Stale verdict**:
 A verdict given on an earlier version of the item: what apply would write for it has changed since, so it must be reviewed again.
@@ -112,8 +112,12 @@ _Avoid_: Stale tickets (it is about due dates, not about how long a status has s
 
 ### Dashboards
 
+**Dashboard**:
+The metrics of one project reported for a role, on request. It is a report, not a screen.
+_Avoid_: Screen, panel
+
 **Role**:
-What you do on the project, chosen by you: Developer, Product Owner or Business Analyst. It decides which dashboard you see first; it is not your role on the Taiga project.
+What you do on the project, chosen by you: Developer, Product Owner or Business Analyst. It decides which metrics the dashboard reports first; it is not your role on the Taiga project.
 _Avoid_: Taiga role, membership role (those are the project's own role names)
 
 **Bug**:

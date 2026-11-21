@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0007
+---
+
 # Review backlog trong Taigent Desktop, qua file `review.yaml`
 
 Business Analyst / Product Owner cần xem và góp ý backlog mà agent viết trước khi `apply`, nhưng manifest YAML và
