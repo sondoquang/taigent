@@ -33,45 +33,76 @@ const HEADLESS_KIT: readonly string[] = ['tools/taiga/allowlist.txt', 'tools/tai
 /**
  * The variables Codex forwards to the `taiga` server: Codex passes a stdio server only a few variables, so env_vars
  * names the ones taigent may need (TAIGA_* on a CI machine; where the stored login lives; Linux's Secret Service
- * session bus). Startup fails while the server is not ready (`required`).
+ * session bus).
  */
 const CODEX_ENV_VARS = ['TAIGA_API_URL', 'TAIGA_USERNAME', 'TAIGA_PASSWORD', 'TAIGA_TOKEN', 'TAIGENT_CONFIG_DIR', 'TAIGENT_CREDENTIAL_STORE', 'XDG_CONFIG_HOME', 'DBUS_SESSION_BUS_ADDRESS'];
 
-/** The `taiga` server of one scope: its JSON entry (`mcpServers.taiga`) and its Codex table, with no secrets. */
+/** How a client starts the `taiga` server: the command line setup writes, which its MCP check starts too. */
+export interface McpLaunch {
+  command: string;
+  args: string[];
+}
+
+/** The `taiga` server of one scope: its JSON entry (`mcpServers.taiga`), its Codex table and its command line, with no secrets. */
 interface McpServer {
+  launch: McpLaunch;
   json: Record<string, unknown>;
   codex: { table: string; entry: unknown; header: string };
 }
 
-function mcpServer(json: { type?: string; command: string; args: string[] }, codexHeader: string): McpServer {
+/**
+ * The `taiga` server started by `launch`. `required`: Codex fails to start while the server is not ready, right for a
+ * project that pins taigent; the user config applies to every Codex session, which a missing login or a Taiga outage
+ * must not stop.
+ */
+function mcpServer({ launch, type, required, codexHeader }: { launch: McpLaunch; type?: string; required: boolean; codexHeader: string }): McpServer {
   const quote = (value: string) => JSON.stringify(value);
   const table = [
     '[mcp_servers.taiga]',
-    `command = ${quote(json.command)}`,
-    `args = [${json.args.map(quote).join(', ')}]`,
+    `command = ${quote(launch.command)}`,
+    `args = [${launch.args.map(quote).join(', ')}]`,
     `env_vars = [${CODEX_ENV_VARS.map(quote).join(', ')}]`,
-    'required = true',
+    ...(required ? ['required = true'] : []),
     '',
   ].join('\n');
-  return { json, codex: { table, entry: (parseToml(table).mcp_servers as Record<string, unknown>).taiga, header: codexHeader } };
+  const json = { ...(type ? { type } : {}), ...launch };
+  return { launch, json, codex: { table, entry: (parseToml(table).mcp_servers as Record<string, unknown>).taiga, header: codexHeader } };
 }
 
 /** `setup --project`: `taigent mcp` run from the installed package, in `.mcp.json` and `.codex/config.toml`. */
-const PROJECT_SERVER = mcpServer(
-  { command: 'node', args: ['node_modules/taigent/bin/taigent.js', 'mcp'] },
-  `# Project-scoped Codex config (loaded only when this project is trusted).
+const PROJECT_SERVER = mcpServer({
+  launch: { command: 'node', args: ['node_modules/taigent/bin/taigent.js', 'mcp'] },
+  required: true,
+  codexHeader: `# Project-scoped Codex config (loaded only when this project is trusted).
 # No secrets here: \`taigent mcp\` uses the login stored by \`npx taigent login\`. env_vars only forwards variables
 # you set yourself (TAIGA_* on a CI machine; where the stored login lives; Linux's Secret Service session bus).
 `,
-);
+});
 
-/** `taigent setup`: the global `taigent mcp` (`npm i -g taigent`), as the stdio server of each client's user config. */
-const USER_SERVER = mcpServer(
-  { type: 'stdio', command: 'taigent', args: ['mcp'] },
-  `# No secrets here: \`taigent mcp\` uses the login stored by \`taigent login\`. env_vars only forwards variables
+/**
+ * `taigent setup`: the global `taigent mcp` (`npm i -g taigent`), as the stdio server of each client's user config. On
+ * Windows npm installs `taigent` as a `.cmd` shim, which a client starting a process without a shell cannot run, so the
+ * entry goes through `cmd /c`.
+ */
+const USER_SERVER = mcpServer({
+  launch: process.platform === 'win32' ? { command: 'cmd', args: ['/c', 'taigent', 'mcp'] } : { command: 'taigent', args: ['mcp'] },
+  type: 'stdio',
+  required: false,
+  codexHeader: `# No secrets here: \`taigent mcp\` uses the login stored by \`taigent login\`. env_vars only forwards variables
 # you set yourself (TAIGA_* on a CI machine; where the stored login lives; Linux's Secret Service session bus).
 `,
-);
+});
+
+/**
+ * What setup's MCP check starts for `scope` installed at `root`: the command line it wrote, from `root` (the project's
+ * entry is relative to it), and the fix when that command cannot start; or why there is nothing to start yet: setup
+ * never runs `npm install`, so a project without `node_modules/taigent` has no server until the user runs it.
+ */
+export async function mcpCheckTarget(scope: 'user' | 'project', root: string): Promise<{ launch: McpLaunch; cwd: string; fix: string } | { skipped: string }> {
+  if (scope === 'user') return { launch: USER_SERVER.launch, cwd: root, fix: 'run npm i -g taigent, then taigent setup again' };
+  if (!(await exists(root, PROJECT_SERVER.launch.args[0]!))) return { skipped: 'node_modules/taigent is not installed yet: run npm install, then npx taigent setup --project again to check it' };
+  return { launch: PROJECT_SERVER.launch, cwd: root, fix: 'install Node.js 24 or later, then run npx taigent setup --project again' };
+}
 
 const TAIGA_TABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'taiga')\s*\]\s*(?:#.*)?$/;
 const TAIGA_SUBTABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'taiga')\s*\./;
@@ -90,12 +121,14 @@ interface Precedence {
 }
 
 /**
- * The clients `taigent setup` configures, all paths relative to the home directory. A client is there when one of its
- * `markers` is (a trailing `/`: a directory). OMP reads `~/.agents/skills` itself, so it shares Codex's copy.
+ * The clients `taigent setup` configures (`label`: the name setup's text shows), all paths relative to the home
+ * directory. A client is there when one of its `markers` is (a trailing `/`: a directory). OMP reads `~/.agents/skills`
+ * itself, so it shares Codex's copy.
  */
-const USER_CLIENTS: readonly { name: string; markers: string[]; skills: string; mcp: string; skillPrecedence: Precedence; mcpPrecedence: Precedence }[] = [
+export const USER_CLIENTS: readonly { name: string; label: string; markers: string[]; skills: string; mcp: string; skillPrecedence: Precedence; mcpPrecedence: Precedence }[] = [
   {
     name: 'claude-code',
+    label: 'Claude Code',
     markers: ['.claude/', '.claude.json'],
     skills: '.claude/skills',
     mcp: '.claude.json',
@@ -104,6 +137,7 @@ const USER_CLIENTS: readonly { name: string; markers: string[]; skills: string; 
   },
   {
     name: 'codex',
+    label: 'Codex',
     markers: ['.codex/'],
     skills: '.agents/skills',
     mcp: '.codex/config.toml',
@@ -112,6 +146,7 @@ const USER_CLIENTS: readonly { name: string; markers: string[]; skills: string; 
   },
   {
     name: 'omp',
+    label: 'OMP',
     markers: ['.omp/'],
     skills: '.agents/skills',
     mcp: '.omp/agent/mcp.json',

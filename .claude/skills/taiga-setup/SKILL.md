@@ -80,15 +80,16 @@ An older entry that starts `npx -y taiga-mcp-server@…` with `TAIGA_*` values i
 }
 ```
 
-and the `[mcp_servers.taiga]` table of `~/.codex/config.toml` (Codex), where `env_vars` forwards the variables taigent may need when the user sets them (Codex passes a stdio server only a few):
+and the `[mcp_servers.taiga]` table of `~/.codex/config.toml` (Codex), where `env_vars` forwards the variables taigent may need when the user sets them (Codex passes a stdio server only a few). Unlike the project entry it has no `required = true`: the user config applies to every Codex session, which a missing login or a Taiga outage must not stop from starting:
 
 ```toml
 [mcp_servers.taiga]
 command = "taigent"
 args = ["mcp"]
 env_vars = ["TAIGA_API_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD", "TAIGA_TOKEN", "TAIGENT_CONFIG_DIR", "TAIGENT_CREDENTIAL_STORE", "XDG_CONFIG_HOME", "DBUS_SESSION_BUS_ADDRESS"]
-required = true
 ```
+
+On native Windows npm installs `taigent` as a `.cmd` shim, which a client cannot start without a shell, so setup writes `"command": "cmd"` with `"args": ["/c", "taigent", "mcp"]` instead (`command = "cmd"`, `args = ["/c", "taigent", "mcp"]` for Codex). Either form is Taigent's own entry: `taigent setup` replaces it, and check 5 counts it as the user `taiga` server.
 
 ### Registering the server: project scope
 
@@ -148,7 +149,7 @@ What `taigent setup` writes for each client, how the client ranks it against a p
 
 **For a project's team: `taigent setup --project`**, at the project root. It installs the Taigent skills into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code), the project-scope `taiga` entries above in `.mcp.json` and `.codex/config.toml`, the headless kit (`tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules`), the `.gitignore` lines of the local copies (`taiga/*/preview.md`, `taiga/*/.preview/`, `taiga/*/snapshot.json`), and `taigent` in `devDependencies`, pinned to the installed version (its npm version). Run `npx taigent setup --project --dry-run`, show the list, and once the user agrees run `npx taigent setup --project`, then `npm install`. Exit 2 names a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge. The files it wrote are committed with the project.
 
-Both keep other skills, MCP servers, keys and dependencies and never run `npm install`. After writing the files they check the login (as `whoami`) and the MCP server (`taigent mcp` answering `listProjects`); `--json` reports them as `login` (`source`: `stored`, `environment` or `missing`; `status`: `ok`, `failed` or `skipped`) and `mcp`, then `outdatedSkills` and `duplicates` (checks 4 and 5) for both scopes, whichever was installed. Run by you (no terminal), they never ask for a password: without a login, `login.status` is `skipped`, the checks are skipped and the exit is 0; the fix is the user running `taigent login` (or `taigent setup` itself) in their own terminal. Exit 5 names the check that failed (Taiga refused the login, or the MCP server did not answer); its fix is the login or MCP fix above. `--dry-run` neither logs in nor checks. After a taigent upgrade, running them again updates the skills and removes the ones taigent no longer ships.
+Both keep other skills, MCP servers, keys and dependencies and never run `npm install`. After writing the files they check the login (as `whoami`) and the MCP server: they start the `taiga` entry they wrote, as a client would, and call `listProjects`; `--json` reports them as `login` (`source`: `stored`, `environment` or `missing`; `status`: `ok`, `failed` or `skipped`) and `mcp`, then `outdatedSkills` and `duplicates` (checks 4 and 5) for both scopes, whichever was installed. Run by you (no terminal), they never ask for a password: without a login, `login.status` is `skipped`, the checks are skipped and the exit is 0; the fix is the user running `taigent login` (or `taigent setup` itself) in their own terminal. Exit 5 names the check that failed (Taiga refused the login, or the MCP server did not answer); its fix is the login or MCP fix above. Exit 2 with `mcp.error` `taigent is not on PATH`: setup ran through `npx` without a global taigent, so no client can start the user entry; the fix is `npm i -g taigent`, then `taigent setup` again. With `--project` before `npm install`, `mcp.status` is `skipped` (no `node_modules/taigent` to start yet) and the exit is 0; the fix is `npm install`, then `npx taigent setup --project` again. `--dry-run` neither logs in nor checks. After a taigent upgrade, running them again updates the skills and removes the ones taigent no longer ships.
 
 ## Report
 

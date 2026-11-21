@@ -11,10 +11,11 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
+import { access, constants } from 'node:fs/promises';
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
 import { errorMessage } from './guards.ts';
 import type { Secrets } from './secrets.ts';
 import { TaigaAuthError, type TaigaAuthorizer } from './taiga/client.ts';
@@ -167,8 +168,9 @@ export async function serveMcp(env: Record<string, string>): Promise<void> {
 /** `taigent mcp` did not answer `listProjects` with a result. Setup reports it and exits with ExitCode.Taiga. */
 export class McpCheckError extends Error {}
 
-/** The `taigent` entry of this package, so the check runs the same taigent (and the same Taiga) as the caller. */
-const BIN = fileURLToPath(new URL('../bin/taigent.js', import.meta.url));
+/** The server's command could not start (not on PATH): nothing reached Taiga. Setup reports it with the fix, exit 2. */
+export class McpStartError extends Error {}
+
 const CHECK_TIMEOUT_MS = 60_000;
 /** taiga-mcp-server 1.9.20: `listProjects` answers an error with this text when the user is in no project. */
 const NO_PROJECTS = 'No projects found.';
@@ -183,12 +185,38 @@ interface McpResponse {
 }
 
 /**
- * The MCP check of `taigent setup`: starts `taigent mcp` like an agent would (env and working directory of the
- * caller), speaks MCP (JSON-RPC lines) on its stdin/stdout, calls the read tool `listProjects` and returns how many
- * projects it listed. Throws McpCheckError when the server exits, times out or answers an error.
+ * Whether `program` is a file in a directory of `env`'s PATH, as a process start or `cmd /c` finds it (on Windows with
+ * an extension of PATHEXT): the check names what is missing instead of reading cmd.exe's localized error.
  */
-export async function checkMcp({ env, cwd }: { env: NodeJS.ProcessEnv; cwd: string }): Promise<{ projects: number }> {
-  const child = spawn(process.execPath, [BIN, 'mcp'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+async function onPath(program: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+  const path = Object.entries(env).find(([name]) => name.toUpperCase() === 'PATH')?.[1] ?? '';
+  const extensions = process.platform === 'win32' ? (env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';') : [''];
+  for (const dir of path.split(delimiter).filter(Boolean)) {
+    for (const extension of extensions) {
+      if (await access(join(dir, program + extension), constants.X_OK).then(() => true, () => false)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The MCP check of `taigent setup`: starts the `taiga` server like an agent would, from the command line setup wrote
+ * (`command` and `args`, no shell; the `cmd /c` of a Windows entry is its own), in `cwd` with `env`, speaks MCP
+ * (JSON-RPC lines) on its stdin/stdout, calls the read tool `listProjects` and returns how many projects it listed.
+ * Throws McpStartError when the command (through `cmd /c`, the program it runs) is not on PATH, McpCheckError when the
+ * server exits, times out or answers an error.
+ */
+export async function checkMcp({ command, args, cwd, env }: { command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }): Promise<{ projects: number }> {
+  const shown = [command, ...args].join(' ');
+  const notFound = (program: string) => new McpStartError(`cannot start the taiga server (${shown}): ${program} is not on PATH`);
+  if (command === 'cmd' && !(await onPath(args[1]!, env))) throw notFound(args[1]!);
+  const child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    await once(child, 'spawn');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw notFound(command);
+    throw error;
+  }
   let stderr = '';
   child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
   // A server that exited early makes writes fail (EPIPE); `exited` reports it.
@@ -201,8 +229,8 @@ export async function checkMcp({ env, cwd }: { env: NodeJS.ProcessEnv; cwd: stri
   // Every wait races the server exiting and the deadline.
   const ended = Promise.withResolvers<never>();
   ended.promise.catch(() => {});
-  void exited.then(([code]) => ended.reject(failure(`taigent mcp exited (code ${code}) before answering`)));
-  const deadline = setTimeout(() => ended.reject(failure(`taigent mcp did not answer within ${CHECK_TIMEOUT_MS / 1000} s`)), CHECK_TIMEOUT_MS);
+  void exited.then(([code]) => ended.reject(failure(`${shown} exited (code ${code}) before answering`)));
+  const deadline = setTimeout(() => ended.reject(failure(`${shown} did not answer within ${CHECK_TIMEOUT_MS / 1000} s`)), CHECK_TIMEOUT_MS);
 
   const pending = new Map<number, (message: McpResponse) => void>();
   createInterface({ input: child.stdout }).on('line', (line) => {
@@ -221,7 +249,7 @@ export async function checkMcp({ env, cwd }: { env: NodeJS.ProcessEnv; cwd: stri
     pending.set(id, reply.resolve);
     send({ id, method, params });
     const response = await Promise.race([reply.promise, ended.promise]);
-    if (response.error) throw failure(`taigent mcp refused ${method}: ${response.error.message ?? JSON.stringify(response.error)}`);
+    if (response.error) throw failure(`${shown} refused ${method}: ${response.error.message ?? JSON.stringify(response.error)}`);
     return response;
   };
 

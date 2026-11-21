@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
-import { parseArgs, parseEnv } from 'node:util';
+import { parseArgs, type ParseArgsOptionsConfig, parseEnv } from 'node:util';
 import { AdoptError, adoptItem, type AdoptParent } from './adopt.ts';
 import { ManifestChangedError, readBacklogFile } from './backlog-write.ts';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
@@ -19,7 +19,7 @@ import { manifestsRoot, projectLayout, type ProjectLayout } from './manifest/lay
 import { readState } from './manifest/state.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
 import { hasStoredLogin, LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
-import { checkMcp, McpCheckError, serveMcp, startProxy } from './mcp.ts';
+import { checkMcp, McpCheckError, McpStartError, serveMcp, startProxy } from './mcp.ts';
 import { readBacklogData } from './metrics/backlog.ts';
 import { computeMetrics } from './metrics/compute.ts';
 import { HistoryCacheError } from './metrics/history.ts';
@@ -58,7 +58,7 @@ import {
 import { buildPreview, loadReview, recordReview, renderPreviewMarkdown, REVIEW_FILE, ReviewError, reviewKeys, type ReviewAction } from './review.ts';
 import { formatSnapshotText, readSnapshot, summarizeSnapshot, writeSnapshot } from './snapshot.ts';
 import { Secrets } from './secrets.ts';
-import { checkInstall, type InstallCheck, type SetupClient, SetupError, setupProject, type SetupStatus, setupUser } from './setup.ts';
+import { checkInstall, type InstallCheck, mcpCheckTarget, type SetupClient, SetupError, setupProject, type SetupReport, type SetupStatus, setupUser, USER_CLIENTS } from './setup.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
 import { commentTicket, parseRef, setTicketStatus, TicketError } from './ticket.ts';
@@ -70,12 +70,13 @@ const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 Commands:
   setup     Install the Taigent skills (stamped with this version) and the taiga MCP server (the global taigent mcp,
             no secrets) into the user config of every client found in your home directory: Claude Code, Codex, OMP;
-            then log in when there is no login (in a terminal; else it says how), check the login and taigent mcp
-            (exit 5 when one fails); report skills older than this taigent and skills or servers installed both for
-            you and in the working directory, with the copy each client uses (never removes one)
+            then log in when there is no login (in a terminal; else it says how), check the login and the taiga server
+            entry it wrote (exit 5 when one fails, 2 when the entry's taigent is not on PATH); report skills older
+            than this taigent and skills or servers installed both for you and in the working directory, with the
+            copy each client uses (never removes one)
   setup --project  Install Taigent into the repository at the working directory, from this taigent: the Taigent
             skills, the taiga MCP server entries, the headless kit and the taigent devDependency pinned to this
-            version; then log in, check and report like setup
+            version; then log in, check and report like setup (no MCP check before npm install)
   validate  Check manifests (and review.yaml) against the conventions, offline (all projects without --project)
   preview   Show the backlog as apply would write it, with its review (review.yaml), as one Markdown page; offline
   review approve|request-changes|comment|resolve <key> ...   Record the review of backlog item <key> in review.yaml,
@@ -253,8 +254,29 @@ function printError(secrets: Secrets, text: string): void {
   process.stderr.write(secrets.redact(text));
 }
 
+/** The options of every command, for `parseArgs`. */
+const OPTIONS = {
+  project: { type: 'string' },
+  from: { type: 'string' },
+  to: { type: 'string' },
+  name: { type: 'string' },
+  application: { type: 'string' },
+  out: { type: 'string' },
+  ref: { type: 'string' },
+  key: { type: 'string' },
+  epic: { type: 'string' },
+  story: { type: 'string' },
+  'keep-manifest': { type: 'boolean', default: false },
+  'cache-dir': { type: 'string' },
+  'setup-project': { type: 'boolean', default: false },
+  json: { type: 'boolean', default: false },
+  yes: { type: 'boolean', default: false },
+  'dry-run': { type: 'boolean', default: false },
+  help: { type: 'boolean', short: 'h', default: false },
+} as const satisfies ParseArgsOptionsConfig;
+
 /** Options that take a value (`--name value`), so the value is not read as the command. */
-const VALUE_OPTIONS = ['--project', '--from', '--to', '--name', '--application', '--out', '--ref', '--key', '--epic', '--story', '--cache-dir'];
+const VALUE_OPTIONS = Object.entries(OPTIONS).flatMap(([name, { type }]) => (type === 'string' ? [`--${name}`] : []));
 
 /**
  * `argv` with `setup`'s value-less `--project` renamed to the flag `--setup-project` (`--project <slug>` everywhere
@@ -269,29 +291,7 @@ function setupFlags(argv: string[]): string[] {
 function parseOptions(argv: string[]): Options | 'help' {
   let parsed;
   try {
-    parsed = parseArgs({
-      args: setupFlags(argv),
-      allowPositionals: true,
-      options: {
-        project: { type: 'string' },
-        from: { type: 'string' },
-        to: { type: 'string' },
-        name: { type: 'string' },
-        application: { type: 'string' },
-        out: { type: 'string' },
-        ref: { type: 'string' },
-        key: { type: 'string' },
-        epic: { type: 'string' },
-        story: { type: 'string' },
-        'keep-manifest': { type: 'boolean', default: false },
-        'cache-dir': { type: 'string' },
-        'setup-project': { type: 'boolean', default: false },
-        json: { type: 'boolean', default: false },
-        yes: { type: 'boolean', default: false },
-        'dry-run': { type: 'boolean', default: false },
-        help: { type: 'boolean', short: 'h', default: false },
-      },
-    });
+    parsed = parseArgs({ args: setupFlags(argv), allowPositionals: true, options: OPTIONS });
   } catch (error) {
     throw new UsageError(errorMessage(error));
   }
@@ -747,12 +747,25 @@ async function runUpload(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-const CLIENT_LABELS: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', omp: 'OMP' };
+const clientLabel = (name: string) => USER_CLIENTS.find((client) => client.name === name)?.label ?? name;
 
 /** `client` as one line of setup's text output. */
 function formatSetupClient(client: SetupClient): string {
-  const label = CLIENT_LABELS[client.name] ?? client.name;
+  const label = clientLabel(client.name);
   return client.status === 'configured' ? `${label}: skills in ${client.skills}, MCP server in ${client.mcp}` : `${label}: skipped (${client.reason})`;
+}
+
+/** The text of setup's files: the clients (`taigent setup`), each changed file, then the counts (`dryRun`: of what it would do). */
+function formatSetupFiles(report: SetupReport, dryRun: boolean): string[] {
+  const count = (status: SetupStatus) => report.files.filter((file) => file.status === status).length;
+  const changes = report.files.some(({ status }) => status !== 'unchanged');
+  const counts = `${count('created')} created, ${count('updated')} updated, ${count('removed')} removed, ${count('unchanged')} unchanged`;
+  const lines = (report.clients ?? []).map(formatSetupClient);
+  lines.push(...report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`));
+  if (report.clients && report.files.length === 0) lines.push(`No client found (${USER_CLIENTS.map(({ label }) => label).join(', ')}): install one, then run taigent setup again.`);
+  if (dryRun) lines.push(changes ? `Dry run, nothing written, no login or check. Files that would change: ${counts}.` : `Taigent is up to date (${counts}). Dry run: no login or check.`);
+  else if (report.files.length > 0) lines.push(`Taigent installed: ${counts}.`);
+  return lines;
 }
 
 /** Where setup found the Taiga credentials: TAIGA_* (as resolveAuth), the login of `taigent login`, or none. */
@@ -773,8 +786,52 @@ async function loginSource(env: NodeJS.ProcessEnv): Promise<LoginSource> {
 function checkFailure(error: unknown): { error: string; code: ExitCode } {
   if (error instanceof TaigaAuthError) return { error: hintedAuthError(error).message, code: ExitCode.Taiga };
   if (error instanceof TaigaError || error instanceof McpCheckError) return { error: error.message, code: ExitCode.Taiga };
-  if (error instanceof LoginError || error instanceof UsageError) return { error: error.message, code: ExitCode.Usage };
+  if (error instanceof LoginError || error instanceof UsageError || error instanceof McpStartError) return { error: error.message, code: ExitCode.Usage };
   throw error;
+}
+
+/**
+ * Setup's login step: without credentials, the `taigent login` flow in a terminal, else the hint to log in (not a
+ * failure); then the check of the credentials, as `whoami`. `say` prints the text that goes before the prompts.
+ */
+async function setupLogin(run: Run, say: (lines: string[]) => void): Promise<{ login: SetupLogin; code: ExitCode }> {
+  let source = await loginSource(run.env);
+  if (source === 'missing') {
+    if (!isTerminal()) return { login: { source, status: 'skipped', reason: `not logged in to Taiga: ${SETUP_LOGIN_HINT}` }, code: ExitCode.Ok };
+    say(['Not logged in to Taiga: running taigent login.']);
+    try {
+      await interactiveLogin(run);
+      source = 'stored';
+    } catch (error) {
+      if (error instanceof PromptCancelled) throw error;
+      const failure = checkFailure(error);
+      return { login: { source, status: 'failed', error: failure.error }, code: failure.code };
+    }
+  }
+  try {
+    const { auth, me } = await whoami(run);
+    return { login: { source, status: 'ok', apiUrl: auth.apiUrl, user: { id: me.id, username: me.username } }, code: ExitCode.Ok };
+  } catch (error) {
+    const failure = checkFailure(error);
+    return { login: { source, status: 'failed', error: failure.error }, code: failure.code };
+  }
+}
+
+/**
+ * Setup's MCP check, after a login check that passed: starts the `taiga` server entry setup wrote, as a client would
+ * (`mcpCheckTarget`), and calls `listProjects`. A command that cannot start fails with its fix (exit 2: nothing reached
+ * Taiga); a project whose `node_modules/taigent` is not installed yet is not checked.
+ */
+async function setupMcpCheck(run: Run, login: SetupLogin): Promise<{ mcp: SetupMcp; code: ExitCode }> {
+  if (login.status !== 'ok') return { mcp: { status: 'skipped', reason: login.status === 'failed' ? 'the login check failed' : 'no login' }, code: ExitCode.Ok };
+  const target = await mcpCheckTarget(run.options.setupScope ?? 'user', run.cwd);
+  if ('skipped' in target) return { mcp: { status: 'skipped', reason: target.skipped }, code: ExitCode.Ok };
+  try {
+    return { mcp: { status: 'ok', ...(await checkMcp({ ...target.launch, cwd: target.cwd, env: run.env })) }, code: ExitCode.Ok };
+  } catch (error) {
+    const failure = checkFailure(error instanceof McpStartError ? new McpStartError(`${error.message}; ${target.fix}`) : error);
+    return { mcp: { status: 'failed', error: failure.error }, code: failure.code };
+  }
 }
 
 function formatSetupLogin(login: SetupLogin): string {
@@ -808,7 +865,7 @@ function formatInstallCheck({ taigentVersion, outdatedSkills, duplicates }: Inst
   for (const group of groups.values()) {
     const { client, kind, user, project, winner, rule } = group[0]!;
     const what = kind === 'skill' ? `skills ${group.map(({ name }) => name).join(', ')}` : 'MCP server taiga';
-    lines.push(`  ${CLIENT_LABELS[client] ?? client}: ${what} in ${place(user, kind)} and ${place(project, kind)}: ${outcome[winner]} (${rule}).`);
+    lines.push(`  ${clientLabel(client)}: ${what} in ${place(user, kind)} and ${place(project, kind)}: ${outcome[winner]} (${rule}).`);
   }
   return lines;
 }
@@ -816,77 +873,33 @@ function formatInstallCheck({ taigentVersion, outdatedSkills, duplicates }: Inst
 /**
  * `setup`: install Taigent from the running taigent into the user config of each client found in the home directory
  * (`os.homedir()`: HOME, or USERPROFILE on Windows), or with `--project` into the repository at the working directory.
- * Then, unless it is a dry run (exit 3 with changes): without TAIGA_* credentials or a stored login, run the
- * `taigent login` flow in a terminal, else say how to log in (not a failure); check the login like `whoami`, then
- * `taigent mcp` with `listProjects`. A check that fails exits 5 (Taiga or MCP) or 2 (credential store, variables).
- * Last (in a dry run too), `checkInstall` for both scopes: skills older than this taigent, and duplicates.
+ * Then, unless it is a dry run (exit 3 with changes): the login step (`setupLogin`) and the MCP check
+ * (`setupMcpCheck`); a check that fails exits 5 (Taiga or MCP) or 2 (credential store, variables, a server command
+ * that cannot start). Last (in a dry run too), `checkInstall` for both scopes: skills older than this taigent, and
+ * duplicates.
  */
 async function runSetup(run: Run): Promise<number> {
   const { options, cwd, env } = run;
   const user = options.setupScope === 'user';
   const report = user ? await setupUser(homedir(), { dryRun: options.dryRun }) : await setupProject(cwd, { dryRun: options.dryRun });
   const installed = await checkInstall(homedir(), cwd);
-  const count = (status: SetupStatus) => report.files.filter((file) => file.status === status).length;
-  const changes = report.files.some(({ status }) => status !== 'unchanged');
-  const lines = (report.clients ?? []).map(formatSetupClient);
-  lines.push(...report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`));
-  const counts = `${count('created')} created, ${count('updated')} updated, ${count('removed')} removed, ${count('unchanged')} unchanged`;
-  if (user && report.files.length === 0) lines.push('No client found (Claude Code, Codex, OMP): install one, then run taigent setup again.');
-  let source = await loginSource(env);
+  const lines = formatSetupFiles(report, options.dryRun);
 
   if (options.dryRun) {
     const reason = 'dry run: no login and no check';
-    lines.push(changes ? `Dry run, nothing written, no login or check. Files that would change: ${counts}.` : `Taigent is up to date (${counts}). Dry run: no login or check.`);
-    lines.push(...formatInstallCheck(installed));
-    emit(run, { ...report, login: { source, status: 'skipped', reason }, mcp: { status: 'skipped', reason }, ...installed }, () => `${lines.join('\n')}\n`);
-    return changes ? ExitCode.Changes : ExitCode.Ok;
+    const login = { source: await loginSource(env), status: 'skipped', reason };
+    emit(run, { ...report, login, mcp: { status: 'skipped', reason }, ...installed }, () => `${[...lines, ...formatInstallCheck(installed)].join('\n')}\n`);
+    return report.files.some(({ status }) => status !== 'unchanged') ? ExitCode.Changes : ExitCode.Ok;
   }
-  if (report.files.length > 0) lines.push(`Taigent installed: ${counts}.`);
   // Text goes out step by step: the login flow prompts after the file report.
   const say = (text: string[]) => !options.json && print(run, `${text.join('\n')}\n`);
   say(lines);
-
-  let login: SetupLogin | undefined;
-  let code: ExitCode = ExitCode.Ok;
-  if (source === 'missing' && isTerminal()) {
-    say(['Not logged in to Taiga: running taigent login.']);
-    try {
-      await interactiveLogin(run);
-      source = 'stored';
-    } catch (error) {
-      if (error instanceof PromptCancelled) throw error;
-      const failure = checkFailure(error);
-      login = { source, status: 'failed', error: failure.error };
-      code = failure.code;
-    }
-  }
-  if (!login && source === 'missing') login = { source, status: 'skipped', reason: `not logged in to Taiga: ${SETUP_LOGIN_HINT}` };
-  if (!login) {
-    try {
-      const { auth, me } = await whoami(run);
-      login = { source, status: 'ok', apiUrl: auth.apiUrl, user: { id: me.id, username: me.username } };
-    } catch (error) {
-      const failure = checkFailure(error);
-      login = { source, status: 'failed', error: failure.error };
-      code = failure.code;
-    }
-  }
+  const { login, code: loginCode } = await setupLogin(run, say);
   say([formatSetupLogin(login)]);
-
-  let mcp: SetupMcp;
-  if (login.status === 'ok') {
-    try {
-      mcp = { status: 'ok', ...(await checkMcp({ env, cwd })) };
-    } catch (error) {
-      const failure = checkFailure(error);
-      mcp = { status: 'failed', error: failure.error };
-      code = failure.code;
-    }
-  } else {
-    mcp = { status: 'skipped', reason: login.status === 'failed' ? 'the login check failed' : 'no login' };
-  }
+  const { mcp, code: mcpCode } = await setupMcpCheck(run, login);
   say([formatSetupMcp(mcp), ...formatInstallCheck(installed)]);
 
+  const code = loginCode === ExitCode.Ok ? mcpCode : loginCode;
   const logIn = login.status === 'skipped' ? ['taigent login in your own terminal', 'taigent setup again'] : [];
   const next = [...(user ? [] : ['npm install']), ...logIn, 'restart your agents: they load skills and MCP servers when they start'];
   if (code === ExitCode.Ok) say([`Next: ${next.join(', then ')}.`]);

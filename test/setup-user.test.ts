@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parse as parseToml } from 'smol-toml';
-import { OFFLINE, startHarness, type Harness } from './support/harness.ts';
+import { childEnv, OFFLINE, runTaigent, startHarness, type Harness } from './support/harness.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -26,10 +27,16 @@ const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 't
 /** TOML as plain JSON values (smol-toml builds null-prototype objects). */
 const toml = (text: string) => JSON.parse(JSON.stringify(parseToml(text)));
 const PROJECT_CODEX_ENTRY = toml(await readFile(join(REPO_ROOT, '.codex/config.toml'), 'utf8')).mcp_servers.taiga;
-/** The user-scope `taiga` server: the global `taigent mcp`, no secrets. */
-const USER_ENTRY = { type: 'stdio', command: 'taigent', args: ['mcp'] };
-/** Codex's: the same command, with the forwarded variables and `required` of the project entry. */
-const USER_CODEX_ENTRY = { command: 'taigent', args: ['mcp'], env_vars: PROJECT_CODEX_ENTRY.env_vars, required: PROJECT_CODEX_ENTRY.required };
+/** The global `taigent mcp`: on Windows npm installs `taigent` as a `.cmd` shim, which clients start through `cmd /c`. */
+const USER_COMMAND = process.platform === 'win32' ? { command: 'cmd', args: ['/c', 'taigent', 'mcp'] } : { command: 'taigent', args: ['mcp'] };
+/** The user-scope `taiga` server, no secrets. */
+const USER_ENTRY = { type: 'stdio', ...USER_COMMAND };
+/**
+ * Codex's: the same command with the forwarded variables of the project entry, but not its `required`: the user config
+ * applies to every Codex session, which a missing login or a Taiga outage must not stop from starting.
+ */
+const USER_CODEX_ENTRY = { ...USER_COMMAND, env_vars: PROJECT_CODEX_ENTRY.env_vars };
+assert.equal(PROJECT_CODEX_ENTRY.required, true, 'the project entry stays required: a project that pins taigent needs its server');
 
 const setup = (h: Harness, args: string[] = []) => h.taigent(['setup', ...args], { env: OFFLINE });
 const read = (h: Harness, file: string) => readFile(join(h.home, file), 'utf8');
@@ -90,11 +97,14 @@ test('setup installs the skills and the taiga MCP server into the user config of
   assert.deepEqual(JSON.parse(await read(h, '.claude.json')), { mcpServers: { taiga: USER_ENTRY } });
   assert.deepEqual(toml(await read(h, '.codex/config.toml')), { mcp_servers: { taiga: USER_CODEX_ENTRY } });
   assert.deepEqual(JSON.parse(await read(h, '.omp/agent/mcp.json')), { mcpServers: { taiga: USER_ENTRY } });
-  // taiga-setup shows the user these same entries (its first JSON and TOML blocks).
+  // taiga-setup shows the user these same entries (its first JSON and TOML blocks) in their `taigent mcp` form, and the
+  // `cmd /c` arguments setup writes instead on Windows.
   const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8');
   const block = (lang: string) => new RegExp(`^\`\`\`${lang}\\r?\\n([\\s\\S]*?)^\`\`\``, 'm').exec(skill)?.[1] ?? '';
-  assert.deepEqual(JSON.parse(block('json')), JSON.parse(await read(h, '.claude.json')));
-  assert.deepEqual(toml(block('toml')), toml(await read(h, '.codex/config.toml')));
+  const shown = { command: 'taigent', args: ['mcp'] };
+  assert.deepEqual(JSON.parse(block('json')), { mcpServers: { taiga: { ...USER_ENTRY, ...shown } } });
+  assert.deepEqual(toml(block('toml')), { mcp_servers: { taiga: { ...USER_CODEX_ENTRY, ...shown } } });
+  assert.ok(skill.includes('`"command": "cmd"`') && skill.includes('`"args": ["/c", "taigent", "mcp"]`'), 'taiga-setup gives the Windows form');
 
   assert.deepEqual(await tree(h.cwd), [], 'nothing is written in the working directory');
   assert.deepEqual(h.fake.requests, []);
@@ -149,6 +159,21 @@ test('setup with no client in the home directory writes nothing and says so', as
   assert.equal(text.code, 0, text.stderr);
   assert.match(text.stdout, /No client found/);
   assert.deepEqual(await readdir(h.home), []);
+});
+
+test('a CLI run that sets no home of its own gets an empty temp home, never the developer\'s', async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), 'taigent-test-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const env = childEnv({});
+  for (const name of ['HOME', 'USERPROFILE']) assert.notEqual(env[name], homedir(), name);
+  for (const name of ['HOME', 'USERPROFILE', 'APPDATA', 'XDG_CONFIG_HOME']) assert.ok(env[name]?.startsWith(env.HOME!), `${name}: ${env[name]}`);
+
+  const result = await runTaigent(['setup', '--dry-run', '--json'], { env: { ...OFFLINE, TAIGENT_CONFIG_DIR: join(cwd, 'config') }, cwd });
+
+  assert.equal(result.code, 0, result.stderr);
+  const report = result.json<SetupReport>();
+  assert.deepEqual(report.files, []);
+  assert.ok(report.clients.every(({ status }) => status === 'skipped'), result.stdout);
 });
 
 test('setup keeps the other servers, keys and skills of each client config, and run again finds every file unchanged', async (t) => {
