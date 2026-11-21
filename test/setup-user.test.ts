@@ -21,7 +21,7 @@ interface SetupReport {
   clients: SetupClient[];
 }
 
-const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-dashboard', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-dashboard', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-review-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 
 /** TOML as plain JSON values (smol-toml builds null-prototype objects). */
 const toml = (text: string) => JSON.parse(JSON.stringify(parseToml(text)));
