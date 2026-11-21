@@ -1173,9 +1173,11 @@ text, split at line breaks into messages of at most 4096 characters). Meant for 
 
 | Kind | Days read | Message |
 |---|---|---|
-| `week` | Monday to Sunday of today | Open tickets by group: overdue, due this week, due later, no due date; then the ones closed this week |
-| `day` | today | Open tickets due today, overdue ones, and how many others are open |
-| `eod` | today | Open tickets due today or earlier (the **end-of-day reminder**), and how to close them from the chat; nothing is sent when there are none |
+| `week` | Monday to Sunday of today | The counts by progress group, the whole **plan** day by day (hours and tickets), then every warning: Overdue, no due date, no points, still in `Ready` on or after the latest start day, and **At risk** (planned finish day and the tickets sharing its days) |
+| `day` | today | The plan's entries of today (hours per ticket), the tickets whose latest start day is today, the **Due today** and the **Overdue** ones |
+| `eod` | today | The **end-of-day reminder**: unfinished planned tickets due today or earlier, the **re-plan** entries among them, and the hint: reply "đóng hết"/"đóng #<số>" to move them to `Ready for test`, or "duyệt re-plan" to approve the re-plan (`taiga-update-ticket`); nothing is sent when there are none |
+
+All three come from the same `TicketsReport` as [`tickets`](#tickets), at `TAIGENT_NOW` when set.
 
 The bot token is `TELEGRAM_BOT_TOKEN` (environment or `.env`), else the one the Claude Code Telegram plugin saved
 (`/telegram:configure` writes `<TELEGRAM_STATE_DIR>/.env`). The chat is `TELEGRAM_CHAT_ID`, else the one user paired
@@ -1184,8 +1186,8 @@ several paired users without `TELEGRAM_CHAT_ID` is exit 2. Missing Telegram sett
 contacted; `--dry-run` needs none: it prints the message and sends nothing (exit 0). A message the Bot API refuses, or
 an unreachable Bot API, is exit 5 with kind `telegram`. The token joins the redacted secrets.
 
-Text output: `Sent the eod message to Telegram chat 412587349`, `Nothing to send: no open ticket is due by
-2026-11-02`, or the message itself with `--dry-run`. `--json` prints
+Text output: `Sent the eod message to Telegram chat 412587349`, `Nothing to send: no unfinished planned
+ticket is due by 2026-11-02`, or the message itself with `--dry-run`. `--json` prints
 `{ "kind", "range": { "from", "to" }, "text" (null: nothing to send), "sent", "chatId" (null with --dry-run) }`.
 
 ## Telegram
