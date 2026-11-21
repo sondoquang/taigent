@@ -184,6 +184,7 @@ interface SkillFrontmatter {
   description: string;
   'disable-model-invocation'?: boolean;
   'allowed-tools'?: string;
+  metadata?: Record<string, string>;
 }
 
 async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter; allowedTools: string[]; openai: { policy?: { allow_implicit_invocation?: boolean } } }> {
@@ -363,4 +364,32 @@ test('taiga-setup gives the repository MCP server entries, run from node_modules
   assert.deepEqual(lines(blocks('toml')[1]!), lines(installed(await readFile(join(REPO_ROOT, '.codex/config.toml'), 'utf8'))));
   // The skills' tool notes and the banned-tool list are written against one taiga-mcp-server version.
   assert.match(pkg.dependencies['taiga-mcp-server'], /^\d+\.\d+\.\d+$/);
+});
+
+test('Taigent skill sources carry no taigent version: setup stamps the installing version into each copy it installs', async () => {
+  for (const name of TAIGENT_SKILLS) {
+    const { frontmatter } = await readSkill(name);
+    assert.equal(frontmatter.metadata?.['taigent-version'], undefined, `${name}: metadata.taigent-version`);
+  }
+});
+
+test('taiga-setup checks the CLI, the login, the MCP server, the skill version and the duplicates in that order, with a fix table per client for user scope, and ask-taigent names both new checks', async () => {
+  const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8');
+  const steps = [...skill.matchAll(/^## (\d)\. (.+)$/gm)].map((match) => `${match[1]}. ${match[2]}`);
+  assert.deepEqual(steps, ['1. taigent CLI', '2. Taiga login', '3. Taiga MCP server', '4. Skill version', '5. Duplicates']);
+
+  const section = (heading: string) => skill.slice(skill.indexOf(heading), skill.indexOf('\n## ', skill.indexOf(heading) + 1));
+  // Both read setup's report; the common fix is running setup again, for the user or for the project.
+  assert.match(section('## 4. Skill version'), /`outdatedSkills`/);
+  assert.match(section('## 4. Skill version'), /`taigent setup`/);
+  assert.match(section('## 4. Skill version'), /`npx taigent setup --project`/);
+  assert.match(section('## 5. Duplicates'), /`duplicates`/);
+  assert.match(section('## 5. Duplicates'), /never (remove|delete)/i);
+  const table = section('## Fixes by client (user scope)');
+  for (const client of ['Claude Code', 'Codex', 'OMP']) assert.match(table, new RegExp(`^\\| ${client} \\|`, 'm'), client);
+  for (const path of ['~/.claude/skills/', '~/.claude.json', '~/.agents/skills/', '~/.codex/config.toml', '~/.omp/agent/mcp.json']) assert.ok(table.includes(path), path);
+
+  const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
+  assert.match(router, /skill version/i);
+  assert.match(router, /duplicates/i);
 });

@@ -30,6 +30,8 @@ const CODEX_ENTRY = toml(installed(await readFile(join(REPO_ROOT, '.codex/config
 const setup = (h: Harness, args: string[] = []) => h.taigent(['setup', '--project', ...args], { env: OFFLINE });
 const read = (h: Harness, file: string) => readFile(join(h.cwd, file), 'utf8');
 const statuses = (report: SetupReport) => Object.fromEntries(report.files.map(({ path, status }) => [path, status]));
+/** An installed SKILL.md without the `metadata.taigent-version` setup adds (test/setup-versions.test.ts checks it). */
+const unstamped = (text: string) => text.replace(/^metadata:\r?\n {2}taigent-version: "[^"]*"\r?\n/m, '');
 
 async function writeFiles(h: Harness, files: Record<string, string>): Promise<void> {
   for (const [file, content] of Object.entries(files)) {
@@ -65,7 +67,7 @@ test('setup --project on an empty folder creates the skills, the MCP entries, th
   // The Taigent skills of the running taigent, in both places, and nothing else.
   for (const dir of ['.agents/skills', '.claude/skills']) {
     assert.deepEqual(await readdir(join(h.cwd, dir)), TAIGENT_SKILLS);
-    assert.equal(await read(h, `${dir}/taiga-setup/SKILL.md`), await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8'));
+    assert.equal(unstamped(await read(h, `${dir}/taiga-setup/SKILL.md`)), await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8'));
   }
   const check = await h.taigent(['skills', 'check', '--json'], { env: OFFLINE });
   assert.equal(check.code, 0, check.stdout);
@@ -206,7 +208,7 @@ test('setup --project updates a Taigent skill that differs and removes a Taigent
     { path: '.claude/skills/taiga-old/SKILL.md', status: 'removed' },
     { path: '.claude/skills/taiga-setup/notes.md', status: 'removed' },
   ]);
-  assert.equal(await read(h, '.agents/skills/taiga-setup/SKILL.md'), await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8'));
+  assert.equal(unstamped(await read(h, '.agents/skills/taiga-setup/SKILL.md')), await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8'));
   for (const dir of ['.agents/skills', '.claude/skills']) assert.deepEqual(await readdir(join(h.cwd, dir)), TAIGENT_SKILLS);
   assert.deepEqual(await tree(join(h.cwd, '.claude/skills/taiga-setup')), await tree(join(REPO_ROOT, '.agents/skills/taiga-setup')));
 });

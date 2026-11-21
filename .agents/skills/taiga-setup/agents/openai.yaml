@@ -1,5 +1,5 @@
 interface:
   display_name: "Taiga Setup"
-  short_description: "Check variables, taigent CLI and Taiga MCP; name the fixes"
+  short_description: "Check taigent CLI, login, Taiga MCP, skill versions, duplicates"
 policy:
   allow_implicit_invocation: true

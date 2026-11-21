@@ -205,7 +205,10 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
   `TAIGA_TOKEN`) in the environment or a git-ignored `.env` (see `.env.example`). They take precedence over the stored
   login.
 - Update later with `npm i -g taigent@latest`, then `taigent setup` (it updates the skills), or in a project
-  `npx taigent setup --project` (it updates the skills and the pin) and `npm install`.
+  `npx taigent setup --project` (it updates the skills and the pin) and `npm install`. Every skill setup installs
+  carries its taigent version: setup names the skills older than it, and the skills or `taiga` servers installed both
+  for you and in the project, with the copy each agent uses (it never removes one;
+  [§ Setup: skill versions and duplicates](docs/cli.md#setup-skill-versions-and-duplicates)).
 - Details: [docs/cli.md](docs/cli.md) (commands, credentials, manifests, exit codes) and
   [§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).
 

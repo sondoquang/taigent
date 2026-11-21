@@ -3,18 +3,20 @@
 // as the global `taigent mcp`. `setupProject` (`setup --project`) installs into a repository everything Taigent needs:
 // the Taigent skills (.agents/skills and the .claude/skills copy), the `taiga` MCP server entries (.mcp.json,
 // .codex/config.toml) run from node_modules, the headless kit, the `.gitignore` lines of the local copies (BA preview,
-// snapshot) and the `taigent` devDependency pinned to this npm version. Offline; never runs npm or logs in. Only
-// Taigent's own files and entries are written: other skills, servers, keys, ignore lines and dependencies stay as they
-// are. Every file is read and merged before the first write (`FilePlan`), so a file that cannot be merged leaves
-// everything untouched.
+// snapshot) and the `taigent` devDependency pinned to this npm version. Every skill it installs carries this version
+// (`metadata.taigent-version`). Offline; never runs npm or logs in. Only Taigent's own files and entries are written:
+// other skills, servers, keys, ignore lines and dependencies stay as they are. Every file is read and merged before the
+// first write (`FilePlan`), so a file that cannot be merged leaves everything untouched. `checkInstall` then reports, for
+// both scopes, the Taigent skills older than this taigent and the copies installed both for the user and in the
+// working directory (with the one each client uses); it never removes anything.
 
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseToml } from 'smol-toml';
 import { errorMessage, isFileNotFound, isRecord } from './guards.ts';
-import { compareSkillDirs, copySkills, type SkillDirsComparison, type SkillFile, SKILLS_SOURCE, SKILLS_TARGET } from './skills.ts';
+import { compareSkillDirs, copySkills, listSkills, type SkillContent, type SkillDirsComparison, type SkillFile, SKILLS_SOURCE, SKILLS_TARGET, skillVersion, stampSkillVersion } from './skills.ts';
 
 /** Root of the running taigent package (the repository, or `node_modules/taigent`): `src/` and `dist/` sit in it. */
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -73,14 +75,60 @@ const USER_SERVER = mcpServer(
 const TAIGA_TABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'taiga')\s*\]\s*(?:#.*)?$/;
 const TAIGA_SUBTABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'taiga')\s*\./;
 
+/** The copy a client uses when one is in the user config and one in the working directory; `both`: it shows both. */
+export type DuplicateWinner = 'user' | 'project' | 'both';
+
+/**
+ * How a client ranks a project copy of a skill directory or MCP config against its user one: `project` lists the paths
+ * (relative to the working directory) it reads, highest precedence first; `winner` names the copy it uses, given the
+ * project path found, and the client's documented rule (sources in docs/cli.md §Setup: skill versions and duplicates).
+ */
+interface Precedence {
+  project: string[];
+  winner: (project: string) => { winner: DuplicateWinner; rule: string };
+}
+
 /**
  * The clients `taigent setup` configures, all paths relative to the home directory. A client is there when one of its
  * `markers` is (a trailing `/`: a directory). OMP reads `~/.agents/skills` itself, so it shares Codex's copy.
  */
-const USER_CLIENTS: readonly { name: string; markers: string[]; skills: string; mcp: string }[] = [
-  { name: 'claude-code', markers: ['.claude/', '.claude.json'], skills: '.claude/skills', mcp: '.claude.json' },
-  { name: 'codex', markers: ['.codex/'], skills: '.agents/skills', mcp: '.codex/config.toml' },
-  { name: 'omp', markers: ['.omp/'], skills: '.agents/skills', mcp: '.omp/agent/mcp.json' },
+const USER_CLIENTS: readonly { name: string; markers: string[]; skills: string; mcp: string; skillPrecedence: Precedence; mcpPrecedence: Precedence }[] = [
+  {
+    name: 'claude-code',
+    markers: ['.claude/', '.claude.json'],
+    skills: '.claude/skills',
+    mcp: '.claude.json',
+    skillPrecedence: { project: ['.claude/skills'], winner: () => ({ winner: 'user', rule: 'Claude Code runs a personal skill over a project skill of the same name' }) },
+    mcpPrecedence: { project: ['.mcp.json'], winner: () => ({ winner: 'project', rule: 'Claude Code uses the project-scope server over the user-scope one, once the project server is approved' }) },
+  },
+  {
+    name: 'codex',
+    markers: ['.codex/'],
+    skills: '.agents/skills',
+    mcp: '.codex/config.toml',
+    skillPrecedence: { project: ['.agents/skills'], winner: () => ({ winner: 'both', rule: 'Codex does not merge skills of the same name: both appear in its skill selectors' }) },
+    mcpPrecedence: { project: ['.codex/config.toml'], winner: () => ({ winner: 'project', rule: 'Codex reads the project .codex/config.toml over the user config in a trusted project; in an untrusted one only the user config' }) },
+  },
+  {
+    name: 'omp',
+    markers: ['.omp/'],
+    skills: '.agents/skills',
+    mcp: '.omp/agent/mcp.json',
+    skillPrecedence: {
+      project: ['.claude/skills', '.agents/skills'],
+      winner: (project) => ({
+        winner: 'project',
+        rule: project === '.claude/skills' ? 'OMP ranks a project .claude/skills skill (priority 80) over ~/.agents/skills (70) and renames the other <namespace>/<name>' : 'OMP lists project .agents/skills entries before user ones and renames the other <namespace>/<name>',
+      }),
+    },
+    mcpPrecedence: {
+      project: ['.omp/mcp.json', '.omp/.mcp.json', '.mcp.json', '.codex/config.toml'],
+      winner: (project) =>
+        project.startsWith('.omp/')
+          ? { winner: 'project', rule: `OMP reads a project ${project} before its user mcp.json` }
+          : { winner: 'user', rule: 'OMP reads its native user mcp.json before a project .mcp.json or .codex/config.toml' },
+    },
+  },
 ];
 
 /**
@@ -108,15 +156,48 @@ export interface SetupReport {
   clients?: SetupClient[];
 }
 
+/** An installed Taigent skill older than the running taigent (`version`: its `metadata.taigent-version`, null when it has none). */
+export interface OutdatedSkill {
+  scope: 'user' | 'project';
+  /** Its directory: `~/...` for the user, relative to the working directory for the project. */
+  path: string;
+  version: string | null;
+}
+
+/** A Taigent skill or the `taiga` MCP server installed both for the user and in the working directory, as one client sees it. */
+export interface Duplicate {
+  kind: 'skill' | 'mcp';
+  /** The skill name, or `taiga`. */
+  name: string;
+  client: string;
+  /** The user copy (`~/...`: skill directory or MCP config) and the project copy the client reads first. */
+  user: string;
+  project: string;
+  winner: DuplicateWinner;
+  rule: string;
+}
+
+export interface InstallCheck {
+  /** The version of the running taigent, which setup stamps into every skill it installs. */
+  taigentVersion: string;
+  outdatedSkills: OutdatedSkill[];
+  duplicates: Duplicate[];
+}
+
 /** A file setup cannot merge into (not JSON/TOML, or not the expected shape), or the wrong directory. Nothing is written. */
 export class SetupError extends Error {}
 
 const SKILL_STATUS: Record<SkillFile['status'], SetupStatus> = { missing: 'created', changed: 'updated', extra: 'removed', same: 'unchanged' };
 
-/** The `devDependencies` value of `taigent`: the npm version of the running taigent, pinned exactly. */
-async function taigentDependency(): Promise<string> {
+/** The npm version of the running taigent: the `taigent` devDependency `setup --project` pins and the version stamped into the skills. */
+async function taigentVersion(): Promise<string> {
   const { version } = JSON.parse(await readFile(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version: string };
   return version;
+}
+
+/** A skill file as setup installs it: its `SKILL.md` stamped with `version`, every other file as it is. */
+function stamped(version: string): SkillContent {
+  return (file, source) => (file === 'SKILL.md' ? Buffer.from(stampSkillVersion(source.toString('utf8'), version)) : source);
 }
 
 /** The bytes of `path`, or undefined when there is no such file. */
@@ -256,8 +337,8 @@ function mergeCodexToml(file: string, text: string | undefined, codex: McpServer
 
 /**
  * The files one setup writes under `root`: each one is planned (compared with what is there) before any is written, so
- * a SetupError while planning leaves `root` untouched. The Taigent skill directories are planned whole. Reported
- * paths start with `shownRoot` (`~/` for the home directory).
+ * a SetupError while planning leaves `root` untouched. The Taigent skill directories are planned whole, each skill as
+ * `skillContent` makes it. Reported paths start with `shownRoot` (`~/` for the home directory).
  */
 class FilePlan {
   readonly files: SetupFile[] = [];
@@ -265,10 +346,12 @@ class FilePlan {
   private readonly skillCopies: { dir: string; comparison: SkillDirsComparison }[] = [];
 
   private readonly root: string;
+  private readonly skillContent: SkillContent;
   private readonly shownRoot: string;
 
-  constructor(root: string, shownRoot = '') {
+  constructor(root: string, skillContent: SkillContent, shownRoot = '') {
     this.root = root;
+    this.skillContent = skillContent;
     this.shownRoot = shownRoot;
   }
 
@@ -291,7 +374,7 @@ class FilePlan {
 
   /** Plans copying the Taigent skills of the running taigent into `dir` (relative to the root). */
   async skills(dir: string): Promise<void> {
-    const comparison = await compareSkillDirs(join(PACKAGE_ROOT, SKILLS_SOURCE), join(this.root, dir));
+    const comparison = await compareSkillDirs(join(PACKAGE_ROOT, SKILLS_SOURCE), join(this.root, dir), this.skillContent);
     this.skillCopies.push({ dir, comparison });
     for (const { skill, file, status } of comparison.files) this.files.push({ path: `${this.shownRoot}${dir}/${skill}/${file}`, status: SKILL_STATUS[status] });
   }
@@ -299,7 +382,7 @@ class FilePlan {
   /** Writes every planned change (unless `dryRun`) and returns the report. */
   async commit(dryRun: boolean): Promise<SetupReport> {
     if (!dryRun) {
-      for (const { dir, comparison } of this.skillCopies) await copySkills(join(PACKAGE_ROOT, SKILLS_SOURCE), join(this.root, dir), comparison);
+      for (const { dir, comparison } of this.skillCopies) await copySkills(join(PACKAGE_ROOT, SKILLS_SOURCE), join(this.root, dir), comparison, this.skillContent);
       for (const { path, content } of this.writes) {
         await mkdir(dirname(join(this.root, path)), { recursive: true });
         await writeFile(join(this.root, path), content);
@@ -314,13 +397,13 @@ export async function setupProject(root: string, { dryRun }: { dryRun: boolean }
   if ((await realpath(root)) === (await realpath(PACKAGE_ROOT))) {
     throw new SetupError('setup --project installs taigent into another repository; this is the running taigent itself');
   }
-  const plan = new FilePlan(root);
+  const version = await taigentVersion();
+  const plan = new FilePlan(root, stamped(version));
   for (const dir of [SKILLS_SOURCE, SKILLS_TARGET]) await plan.skills(dir);
   for (const path of HEADLESS_KIT) await plan.file(path, await readFile(join(PACKAGE_ROOT, path)));
   await plan.merge('.mcp.json', (text, file) => mergeMcpJson(file, text, PROJECT_SERVER.json));
   await plan.merge('.codex/config.toml', (text, file) => mergeCodexToml(file, text, PROJECT_SERVER.codex));
-  const dependency = await taigentDependency();
-  await plan.merge('package.json', (text) => mergePackageJson(text, dependency));
+  await plan.merge('package.json', (text) => mergePackageJson(text, version));
   await plan.merge('.gitignore', mergeGitignore);
   return plan.commit(dryRun);
 }
@@ -336,19 +419,23 @@ async function exists(home: string, path: string): Promise<boolean> {
   }
 }
 
+/** Whether one of a client's `markers` is under `home`. */
+async function clientFound(home: string, markers: string[]): Promise<boolean> {
+  for (const marker of markers) if (await exists(home, marker)) return true;
+  return false;
+}
+
 /**
  * Installs the Taigent skills and the `taiga` MCP server into the user config, under `home`, of every client found
  * there (`taigent setup`; with `dryRun`, only reports what it would do). A client that is not there is skipped: nothing
  * is created for it. A skills directory two clients share is written once.
  */
 export async function setupUser(home: string, { dryRun }: { dryRun: boolean }): Promise<SetupReport> {
-  const plan = new FilePlan(home, '~/');
+  const plan = new FilePlan(home, stamped(await taigentVersion()), '~/');
   const clients: SetupClient[] = [];
   const skillDirs = new Set<string>();
   for (const { name, markers, skills, mcp } of USER_CLIENTS) {
-    let found = false;
-    for (const marker of markers) found ||= await exists(home, marker);
-    if (!found) {
+    if (!(await clientFound(home, markers))) {
       clients.push({ name, status: 'skipped', reason: `not found: no ${markers.map((marker) => `~/${marker}`).join(' or ')}` });
       continue;
     }
@@ -360,4 +447,87 @@ export async function setupUser(home: string, { dryRun }: { dryRun: boolean }): 
     await plan.merge(mcp, (text, file) => (mcp.endsWith('.toml') ? mergeCodexToml(file, text, USER_SERVER.codex) : mergeMcpJson(file, text, USER_SERVER.json)));
   }
   return { ...(await plan.commit(dryRun)), clients };
+}
+
+/**
+ * Whether `installed` (a skill's `metadata.taigent-version`) is older than `current` by semver precedence (a prerelease
+ * precedes its release); a version that is not semver is older unless it is `current` itself.
+ */
+function isOlder(installed: string, current: string): boolean {
+  const semver = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/;
+  const [a, b] = [semver.exec(installed), semver.exec(current)];
+  if (!a || !b) return installed !== current;
+  for (const part of [1, 2, 3]) {
+    const difference = Number(a[part]) - Number(b[part]);
+    if (difference !== 0) return difference < 0;
+  }
+  if (a[4] === b[4] || a[4] === undefined) return false;
+  return b[4] === undefined || a[4].localeCompare(b[4], 'en', { numeric: true }) < 0;
+}
+
+/** The Taigent skills of `root/dir` older than `version`, reported under `shownRoot`. */
+async function outdatedSkills(root: string, dir: string, shownRoot: string, scope: OutdatedSkill['scope'], version: string): Promise<OutdatedSkill[]> {
+  const outdated: OutdatedSkill[] = [];
+  for (const skill of await listSkills(join(root, dir))) {
+    const installed = skillVersion((await readExisting(join(root, dir, skill, 'SKILL.md')))?.toString('utf8') ?? '');
+    if (installed === undefined || isOlder(installed, version)) outdated.push({ scope, path: `${shownRoot}${dir}/${skill}`, version: installed ?? null });
+  }
+  return outdated;
+}
+
+/** Whether the MCP config at `path` (JSON `mcpServers`, or a Codex TOML `mcp_servers`) defines `taiga`; an unreadable file defines nothing. */
+async function definesTaiga(path: string): Promise<boolean> {
+  const text = (await readExisting(path))?.toString('utf8');
+  if (text === undefined) return false;
+  try {
+    const toml = path.endsWith('.toml');
+    const config: unknown = toml ? parseToml(text) : JSON.parse(text);
+    const servers = isRecord(config) ? config[toml ? 'mcp_servers' : 'mcpServers'] : undefined;
+    return isRecord(servers) && isRecord(servers.taiga);
+  } catch {
+    return false;
+  }
+}
+
+/** `path` with symbolic links resolved, or as given when it does not exist. */
+async function realPath(path: string): Promise<string> {
+  return realpath(path).catch(() => resolve(path));
+}
+
+/**
+ * What setup reports after its files, for both scopes whichever it installed: the Taigent skills older than the running
+ * taigent (in the skills directories of the clients found in `home`, and `.agents/skills`/`.claude/skills` of `cwd`
+ * unless it is taigent's own repository, whose sources carry no version), and the Taigent skills and `taiga` server
+ * installed both in `home` and in `cwd` for a client found in `home`, with the copy that client uses. Nothing when `cwd`
+ * is `home`. Reads only; never removes anything.
+ */
+export async function checkInstall(home: string, cwd: string): Promise<InstallCheck> {
+  const version = await taigentVersion();
+  const clients: (typeof USER_CLIENTS)[number][] = [];
+  for (const client of USER_CLIENTS) if (await clientFound(home, client.markers)) clients.push(client);
+  const project = await realPath(cwd);
+  const projectIsHome = project === (await realPath(home));
+
+  const outdated: OutdatedSkill[] = [];
+  for (const dir of new Set(clients.map(({ skills }) => skills))) outdated.push(...(await outdatedSkills(home, dir, '~/', 'user', version)));
+  if (!projectIsHome && project !== (await realPath(PACKAGE_ROOT))) {
+    for (const dir of [SKILLS_SOURCE, SKILLS_TARGET]) outdated.push(...(await outdatedSkills(cwd, dir, '', 'project', version)));
+  }
+
+  const duplicates: Duplicate[] = [];
+  if (projectIsHome) return { taigentVersion: version, outdatedSkills: outdated, duplicates };
+  for (const { name: client, skills, mcp, skillPrecedence, mcpPrecedence } of clients) {
+    const projectSkills = await Promise.all(skillPrecedence.project.map(async (dir) => ({ dir, skills: await listSkills(join(cwd, dir)) })));
+    for (const skill of await listSkills(join(home, skills))) {
+      const dir = projectSkills.find(({ skills: names }) => names.includes(skill))?.dir;
+      if (dir) duplicates.push({ kind: 'skill', name: skill, client, user: `~/${skills}/${skill}`, project: `${dir}/${skill}`, ...skillPrecedence.winner(dir) });
+    }
+    if (!(await definesTaiga(join(home, mcp)))) continue;
+    for (const file of mcpPrecedence.project) {
+      if (!(await definesTaiga(join(cwd, file)))) continue;
+      duplicates.push({ kind: 'mcp', name: 'taiga', client, user: `~/${mcp}`, project: file, ...mcpPrecedence.winner(file) });
+      break;
+    }
+  }
+  return { taigentVersion: version, outdatedSkills: outdated, duplicates };
 }

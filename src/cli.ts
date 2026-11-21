@@ -58,7 +58,7 @@ import {
 import { buildPreview, loadReview, recordReview, renderPreviewMarkdown, REVIEW_FILE, ReviewError, reviewKeys, type ReviewAction } from './review.ts';
 import { formatSnapshotText, readSnapshot, summarizeSnapshot, writeSnapshot } from './snapshot.ts';
 import { Secrets } from './secrets.ts';
-import { type SetupClient, SetupError, setupProject, type SetupStatus, setupUser } from './setup.ts';
+import { checkInstall, type InstallCheck, type SetupClient, SetupError, setupProject, type SetupStatus, setupUser } from './setup.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
 import { commentTicket, parseRef, setTicketStatus, TicketError } from './ticket.ts';
@@ -68,12 +68,14 @@ import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, U
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
 Commands:
-  setup     Install the Taigent skills and the taiga MCP server (the global taigent mcp, no secrets) into the user
-            config of every client found in your home directory: Claude Code, Codex, OMP; then log in when there is
-            no login (in a terminal; else it says how), check the login and taigent mcp (exit 5 when one fails)
+  setup     Install the Taigent skills (stamped with this version) and the taiga MCP server (the global taigent mcp,
+            no secrets) into the user config of every client found in your home directory: Claude Code, Codex, OMP;
+            then log in when there is no login (in a terminal; else it says how), check the login and taigent mcp
+            (exit 5 when one fails); report skills older than this taigent and skills or servers installed both for
+            you and in the working directory, with the copy each client uses (never removes one)
   setup --project  Install Taigent into the repository at the working directory, from this taigent: the Taigent
             skills, the taiga MCP server entries, the headless kit and the taigent devDependency pinned to this
-            version; then log in and check like setup
+            version; then log in, check and report like setup
   validate  Check manifests (and review.yaml) against the conventions, offline (all projects without --project)
   preview   Show the backlog as apply would write it, with its review (review.yaml), as one Markdown page; offline
   review approve|request-changes|comment|resolve <key> ...   Record the review of backlog item <key> in review.yaml,
@@ -790,17 +792,40 @@ function formatSetupMcp(mcp: SetupMcp): string {
   return `MCP server: not checked (${mcp.reason}).`;
 }
 
+/** The lines of what setup found installed: one per skills directory with skills older than taigent, then the duplicates grouped per client, kind and place. */
+function formatInstallCheck({ taigentVersion, outdatedSkills, duplicates }: InstallCheck): string[] {
+  const lines: string[] = [];
+  for (const [dir, skills] of Map.groupBy(outdatedSkills, ({ path }) => path.slice(0, path.lastIndexOf('/')))) {
+    const fix = skills[0]!.scope === 'user' ? 'run taigent setup' : 'run taigent setup --project here';
+    const list = skills.map(({ path, version }) => `${path.slice(dir.length + 1)} (${version ?? 'no version'})`).join(', ');
+    lines.push(`Older than taigent ${taigentVersion} in ${dir}: ${list}; ${fix} to update them.`);
+  }
+  if (duplicates.length === 0) return lines;
+  lines.push('Installed both for you and in this project (nothing was removed; taiga-setup says how to keep one):');
+  const place = (path: string, kind: string) => (kind === 'skill' ? path.slice(0, path.lastIndexOf('/')) : path);
+  const groups = Map.groupBy(duplicates, (d) => [d.client, d.kind, place(d.user, d.kind), place(d.project, d.kind), d.winner, d.rule].join('\0'));
+  const outcome = { user: 'the user copy wins', project: 'the project copy wins', both: 'both are used' };
+  for (const group of groups.values()) {
+    const { client, kind, user, project, winner, rule } = group[0]!;
+    const what = kind === 'skill' ? `skills ${group.map(({ name }) => name).join(', ')}` : 'MCP server taiga';
+    lines.push(`  ${CLIENT_LABELS[client] ?? client}: ${what} in ${place(user, kind)} and ${place(project, kind)}: ${outcome[winner]} (${rule}).`);
+  }
+  return lines;
+}
+
 /**
  * `setup`: install Taigent from the running taigent into the user config of each client found in the home directory
  * (`os.homedir()`: HOME, or USERPROFILE on Windows), or with `--project` into the repository at the working directory.
  * Then, unless it is a dry run (exit 3 with changes): without TAIGA_* credentials or a stored login, run the
  * `taigent login` flow in a terminal, else say how to log in (not a failure); check the login like `whoami`, then
  * `taigent mcp` with `listProjects`. A check that fails exits 5 (Taiga or MCP) or 2 (credential store, variables).
+ * Last (in a dry run too), `checkInstall` for both scopes: skills older than this taigent, and duplicates.
  */
 async function runSetup(run: Run): Promise<number> {
   const { options, cwd, env } = run;
   const user = options.setupScope === 'user';
   const report = user ? await setupUser(homedir(), { dryRun: options.dryRun }) : await setupProject(cwd, { dryRun: options.dryRun });
+  const installed = await checkInstall(homedir(), cwd);
   const count = (status: SetupStatus) => report.files.filter((file) => file.status === status).length;
   const changes = report.files.some(({ status }) => status !== 'unchanged');
   const lines = (report.clients ?? []).map(formatSetupClient);
@@ -812,7 +837,8 @@ async function runSetup(run: Run): Promise<number> {
   if (options.dryRun) {
     const reason = 'dry run: no login and no check';
     lines.push(changes ? `Dry run, nothing written, no login or check. Files that would change: ${counts}.` : `Taigent is up to date (${counts}). Dry run: no login or check.`);
-    emit(run, { ...report, login: { source, status: 'skipped', reason }, mcp: { status: 'skipped', reason } }, () => `${lines.join('\n')}\n`);
+    lines.push(...formatInstallCheck(installed));
+    emit(run, { ...report, login: { source, status: 'skipped', reason }, mcp: { status: 'skipped', reason }, ...installed }, () => `${lines.join('\n')}\n`);
     return changes ? ExitCode.Changes : ExitCode.Ok;
   }
   if (report.files.length > 0) lines.push(`Taigent installed: ${counts}.`);
@@ -859,12 +885,12 @@ async function runSetup(run: Run): Promise<number> {
   } else {
     mcp = { status: 'skipped', reason: login.status === 'failed' ? 'the login check failed' : 'no login' };
   }
-  say([formatSetupMcp(mcp)]);
+  say([formatSetupMcp(mcp), ...formatInstallCheck(installed)]);
 
   const logIn = login.status === 'skipped' ? ['taigent login in your own terminal', 'taigent setup again'] : [];
   const next = [...(user ? [] : ['npm install']), ...logIn, 'restart your agents: they load skills and MCP servers when they start'];
   if (code === ExitCode.Ok) say([`Next: ${next.join(', then ')}.`]);
-  if (options.json) print(run, `${JSON.stringify({ ...report, login, mcp }, null, 2)}\n`);
+  if (options.json) print(run, `${JSON.stringify({ ...report, login, mcp, ...installed }, null, 2)}\n`);
   if (login.status === 'failed') printError(run.secrets, `taigent: setup: the login check failed: ${login.error}\n`);
   if (mcp.status === 'failed') printError(run.secrets, `taigent: setup: the MCP check failed: ${mcp.error}\n`);
   return code;

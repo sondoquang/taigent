@@ -34,6 +34,8 @@ const USER_CODEX_ENTRY = { command: 'taigent', args: ['mcp'], env_vars: PROJECT_
 const setup = (h: Harness, args: string[] = []) => h.taigent(['setup', ...args], { env: OFFLINE });
 const read = (h: Harness, file: string) => readFile(join(h.home, file), 'utf8');
 const statuses = (report: SetupReport) => Object.fromEntries(report.files.map(({ path, status }) => [path, status]));
+/** An installed SKILL.md without the `metadata.taigent-version` setup adds (test/setup-versions.test.ts checks it). */
+const unstamped = (text: string) => text.replace(/^metadata:\r?\n {2}taigent-version: "[^"]*"\r?\n/m, '');
 const client = (report: SetupReport, name: string) => report.clients.find((c) => c.name === name);
 
 /** Writes files under the temp home (`/`-separated paths; a path ending in `/` is an empty directory). */
@@ -80,7 +82,7 @@ test('setup installs the skills and the taiga MCP server into the user config of
   // Claude Code reads ~/.claude/skills; Codex and OMP both read ~/.agents/skills, so OMP gets no copy of its own.
   for (const dir of ['.claude/skills', '.agents/skills']) {
     assert.deepEqual(await readdir(join(h.home, dir)), TAIGENT_SKILLS);
-    assert.equal(await read(h, `${dir}/taiga-setup/SKILL.md`), await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8'));
+    assert.equal(unstamped(await read(h, `${dir}/taiga-setup/SKILL.md`)), await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8'));
   }
   assert.deepEqual(await readdir(join(h.home, '.omp')), ['agent']);
   assert.deepEqual(await readdir(join(h.home, '.omp/agent')), ['mcp.json']);
@@ -228,7 +230,7 @@ test('setup updates a Taigent skill that differs and removes a Taigent skill gon
     ],
   );
   assert.deepEqual(await readdir(join(h.home, '.agents/skills')), [...TAIGENT_SKILLS, 'tdd'].sort());
-  assert.equal(await read(h, '.claude/skills/taiga-setup/SKILL.md'), await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8'));
+  assert.equal(unstamped(await read(h, '.claude/skills/taiga-setup/SKILL.md')), await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8'));
 });
 
 test('setup --dry-run lists the changes under ~/, writes nothing and exits 3', async (t) => {
