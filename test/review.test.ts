@@ -12,8 +12,6 @@ import {
   type Preview,
   REVIEW_FILE,
   type Review,
-  rekeyReview,
-  rekeyReviewFile,
   saveReview,
   setVerdict,
 } from '../src/review.ts';
@@ -141,43 +139,6 @@ test('saveReview round-trips through loadReview and drops items with neither ver
   assert.deepEqual(await loadReview(join(dir, 'missing.yaml')), { items: {} });
 });
 
-test('rekeyReview moves the comments of a re-keyed item but drops its verdict, and drops removed items', () => {
-  let review = setVerdict({ items: {} }, 'AUTH-LOGIN', 'approved', 'abc', 'Lan', AT);
-  review = addComment(review, 'AUTH-LOGIN', 'Thiếu tiêu chí', 'Minh', AT);
-  review = setVerdict(review, 'AUTH-LOGIN-API', 'approved', 'def', 'Lan', AT);
-  review = setVerdict(review, 'AUTH', 'approved', 'ghi', 'Lan', AT);
-  review = setVerdict(review, 'BILLING', 'approved', 'jkl', 'Lan', AT);
-
-  const next = rekeyReview(review, { 'AUTH-LOGIN': 'AUTH-SIGNIN', 'AUTH-LOGIN-API': 'AUTH-SIGNIN-API', AUTH: undefined });
-  assert.deepEqual(next, {
-    items: {
-      'AUTH-SIGNIN': { comments: [{ id: 'c1', by: 'Minh', at: AT, text: 'Thiếu tiêu chí', resolved: false }] },
-      BILLING: { verdict: 'approved', digest: 'jkl', by: 'Lan', at: AT, comments: [] },
-    },
-  });
-  assert.ok(review.items['AUTH-LOGIN'], 'the input review is not changed');
-  assert.equal(rekeyReview(review, { OTHER: 'OTHER-2', GONE: undefined }), review, 'no matching key: same review');
-});
-
-test('rekeyReviewFile saves review.yaml only when a key it names changed', async (t) => {
-  const dir = await tempDir(t);
-  const path = join(dir, REVIEW_FILE);
-  assert.equal(await rekeyReviewFile(dir, { 'AUTH-LOGIN': 'AUTH-SIGNIN' }), false);
-  await assert.rejects(readFile(path, 'utf8'), { code: 'ENOENT' }, 'no review.yaml is created');
-
-  const written = `# Review của PO\nitems:\n  AUTH-LOGIN:\n    verdict: approved\n    digest: abc\n`;
-  await writeFile(path, written);
-  assert.equal(await rekeyReviewFile(dir, { AUTH: 'AUTH-2', 'AUTH-LOGIN-API': undefined }), false);
-  assert.equal(await readFile(path, 'utf8'), written, 'unchanged review is not rewritten');
-
-  await writeFile(path, `items:\n  AUTH-LOGIN:\n    verdict: approved\n    digest: abc\n    comments:\n      - { id: c1, by: Minh, at: "${AT}", text: Rõ hơn, resolved: false }\n`);
-  assert.equal(await rekeyReviewFile(dir, { 'AUTH-LOGIN': 'AUTH-SIGNIN' }), true);
-  assert.deepEqual(await loadReview(path), { items: { 'AUTH-SIGNIN': { comments: [{ id: 'c1', by: 'Minh', at: AT, text: 'Rõ hơn', resolved: false }] } } });
-
-  assert.equal(await rekeyReviewFile(dir, { 'AUTH-SIGNIN': undefined }), true);
-  assert.deepEqual(await loadReview(path), { items: {} });
-});
-
 test('buildPreview marks the items recorded in state.json as applied', async (t) => {
   const dir = await tempDir(t);
   const state = { project: { id: 7, slug: 'demo' }, items: { AUTH: { type: 'epic', id: 18, ref: 38, version: 1 } } };
@@ -248,7 +209,7 @@ test('preview shows issues with their type, severity and priority', async (t) =>
   assert.deepEqual(h.fake.requests, []);
 });
 
-test('validate checks review.yaml: unknown keys and malformed reviews are issues', async (t) => {
+test('validate checks review.yaml: malformed reviews are issues, a key no longer in the backlog is not', async (t) => {
   const h = await startHarness(t);
   await h.writeManifest('demo', 'backlog.yaml', BACKLOG);
   await h.writeManifest(
@@ -276,7 +237,6 @@ test('validate checks review.yaml: unknown keys and malformed reviews are issues
   assert.deepEqual(
     error.issues.map((i) => [i.path, i.rule]),
     [
-      ['items.GONE', 'key-reference'],
       ['items.AUTH.verdict', 'review-verdict'],
       ['items.AUTH.digest', 'required'],
       ['items.AUTH.comments[0].at', 'type'],
@@ -289,6 +249,28 @@ test('validate checks review.yaml: unknown keys and malformed reviews are issues
   const ok = await h.taigent(['validate', '--project', 'demo'], { env: OFFLINE });
   assert.equal(ok.code, 0, ok.stderr);
   assert.match(ok.stdout, /taiga[\\/]demo[\\/]review\.yaml: ok/);
+});
+
+test('a review entry whose key left the backlog (removed or renamed before apply) is ignored and left: validate passes, preview warns, review keeps it', async (t) => {
+  const h = await startHarness(t);
+  await h.writeManifest('demo', 'backlog.yaml', BACKLOG);
+  await h.writeManifest('demo', REVIEW_FILE, `items:\n  AUTH-SIGNIN:\n    verdict: approved\n    digest: abc\n    comments:\n      - { id: c1, by: Lan, at: "${AT}", text: Still needed? }\n`);
+
+  const validate = await h.taigent(['validate', '--project', 'demo'], { env: OFFLINE });
+  const preview = await h.taigent(['preview', '--project', 'demo', '--json'], { env: OFFLINE });
+  const comment = await h.taigent(['review', 'comment', '--project', 'demo', 'AUTH-LOGIN', '--', 'Lockout?'], { env: OFFLINE });
+
+  assert.equal(validate.code, 0, validate.stderr);
+  assert.equal(preview.code, 0, preview.stderr);
+  const p = preview.json<Preview>();
+  assert.deepEqual(p.summary.unknownReviewKeys, ['AUTH-SIGNIN']);
+  // Its verdict and comment count for no item: the item under its new key is unreviewed.
+  assert.equal(p.summary.approved, 0);
+  assert.equal(p.summary.openComments, 0);
+  assert.equal(comment.code, 0, comment.stderr);
+  const kept = await readFile(join(h.manifestsDir, 'demo', REVIEW_FILE), 'utf8');
+  assert.match(kept, /AUTH-SIGNIN:/);
+  assert.match(kept, /Still needed\?/);
 });
 
 test('preview --json and --out work offline, without Taiga env vars', async (t) => {

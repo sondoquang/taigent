@@ -208,21 +208,3 @@ test('sprint options are checked: subcommand, --name and --from/--to only where 
   }
   assert.equal(h.fake.requests.length, 0);
 });
-
-test('under TAIGENT_READ_ONLY sprint create/add --yes refuse before contacting Taiga; list and --dry-run still work', async (t) => {
-  const h = await startHarness(t);
-  const { profile } = seed(h.fake);
-  const READ_ONLY = { env: { TAIGENT_READ_ONLY: '1' } };
-  const create = ['sprint', 'create', '--project', 'alpha', '--name', 'Sprint 3', '--from', '2026-11-30', '--to', '2026-12-13'];
-  const add = ['sprint', 'add', '--project', 'alpha', '--name', 'Sprint 2', String(profile.ref)];
-  for (const args of [create, add]) {
-    const result = await h.taigent([...args, '--yes', '--json'], READ_ONLY);
-    assert.equal(result.code, 2, result.stderr);
-    assert.match(result.stderr, new RegExp(`taigent: sprint ${args[1]} writes to Taiga.*TAIGENT_READ_ONLY`));
-    assert.equal(result.json<{ error: { kind: string } }>().error.kind, 'read-only');
-  }
-  assert.equal(h.fake.requests.length, 0, 'refused before contacting Taiga');
-  for (const args of [create, add]) assert.equal((await h.taigent([...args, '--dry-run'], READ_ONLY)).code, 3);
-  assert.equal((await h.taigent(['sprint', 'list', '--project', 'alpha'], READ_ONLY)).code, 0);
-  assert.deepEqual(writes(h.fake), []);
-});

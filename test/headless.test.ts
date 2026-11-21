@@ -37,7 +37,12 @@ const MCP_WRITE_TOOLS = [
   'updateWikiPage', 'uploadAttachment', 'watchWikiPage',
 ];
 
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'preview', 'projects', 'report', 'snapshot', 'adopt', 'pull'];
+/**
+ * The taigent commands headless runs allow. `review resolve` lets taiga-plan-backlog answer review comments
+ * unattended; the other review subcommands (verdicts, new comments) are the reviewer's and never allowed.
+ */
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'preview', 'projects', 'report', 'snapshot', 'adopt', 'pull', 'metrics', 'review resolve'];
+const REVIEWER_COMMANDS = ['npx taigent review approve --project vigo-auth AUTH', 'npx taigent review request-changes --project vigo-auth AUTH -- why', 'npx taigent review comment --project vigo-auth AUTH -- why'];
 
 function parseAllowlist(text: string): string[] {
   return text
@@ -72,15 +77,22 @@ test('the headless allowlist pre-approves Taiga MCP read tools and taigent comma
     ...TAIGENT_COMMANDS.map((command) => `Bash(npx taigent ${command} *)`),
     ...TAIGENT_COMMANDS.map((command) => `PowerShell(npx taigent ${command} *)`),
   ]);
+  // A verdict or a new comment is the reviewer's: an unattended run never records one.
+  for (const rule of shell) assert.doesNotMatch(rule, /npx taigent review (approve|request-changes|comment)\b/, rule);
 });
 
 test('the Codex execpolicy rule allows exactly the taigent commands of the allowlist', async () => {
   const rules = await readFile(CODEX_RULES, 'utf8');
   const patterns = [...rules.matchAll(/^\s*pattern = (.+),$/gm)].map((match) => JSON.parse(match[1]!) as unknown);
-  const commands = (await readAllowlist()).flatMap((rule) => /^(?:Bash|PowerShell)\(npx taigent (\w+) \*\)$/.exec(rule)?.[1] ?? []);
+  const commands = (await readAllowlist()).flatMap((rule) => /^(?:Bash|PowerShell)\(npx taigent ([\w ]+?) \*\)$/.exec(rule)?.[1] ?? []);
+  const single = [...new Set(commands.filter((command) => !command.includes(' ')))];
+  const multi = [...new Set(commands.filter((command) => command.includes(' ')))];
 
-  assert.deepEqual(patterns, [['npx', 'taigent', [...new Set(commands)]]]);
-  assert.equal([...rules.matchAll(/prefix_rule\(/g)].length, 1, 'one prefix_rule only');
+  // One rule for the one-word commands, one per subcommand (execpolicy patterns match word by word).
+  assert.deepEqual(patterns, [['npx', 'taigent', single], ...multi.map((command) => ['npx', 'taigent', ...command.split(' ')])]);
+  assert.deepEqual(multi, ['review resolve']);
+  assert.equal([...rules.matchAll(/prefix_rule\(/g)].length, patterns.length, 'one prefix_rule per pattern');
+  for (const command of REVIEWER_COMMANDS) assert.ok(rules.includes(`"${command.split(' -- ')[0]}`), `${command}: a not_match example`);
   assert.match(rules, /decision = "allow"/);
 });
 
@@ -127,6 +139,7 @@ test('the Codex shell guard blocks every other command (exit 2 with the reason o
     'npx taigent plan --project $env:TAIGA_PASSWORD',
     'npx taigent plan --project vigo-auth\nrm -rf ~',
     'npx taigent upload --project vigo-auth docs/*',
+    ...REVIEWER_COMMANDS,
     '',
   ]) {
     const result = await runGuard(hookInput(command));
@@ -161,11 +174,13 @@ test('the OMP guard allows workspace file tools, the allowlist taigent commands 
     { toolName: 'edit', input: { path: 'taiga/vigo-auth/backlog.yaml' } },
     { toolName: 'write', input: { path: 'taiga/vigo-auth/review.yaml', content: '' } },
     { toolName: 'bash', input: { command: 'npx taigent plan --project vigo-auth' } },
+    { toolName: 'bash', input: { command: 'npx taigent review resolve --project vigo-auth AUTH c1 -- Đã sửa' } },
     ...MCP_READ_TOOLS.map((tool) => ({ toolName: `mcp__taiga_${tool.toLowerCase()}`, input: {} })),
     { toolName: 'write', input: { path: 'xd://mcp__taiga_listprojects', content: '{}' } },
   ];
   const blocked = [
     { toolName: 'bash', input: { command: 'npm test' } },
+    ...REVIEWER_COMMANDS.map((command) => ({ toolName: 'bash', input: { command } })),
     { toolName: 'bash', input: { command: 'npx taigent plan --project vigo-auth && rm -rf ~' } },
     { toolName: 'bash', input: { command: 'npx taigent plan --project vigo-auth', name: 'svc' } },
     { toolName: 'bash', input: {} },
@@ -304,15 +319,16 @@ for (const shell of SHELLS) {
     }
   });
 
-  // Taigent Desktop runs its bundled copy of the wrapper in the opened repository, and another repository runs the one
-  // in node_modules/taigent: the repository is the current directory, not the folder the script sits in.
-  test(`${shell.name}: a copy of the wrapper run in a repository set up by taigent init uses that repository's skills and allowlist`, { skip }, async (t) => {
+  // Another repository runs the wrapper in node_modules/taigent: the repository is the current directory, not the
+  // folder the script sits in.
+  test(`${shell.name}: a copy of the wrapper run in a repository set up by taigent setup --project uses that repository's skills and allowlist`, { skip }, async (t) => {
     const work = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
     t.after(() => rm(work, { recursive: true, force: true }));
     const repo = join(work, 'repo');
     await mkdir(repo);
-    const init = await runTaigent(['init'], { env: OFFLINE, cwd: repo });
-    assert.equal(init.code, 0, init.stderr);
+    // Its own config directory: setup looks for a stored login, never the developer's.
+    const setup = await runTaigent(['setup', '--project'], { env: { ...OFFLINE, TAIGENT_CONFIG_DIR: join(work, 'config'), TAIGENT_CREDENTIAL_STORE: 'file' }, cwd: repo });
+    assert.equal(setup.code, 0, setup.stderr);
     // The repository's own allowlist, distinguishable from taigent's: one rule fewer.
     const repoAllowlist = join(repo, 'tools/taiga/allowlist.txt');
     const rules = parseAllowlist(await readFile(repoAllowlist, 'utf8')).slice(0, -1);
@@ -332,7 +348,7 @@ for (const shell of SHELLS) {
     ]);
   });
 
-  test(`${shell.name}: a repository without the allowlist is a usage error (exit 2) naming taigent init`, { skip }, async (t) => {
+  test(`${shell.name}: a repository without the allowlist is a usage error (exit 2) naming taigent setup --project`, { skip }, async (t) => {
     const repo = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
     t.after(() => rm(repo, { recursive: true, force: true }));
     await mkdir(join(repo, '.agents/skills/taiga-plan-backlog'), { recursive: true });
@@ -342,10 +358,10 @@ for (const shell of SHELLS) {
 
     assert.equal(result.code, 2, `${result.stdout}${result.stderr}`);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /allowlist\.txt.*taigent init/);
+    assert.match(result.stderr, /allowlist\.txt.*taigent setup --project/);
   });
 
-  test(`${shell.name}: omp in a repository without the OMP guard is a usage error (exit 2) naming taigent init`, { skip }, async (t) => {
+  test(`${shell.name}: omp in a repository without the OMP guard is a usage error (exit 2) naming taigent setup --project`, { skip }, async (t) => {
     const repo = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
     t.after(() => rm(repo, { recursive: true, force: true }));
     await mkdir(join(repo, '.agents/skills/taiga-plan-backlog'), { recursive: true });
@@ -357,7 +373,7 @@ for (const shell of SHELLS) {
 
     assert.equal(result.code, 2, `${result.stdout}${result.stderr}`);
     assert.equal(result.stdout, '');
-    assert.match(result.stderr, /omp-guard\.mjs.*taigent init/);
+    assert.match(result.stderr, /omp-guard\.mjs.*taigent setup --project/);
   });
 }
 

@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0007
+---
+
 # Renderer của Taigent Desktop viết bằng React và shadcn/ui, ưu tiên giao diện tối
 
 Renderer cũ dựng DOM bằng tay (`h()`, `byId()`) và có một file `styles.css` gần 2.800 dòng. Mỗi màn hình mới lại thêm

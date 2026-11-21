@@ -299,17 +299,6 @@ test('metrics prints a text summary without --json', async (t) => {
   assert.match(result.stdout, /Not available yet:\n {2}businessAnalyst\.statuses\.notApplied: .*backlog\.yaml/);
 });
 
-test('metrics works under TAIGENT_READ_ONLY=1', async (t) => {
-  const h = await startHarness(t);
-  seedSprints(h.fake);
-
-  const result = await h.taigent(['metrics', '--project', 'alpha', '--json'], { env: { TZ, TAIGENT_READ_ONLY: '1' } });
-
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(result.json<MetricsJson>().project.slug, 'alpha');
-  assert.deepEqual(writes(h.fake), []);
-});
-
 test('metrics exits 2 without login, without --project or for an unknown project, and 5 when Taiga fails', async (t) => {
   const h = await startHarness(t);
   const other = h.fake.addUser({ username: 'other' }).id;

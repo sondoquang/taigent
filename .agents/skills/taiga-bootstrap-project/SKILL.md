@@ -11,7 +11,7 @@ Create a Taiga project, or complete an existing one, from `taiga/<slug>/project.
 
 ## 0. Check the setup
 
-Run every command from the **project root**, the directory holding `package.json` and the manifests root `taiga/` (created by this skill when absent). Its `package.json` has `taigent` as `name` (the taigent repository) or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The **taigent root**, holding the docs cited below, is the project root when `name` is `taigent`, else `node_modules/taigent/`.
+Run every command from the **project root**, the directory holding the manifests root `taiga/` (created by this skill when absent). `npx taigent` runs the taigent the project pins, else the global one (`npm i -g taigent`); when npx cannot run taigent at all, stop and run the `taiga-setup` skill. The **taigent root**, holding the docs cited below, is the project root when its `package.json` has `taigent` as `name` (the taigent repository), else `node_modules/taigent/` when the project installs taigent, else the global install (the `taigent` folder in the directory `npm root -g` prints).
 
 Taiga MCP tool names below are those of the `taiga` server; your agent prefixes them (Claude Code: `mcp__taiga__listProjects`).
 

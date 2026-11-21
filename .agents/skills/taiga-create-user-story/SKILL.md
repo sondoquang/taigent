@@ -11,7 +11,7 @@ Add **one** user story to `taiga/<slug>/backlog.yaml` under an epic that already
 
 ## 1. Check the setup
 
-Run every command from the **project root**, the directory holding `package.json` and the manifests root `taiga/`. Its `package.json` has `taigent` as `name` (the taigent repository) or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The **taigent root**, holding `docs/`, is the project root when `name` is `taigent`, else `node_modules/taigent/`.
+Run every command from the **project root**, the directory holding the manifests root `taiga/`. `npx taigent` runs the taigent the project pins, else the global one (`npm i -g taigent`); when npx cannot run taigent at all, stop and run the `taiga-setup` skill. The **taigent root**, holding `docs/`, is the project root when its `package.json` has `taigent` as `name` (the taigent repository), else `node_modules/taigent/` when the project installs taigent, else the global install (the `taigent` folder in the directory `npm root -g` prints).
 
 Run each `npx taigent …` command exactly as written, alone in its own shell call, and branch on its exit code (all codes: `docs/cli.md` §Exit codes). Exit 2 or 5 naming a missing `TAIGA_*` variable, `not logged in` or a refused login: show it, name `taiga-setup` as the fix, and stop. Exit 6 from `plan` or `apply` (items changed on Taiga since taigent last wrote them, or changed on both sides): list its `blocked` items, write nothing, and stop; they are settled with `taiga-apply-backlog` (`/taiga-apply-backlog`, Codex `$taiga-apply-backlog`) or by pulling Taiga's version (`taigent pull`) before running this skill again.
 

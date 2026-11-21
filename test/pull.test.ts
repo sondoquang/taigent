@@ -293,17 +293,17 @@ test('the verdict of a pulled item turns stale in the review', async (t) => {
   assert.equal(after.summary.stale, 1);
 });
 
-test('pull runs under TAIGENT_READ_ONLY, never writes to Taiga, and has nothing to do without blocked items', async (t) => {
+test('pull never writes to Taiga, and has nothing to do without blocked items', async (t) => {
   const h = await startHarness(t);
   await applied(h, BACKLOG);
   h.fake.requests.length = 0;
 
-  const nothing = await h.taigent(['pull', '--project', 'demo', '--json'], { env: { TAIGENT_READ_ONLY: '1' } });
+  const nothing = await h.taigent(['pull', '--project', 'demo', '--json']);
   assert.equal(nothing.code, 0, nothing.stderr);
   assert.deepEqual(nothing.json<PullOutput>().pulled, []);
 
   h.fake.editItem(h.fake.state.epics[0]!, { subject: 'Sign-in' });
-  const pull = await h.taigent(['pull', '--project', 'demo'], { env: { TAIGENT_READ_ONLY: '1' } });
+  const pull = await h.taigent(['pull', '--project', 'demo']);
   assert.equal(pull.code, 0, pull.stderr);
   assert.deepEqual(writes(h.fake), []);
   assert.match(await readFile(backlogPath(h), 'utf8'), /subject: Sign-in/);

@@ -5,6 +5,7 @@
 
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +40,11 @@ export interface Harness {
   /** TAIGENT_CONFIG_DIR of every run: a stored login (`taigent login`) lives here, never in the developer's. */
   configDir: string;
   /**
+   * HOME and USERPROFILE of every run: an empty temp directory (not under `cwd`), so no run reads or writes the
+   * developer's home, e.g. the client configs of `taigent setup`.
+   */
+  home: string;
+  /**
    * Env passed to the CLI: TAIGA_API_URL (the fake) + the fake user's credentials, and a file credential store in
    * `configDir` so no test reads or writes the OS credential store.
    */
@@ -58,13 +64,24 @@ export function writes(fake: FakeTaiga): string[] {
   return fake.requests.filter((r) => r.method !== 'GET' && r.path !== '/auth' && !r.path.startsWith('/auth/')).map((r) => `${r.method} ${r.path}`);
 }
 
-/** The env of a CLI child process: this process's env without the developer's Taiga, taigent and Telegram variables, plus `overrides`. */
+/**
+ * The home directory of every CLI child unless a run sets its own: an empty temp directory, removed when this test
+ * process exits, so no run reads or writes the developer's home (client configs, `%APPDATA%`, `~/.config`).
+ */
+const CHILD_HOME = mkdtempSync(join(tmpdir(), 'taigent-home-'));
+process.on('exit', () => rmSync(CHILD_HOME, { recursive: true, force: true }));
+
+/**
+ * The env of a CLI child process: this process's env without the developer's Taiga, taigent and Telegram variables,
+ * with HOME, USERPROFILE, APPDATA and XDG_CONFIG_HOME in CHILD_HOME, plus `overrides`.
+ */
 export function childEnv(overrides: Record<string, string | undefined>): Record<string, string> {
-  // Never leak the developer's real Taiga credentials, bot token or overrides into a test run.
+  // Never leak the developer's real Taiga credentials, bot token, overrides or home into a test run.
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined && !/^(TAIGA_|TAIGENT_|TELEGRAM_|CLAUDE_CONFIG_DIR$)/i.test(name)) env[name] = value;
+    if (value !== undefined && !/^(TAIGA_|TAIGENT_|TELEGRAM_|CLAUDE_CONFIG_DIR$|HOME$|USERPROFILE$|APPDATA$|XDG_CONFIG_HOME$)/i.test(name)) env[name] = value;
   }
+  Object.assign(env, { HOME: CHILD_HOME, USERPROFILE: CHILD_HOME, APPDATA: join(CHILD_HOME, 'AppData', 'Roaming'), XDG_CONFIG_HOME: join(CHILD_HOME, '.config') });
   for (const [name, value] of Object.entries(overrides)) {
     if (value === undefined) delete env[name];
     else env[name] = value;
@@ -97,9 +114,11 @@ export async function runTaigent(args: string[], options: { env: Record<string, 
 export async function startHarness(t: TestContext): Promise<Harness> {
   const fake = await startFakeTaiga();
   const cwd = await mkdtemp(join(tmpdir(), 'taigent-test-'));
+  const home = await mkdtemp(join(tmpdir(), 'taigent-home-'));
   t.after(async () => {
     await fake.close();
     await rm(cwd, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
   });
   const manifestsDir = join(cwd, 'taiga');
   const configDir = join(cwd, '.taigent-config');
@@ -109,6 +128,8 @@ export async function startHarness(t: TestContext): Promise<Harness> {
     TAIGA_PASSWORD: fake.user.password,
     TAIGENT_CONFIG_DIR: configDir,
     TAIGENT_CREDENTIAL_STORE: 'file',
+    HOME: home,
+    USERPROFILE: home,
   };
   const statePath = (slug: string) => join(manifestsDir, slug, 'state.json');
 
@@ -117,6 +138,7 @@ export async function startHarness(t: TestContext): Promise<Harness> {
     cwd,
     manifestsDir,
     configDir,
+    home,
     env,
     async writeManifest(slug, file, content) {
       await mkdir(join(manifestsDir, slug), { recursive: true });

@@ -26,13 +26,20 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
      chỉ vào manifest qua `taigent adopt`, sau khi người dùng xác nhận **từng item** (§5).
    - Kết thúc bằng `taigent validate --project <slug>`. Phải ra exit 0.
 2. **Review.** Business Analyst / Product Owner duyệt backlog trước khi apply:
-   - **Taigent Desktop** (`docs/desktop.md`) hoặc `taigent preview --project <slug>` (offline, in một trang Markdown
-     đúng những gì `apply` sẽ ghi, kèm trạng thái review). Mỗi item được đánh dấu **approved** (đồng ý) hoặc
-     **changes** (cần sửa) và có thể kèm comment. Tất cả nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest
-     (định dạng: `docs/cli.md` mục Review).
-   - Agent đọc `review.yaml`, xử lý từng comment chưa resolved bằng cách sửa manifest, rồi đặt `resolved: true` và
-     `reply` (trả lời ngắn bằng tiếng Việt) cho comment đó. Agent **không bao giờ** đổi verdict; verdict chỉ do người
-     review đặt. Item sửa sau khi đã approved thì verdict thành **stale** (digest khác) và cần duyệt lại.
+   - Người review tự gọi skill `taiga-review-backlog` (chỉ chạy khi người dùng gọi): skill chạy
+     `taigent preview --project <slug>` (offline, in một trang Markdown đúng những gì `apply` sẽ ghi, kèm trạng thái
+     review), rồi chỉ ghi verdict **approved** (đồng ý) hoặc **changes** (cần sửa) và comment cho những item mà người
+     review nói rõ, bằng `taigent review approve|request-changes|comment --project <slug> <key> [-- <text>]`, và kết
+     thúc bằng `taigent validate`. Tất cả nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest (định dạng và lệnh:
+     `docs/cli.md` mục Review). `review.yaml` không ghi tên người review hay role.
+   - Agent (`taiga-plan-backlog`) xử lý từng comment chưa resolved bằng cách sửa manifest, rồi chạy
+     `taigent review resolve --project <slug> <key> <comment-id> -- <reply>` (trả lời ngắn bằng tiếng Việt). Không
+     ai sửa `review.yaml` bằng tay: `taigent review` là cách duy nhất ghi file. Agent **không bao giờ** đặt hay đổi
+     verdict; verdict chỉ do người review quyết định (GLOSSARY: Verdict). Item sửa sau khi đã có verdict thì verdict
+     thành **stale** (digest khác) và item quay về Awaiting review.
+   - Mục review của key không còn trong `backlog.yaml` (item bị xoá, hoặc đổi key trước khi apply) được giữ nguyên
+     trong file và bị bỏ qua: `validate` không báo lỗi, `preview` liệt kê nó ở `summary.unknownReviewKeys` (kèm cảnh
+     báo). Đổi key trước khi apply nghĩa là bỏ review của item: người review duyệt lại item dưới key mới.
    - BA cũng có thể sửa thẳng bản preview: `taigent preview --project <slug> --out taiga/<slug>/preview.md`, kèm một
      bản giữ nguyên ở `taiga/<slug>/.preview/base.md` (ghi cùng lúc). Skill `taiga-apply-backlog` so hai bản bằng
      `git diff --no-index`, ghi từng chỗ BA sửa vào `backlog.yaml` (manifest vẫn là nguồn sự thật), chạy `validate`
@@ -69,7 +76,7 @@ chuyển legacy sang user story format. Lần `plan` đầu sau khi nâng cấp 
 
 | Rule | Quy tắc |
 |---|---|
-| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá item thì xoá mục review của nó; đổi key item thì chuyển comment sang key mới và bỏ verdict (item cần duyệt lại). Taigent Desktop tự làm việc này khi form đổi key hoặc xoá item. |
+| `key-format` | Mỗi key trong `items` của `review.yaml` đúng định dạng key (chữ hoa/số, nhóm cách nhau bằng `-`). Key không còn trong `backlog.yaml` không phải lỗi: mục đó bị bỏ qua (bước 2 ở trên). |
 | `review-verdict` | `verdict` là `approved` hoặc `changes`, và đi kèm `digest` của item lúc duyệt. |
 | `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 
@@ -102,8 +109,7 @@ hai với slug `<slug>-1`). Đổi tên project về sau **không** đổi slug.
 `existing: true` trong `project.yaml`. Khi đó `project-name` và `project-slug` không áp dụng: `name` chỉ cần không rỗng,
 `slug` là slug thật của project trên Taiga (chữ thường, số, `-`, `_`); `project-dir` vẫn áp dụng. `taigent bootstrap`
 không bao giờ tạo project có `existing: true`: không tìm thấy slug trên Taiga thì dừng (exit 5, không ghi gì); tìm
-thấy thì chỉ bổ sung module, tag, custom attribute, thành viên và wiki còn thiếu. Form project của Taigent Desktop tự
-đặt cờ này khi lấy tên project từ Taiga.
+thấy thì chỉ bổ sung module, tag, custom attribute, thành viên và wiki còn thiếu.
 
 ## 3. Template và module
 
@@ -176,11 +182,10 @@ releases:
 | `key-format` | Mỗi epic, story, task, issue có `key`: chữ hoa, số, gạch ngang giữa các nhóm (`^[A-Z0-9]+(-[A-Z0-9]+)*$`), ví dụ `AUTH`, `AUTH-LOGIN`, `AUTH-LOGIN-API`. |
 | `key-unique` | Key duy nhất trong cả project (epic, story, task, issue dùng chung một không gian key). |
 | `key-reference` | Mọi chỗ tham chiếu key (ví dụ `target` của attachment trong `docs.yaml`) phải trỏ tới key có trong `backlog.yaml`. Attachment chỉ gắn vào epic, story hoặc task, không gắn vào issue. |
-| `key-locked` | Item đã có trên Taiga (key có trong `state.json`) không đổi key: đổi key = item mới + item cũ thành mồ côi. Form của Taigent Desktop kiểm rule này khi lưu. |
 | `ref-unique` | `ref` (nếu có) là số nguyên dương và mỗi ref chỉ thuộc một backlog item: một item trên Taiga không bao giờ gắn với hai backlog item. |
 | `item-ref` | Kiểm sau khi đọc Taiga (`plan`/`apply`, exit 4): item mang tag `src:<key>` phải có đúng ref trong manifest; nếu chưa có item nào mang tag đó thì ref phải là một item **cùng loại**, **chưa có tag `src:`** trong project. |
 
-- Key **không đổi** sau khi đã apply (rule `key-locked`).
+- Key **không đổi** sau khi đã apply (key có trong `state.json`): đổi key = item mới + item cũ thành mồ côi.
 - Gợi ý đặt key: epic là tên mảng (`AUTH`), story là `<EPIC>-<việc>` (`AUTH-LOGIN`), task là
   `<STORY>-<bước>` (`AUTH-LOGIN-API`), issue là `<tiền tố>-<việc>` với tiền tố theo `type`: `Question` → `ASK`,
   `Enhancement` → `ENH`, type khác (kể cả `Bug`) → `BUG`. Ví dụ `BUG-LONG-PASSWORD`.
@@ -451,8 +456,11 @@ Slug chuẩn:
 ## 10. Lệnh được phép và tool MCP bị cấm
 
 Lệnh `taigent` skill được dùng (allowlist của skill và wrapper headless): `validate`, `preview`, `plan`, `snapshot`
-(chỉ đọc Taiga, chỉ ghi `snapshot.json`), `adopt` và `pull` (chỉ đọc Taiga, chỉ ghi file local), `tickets`, `status`,
-`comment`, và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi người dùng đồng ý (§1).
+(chỉ đọc Taiga, chỉ ghi `snapshot.json`), `adopt` và `pull` (chỉ đọc Taiga, chỉ ghi file local), `metrics` (chỉ đọc,
+skill `taiga-dashboard`), `tickets`, `status`, `comment`, `review resolve` (offline, chỉ ghi `review.yaml`: trả lời
+comment review, skill `taiga-plan-backlog`), và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi
+người dùng đồng ý (§1). `review approve|request-changes|comment` không có trong allowlist headless: chỉ trong skill
+`taiga-review-backlog` mà người review tự gọi.
 
 Các tool sau của `taiga-mcp-server@1.9.20` đang hỏng hoặc nguy hiểm. Agent **không được gọi** chúng; skill và wrapper
 headless không đưa chúng vào allowlist.

@@ -1,7 +1,10 @@
 // Review of a backlog before apply: `taiga/<slug>/review.yaml` holds each item's verdict (approved / changes) and
 // the comments of the Business Analyst / Product Owner, and `buildPreview` shows the backlog exactly as apply would
-// write it, with that review. Offline: no Taiga access. The file is committed with the manifests; Taigent Desktop and
-// people write verdicts and comments, the agent answers comments (`resolved` + `reply`) by editing the manifests.
+// write it, with that review. Offline: no Taiga access. The file is committed with the manifests; `taigent review`
+// (`recordReview`) is the one way it is written: the reviewer's verdicts and comments, and the agent's answers to the
+// comments (`resolved` + `reply`). Nobody edits it by hand. An entry whose key the backlog no longer declares (the item
+// was removed, or renamed before apply) is ignored and left in the file: `validate` accepts it, `preview` lists it in
+// `summary.unknownReviewKeys`, and the item under its new key is reviewed again.
 
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -19,8 +22,8 @@ import {
   type ManifestItem,
   type SnapshotItems,
 } from './managed.ts';
-import { type AttributeValue, type Backlog, BACKLOG_FILE, backlogKeys, type Scenario, type StorySpec } from './manifest/backlog.ts';
-import { checkKeyReference, KEY_PATTERN } from './manifest/conventions.ts';
+import { type AttributeValue, type Backlog, BACKLOG_FILE, type Scenario, type StorySpec } from './manifest/backlog.ts';
+import { KEY_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { SNAPSHOT_FILE } from './manifest/layout.ts';
 import { loadManifests } from './manifest/manifests.ts';
@@ -76,18 +79,12 @@ function isText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '';
 }
 
-/** Every key review.yaml may name: the epic tree's and the issues'. */
-export function reviewKeys(backlog: Backlog): Set<string> {
-  const keys = backlogKeys(backlog);
-  for (const issue of backlog.issues) keys.add(issue.key);
-  return keys;
-}
-
 /**
- * Reads and validates review.yaml at `path`; a missing file is an empty review. With `keys` (the backlog's item keys),
- * an item key not in the backlog is an issue too (rule `key-reference`). Throws ManifestError listing every issue.
+ * Reads and validates review.yaml at `path`; a missing file is an empty review. Item keys are checked for their format
+ * only: one the backlog does not declare is ignored by `buildPreview`, never an issue. Throws ManifestError listing
+ * every issue.
  */
-export async function loadReview(path: string, keys?: ReadonlySet<string>): Promise<Review> {
+export async function loadReview(path: string): Promise<Review> {
   let doc: unknown;
   try {
     doc = await readManifestYaml(path);
@@ -115,7 +112,6 @@ export async function loadReview(path: string, keys?: ReadonlySet<string>): Prom
   for (const [key, raw] of Object.entries(rawItems)) {
     const at = `items.${key}`;
     if (!KEY_PATTERN.test(key)) issue(at, 'key-format', `item key ${key} must be uppercase letters/digits in dash-separated groups`);
-    else if (keys) checkKeyReference(key, at, issue, keys);
     if (!isRecord(raw)) {
       issue(at, 'type', 'item review must be a mapping');
       continue;
@@ -203,10 +199,13 @@ export async function saveReview(path: string, review: Review): Promise<void> {
   await writeAtomic(path, stringify({ items }, { lineWidth: 0 }));
 }
 
-/** Sets (or, with `verdict` undefined, clears) the verdict of item `key`, recording the digest it was given on. Pure. */
-export function setVerdict(review: Review, key: string, verdict: Verdict | undefined, digest: string, by: string, at: string): Review {
+/**
+ * Sets (or, with `verdict` undefined, clears) the verdict of item `key`, recording the digest it was given on and, when
+ * given, who gave it. Pure.
+ */
+export function setVerdict(review: Review, key: string, verdict: Verdict | undefined, digest: string, by: string | undefined, at: string): Review {
   const comments = review.items[key]?.comments ?? [];
-  const item: ItemReview = verdict === undefined ? { comments } : { verdict, digest, by, at, comments };
+  const item: ItemReview = verdict === undefined ? { comments } : { verdict, digest, ...(by !== undefined && { by }), at, comments };
   return { items: { ...review.items, [key]: item } };
 }
 
@@ -220,33 +219,71 @@ export function addComment(review: Review, key: string, text: string, by: string
   return { items: { ...review.items, [key]: { ...current, comments: [...current.comments, comment] } } };
 }
 
-/**
- * Follows re-keyed (`from` → `to`) and removed (`from` → undefined) items: review.yaml may only name keys of the
- * backlog (rule `key-reference`). A re-keyed item keeps its comments but loses its verdict, so it is reviewed again
- * (its digest leaves the key out); a removed item's review goes. Returns `review` itself when no key it names
- * changed. Pure.
- */
-export function rekeyReview(review: Review, keys: Record<string, string | undefined>): Review {
-  const items = { ...review.items };
-  let changed = false;
-  for (const [from, to] of Object.entries(keys)) {
-    const entry = items[from];
-    if (!entry || from === to) continue;
-    delete items[from];
-    if (to !== undefined && entry.comments.length > 0) items[to] = { comments: entry.comments };
-    changed = true;
-  }
-  return changed ? { items } : review;
+/** Marks comment `id` of item `key` resolved with `reply`; undefined when the item has no such comment. Pure. */
+export function resolveComment(review: Review, key: string, id: string, reply: string): Review | undefined {
+  const current = review.items[key];
+  if (!current?.comments.some((comment) => comment.id === id)) return undefined;
+  const comments = current.comments.map((comment) => (comment.id === id ? { ...comment, resolved: true, reply } : comment));
+  return { items: { ...review.items, [key]: { ...current, comments } } };
 }
 
-/** `rekeyReview` on review.yaml of the project directory `dir`, saved only when it changed. Returns whether it did. */
-export async function rekeyReviewFile(dir: string, keys: Record<string, string | undefined>): Promise<boolean> {
+// ---- taigent review -----------------------------------------------------------------------------
+
+/** A `taigent review` run refused for its key or comment id; nothing was written. */
+export class ReviewError extends Error {}
+
+/**
+ * `by` of the comments `taigent review` writes. review.yaml records no reviewer or role, but a comment's `by` is
+ * required, so every comment written by the CLI is by this generic author.
+ */
+export const REVIEW_AUTHOR = 'reviewer';
+
+export type ReviewAction =
+  | { action: 'approve'; key: string }
+  | { action: 'request-changes'; key: string; text?: string }
+  | { action: 'comment'; key: string; text: string }
+  | { action: 'resolve'; key: string; id: string; reply: string };
+
+export interface ReviewResult {
+  key: string;
+  /** The item's current digest, the one a verdict is given on. */
+  digest: string;
+  /** The item's review after the write. */
+  review: ItemReview;
+  /** The comment added or resolved. */
+  comment?: ReviewComment;
+}
+
+/**
+ * Records one review action in review.yaml of project `slug` (manifests in `dir`): a verdict on the item's current
+ * digest, a new comment, or a resolved comment with its reply. Offline. A key the backlog does not declare, or a comment
+ * id the item lacks, throws ReviewError before anything is written; invalid manifests throw ManifestError.
+ */
+export async function recordReview(dir: string, slug: string, change: ReviewAction, at: string = new Date().toISOString()): Promise<ReviewResult> {
+  const item = previewItems(await buildPreview(dir, slug)).find((candidate) => candidate.key === change.key);
+  if (!item) throw new ReviewError(`${change.key} is not an item of the ${BACKLOG_FILE} of project ${slug}; nothing was written`);
+
   const path = join(dir, REVIEW_FILE);
-  const current = await loadReview(path);
-  const next = rekeyReview(current, keys);
-  if (next === current) return false;
-  await saveReview(path, next);
-  return true;
+  let review = await loadReview(path);
+  let commentId: string | undefined;
+  if (change.action === 'resolve') {
+    const resolved = resolveComment(review, change.key, change.id, change.reply);
+    if (!resolved) throw new ReviewError(`${change.key} has no review comment ${change.id}; nothing was written`);
+    review = resolved;
+    commentId = change.id;
+  } else {
+    const verdict = change.action === 'approve' ? 'approved' : 'changes';
+    if (change.action !== 'comment') review = setVerdict(review, change.key, verdict, item.digest, undefined, at);
+    const text = change.action === 'approve' ? undefined : change.text;
+    if (text !== undefined) {
+      review = addComment(review, change.key, text, REVIEW_AUTHOR, at);
+      commentId = review.items[change.key]!.comments.at(-1)!.id;
+    }
+  }
+  await saveReview(path, review);
+  const itemReview = review.items[change.key]!;
+  const comment = itemReview.comments.find((candidate) => candidate.id === commentId);
+  return { key: change.key, digest: item.digest, review: itemReview, ...(comment && { comment }) };
 }
 
 // ---- Preview ------------------------------------------------------------------------------------
@@ -334,6 +371,11 @@ export interface Preview {
   summary: PreviewSummary;
   epics: PreviewEpic[];
   issues: PreviewIssue[];
+}
+
+/** Every item of `preview` in manifest order: each epic, its stories and their tasks, then the issues. */
+export function previewItems(preview: Preview): PreviewItem[] {
+  return [...preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]), ...preview.issues];
 }
 
 /** What apply writes for an item, the input of `itemDigest`; `values` only for issues. */
@@ -615,7 +657,7 @@ export function renderPreviewMarkdown(preview: Preview): string {
   }
   lines.push('');
   if (summary.unknownReviewKeys.length > 0) {
-    lines.push(`**Warning:** ${REVIEW_FILE} reviews keys the backlog does not declare: ${summary.unknownReviewKeys.join(', ')}`, '');
+    lines.push(`**Warning:** ${REVIEW_FILE} reviews keys the backlog does not declare, ignored (removed items, or keys renamed before apply, whose items are reviewed again under their new key): ${summary.unknownReviewKeys.join(', ')}`, '');
   }
   if (preview.epics.length === 0 && preview.issues.length === 0) lines.push('_The backlog has no items._', '');
   const readAt = preview.snapshot?.readAt;

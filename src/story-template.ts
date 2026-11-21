@@ -1,5 +1,5 @@
-// Story template: the description apply writes to Taiga for a story. Pure and free of Node imports, so `buildPlan`,
-// `taigent preview` and Taigent Desktop's story form (bundled into its renderer) all render the same text.
+// Story template: the description apply writes to Taiga for a story. Pure, so `buildPlan` and `taigent preview`
+// render the same text.
 
 import type { LegacyFormat, Scenario, StorySpec, UserStoryFormat } from './manifest/backlog.ts';
 

@@ -1,7 +1,7 @@
 // The read-only `snapshot` command: the whole backlog on Taiga, as one file the skills plan with instead of the Taiga
 // MCP lists (at most 30 stories, no tasks): every epic, closed ones too, and every open story, task and issue, hand-made
 // or carrying a `src:<key>` tag, with their full descriptions. Written to `taiga/<slug>/snapshot.json` (git-ignored);
-// Taigent Desktop and `preview` read it offline. The client disables Taiga's pagination, so every list is complete.
+// `preview` reads it offline. The client disables Taiga's pagination, so every list is complete.
 
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';

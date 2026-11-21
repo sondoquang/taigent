@@ -4,8 +4,8 @@
 #
 #   tools/taiga/run-skill.sh [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]
 #
-# The repository is the current directory, wherever this script lives (this repository, node_modules/taigent, or the
-# copy bundled in Taigent Desktop): its .agents/skills and the allowlist `taigent init` installed there.
+# The repository is the current directory, wherever this script lives (this repository or node_modules/taigent): its
+# .agents/skills and the allowlist `taigent setup --project` installed there.
 
 usage="usage: run-skill [--dry-run] [--output-format json|text] <omp|claude|codex> <skill> [skill arguments...]"
 
@@ -55,10 +55,10 @@ case $skill in
 esac
 [ -f "$root/.agents/skills/$skill/SKILL.md" ] || fail "unknown skill '$skill': no .agents/skills/$skill/SKILL.md"
 [ -f "$root/tools/taiga/allowlist.txt" ] ||
-  fail "no tools/taiga/allowlist.txt in $root: run run-skill from the repository root (npx taigent init installs the allowlist)"
+  fail "no tools/taiga/allowlist.txt in $root: run run-skill from the repository root (npx taigent setup --project installs the allowlist)"
 omp_guard=tools/taiga/omp-guard.mjs
 if [ "$agent" = omp ] && [ ! -f "$root/$omp_guard" ]; then
-  fail "no $omp_guard in $root: run npx taigent init again to install it"
+  fail "no $omp_guard in $root: run npx taigent setup --project again to install it"
 fi
 
 # Git Bash/MSYS on Windows rewrites arguments that look like POSIX paths ("/taiga-plan-backlog" becomes

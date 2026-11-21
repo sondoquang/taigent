@@ -132,6 +132,17 @@ async function readRecord(dir: string): Promise<LoginRecord | undefined> {
   return { apiUrl: raw.apiUrl, username: raw.username, method: raw.method, ...(typeof raw.application === 'string' && { application: raw.application }) };
 }
 
+/** Whether `taigent login` stored a login: its login.json exists (opening it may still fail). */
+export async function hasStoredLogin(env: NodeJS.ProcessEnv): Promise<boolean> {
+  try {
+    await stat(join(configDir(env), 'login.json'));
+    return true;
+  } catch (error) {
+    if (isFileNotFound(error)) return false;
+    throw new LoginError(`cannot read ${join(configDir(env), 'login.json')} (${errorMessage(error)}): ${LOGIN_HINT}`);
+  }
+}
+
 function parseSecret(text: string | undefined, record: LoginRecord, store: SecretStore): StoredSecret {
   let raw: unknown;
   try {

@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Before stating what a skill does, or recommending a step be skipped, read that skill's `SKILL.md`: the summaries here are for orientation only. The same goes for the docs named below: they are the source of truth, this map only points at them.
 
-The docs live in the **taigent root**: the project root when its `package.json` has `taigent` as `name`, else `node_modules/taigent/`. Invoke a skill as `/<name>` in Claude Code, `$<name>` in Codex.
+The docs live in the **taigent root**: the project root when its `package.json` has `taigent` as `name`, else `node_modules/taigent/` when the project installs taigent, else the global install (the `taigent` folder in the directory `npm root -g` prints). Invoke a skill as `/<name>` in Claude Code, `$<name>` in Codex.
 
 Out of scope: general engineering work (specs, tickets, TDD, reviews, bugs). Say so, and point to `/ask-matt` when that skill is installed.
 
@@ -16,10 +16,10 @@ Out of scope: general engineering work (specs, tickets, TDD, reviews, bugs). Say
 
 The route most work travels. Every write to Taiga goes **plan → review → apply**: the agent edits a manifest in the repo, a human reviews it, and the `taigent` CLI applies it only after an explicit yes.
 
-1. **`taiga-setup`** once per machine and per project: the `taigent` CLI, the user's Taiga login (`npx taigent login`, typed by the user in their own terminal), the Taiga MCP server. Every other skill sends you back here when one of them is missing.
+1. **`taiga-setup`** once per machine (and per project that pins taigent): the `taigent` CLI, the user's Taiga login (`npx taigent login`, typed by the user in their own terminal), the Taiga MCP server, the skill version (skills older than the CLI) and duplicates (a skill or the `taiga` server installed both for the user and in the project, and which copy each agent runs). Every other skill sends you back here when one of them is missing.
 2. **`taiga-bootstrap-project`** when the Taiga project does not exist yet, or lacks modules, tags, members or custom attributes: `taiga/<slug>/project.yaml` → dry run → confirm → bootstrap. Re-running only fills gaps.
 3. **`taiga-plan-backlog`** turns a spec, a PRD, a one-line request or a bug report into `taiga/<slug>/backlog.yaml` (epics, stories, tasks, and issues: bugs, questions, enhancements outside the epic tree). Files only: it reads Taiga to avoid duplicating hand-made work, and patches the existing manifest in place so every key survives. It also answers the review comments in `taiga/<slug>/review.yaml`. For a PRD, **`prd-to-taiga`** wraps it: reads the PRD (a GitHub issue through `gh issue view`, a file or pasted text), numbers its user stories US1, US2, …, runs `taiga-plan-backlog` with a `# USn` comment above each story and a `spec:` link developers can open, ends with a table Key / Story / Epic / Tasks / PRD (every USn covered or explained), then offers to write `preview.md` for step 4. Files only.
-4. **Review**: the Business Analyst / Product Owner reviews the backlog in Taigent Desktop (`docs/desktop.md`) or with `taigent preview` (offline, one Markdown page of what apply would write), approving items or requesting changes with comments in `taiga/<slug>/review.yaml`; `taiga-plan-backlog` answers the comments by editing the manifest. The BA may also edit the preview itself: `taiga/<slug>/preview.md`, written with an untouched copy in `taiga/<slug>/.preview/base.md`; `taiga-apply-backlog` carries those edits into `backlog.yaml` before planning. The human also reads `git diff taiga/<slug>/` like a code diff. An approved item is not consent to apply.
+4. **`taiga-review-backlog`**: the Business Analyst / Product Owner reviews the backlog, and runs this skill themselves (user-only): it shows `taigent preview` (offline, one Markdown page of what apply would write), then records only the verdicts (approve, request changes) and review comments the reviewer states per item, with `taigent review approve|request-changes|comment`, into `taiga/<slug>/review.yaml`, and ends with `taigent validate`. A verdict is given on the item's current content: an item edited afterwards is stale, awaiting review again. `taiga-plan-backlog` answers the comments by editing the manifest, then `taigent review resolve`. The BA may also edit the preview itself: `taiga/<slug>/preview.md`, written with an untouched copy in `taiga/<slug>/.preview/base.md`; `taiga-apply-backlog` carries those edits into `backlog.yaml` before planning. The human also reads `git diff taiga/<slug>/` like a code diff. An approved item is not consent to apply.
 5. **`taiga-apply-backlog`**: carries the edits of `preview.md` into the manifest when it exists → `taigent plan` → shows it → confirm → `taigent apply --yes`. Never applies while the plan has blocked items (exit 6): it settles them first with `taigent pull`. Commit `taiga/<slug>/state.json` with the manifest.
 
 Beside the main flow:
@@ -28,23 +28,27 @@ Beside the main flow:
 - **`taiga-upload-docs`**: specs, ADRs, guides and meeting notes as wiki pages and attachments, declared in `taiga/<slug>/docs.yaml`, after bootstrap (and after the backlog when attachments target item keys).
 - **`taiga-status-report`**: progress by sprint and by epic, or one quick count or lookup. Read-only through the MCP server, any time.
 - **`taiga-my-tickets`**: your tickets (user stories assigned to you) in a period, this week by default: closed, due and still open, with due status and effort. Read-only through `taigent tickets`, any time.
+- **`taiga-dashboard`**: the dashboard of one project for your role (Developer, Product Owner or Business Analyst), that role's metrics first: workload, cycle time and bugs; releases, requirements coverage, items awaiting review and pending clarification; requirement changes. It asks your role when you name none and never stores it. Read-only through `taigent metrics`, any time.
 - **`taiga-update-ticket`**: move your own tickets to another status (close = `Done`) or comment on one, at once: the request is the confirmation. Through `taigent status` and `taigent comment`, never MCP.
 
 ## On-ramps
 
 Starting situations, and where each merges onto the flow.
 
-- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npm install -D github:sondoquang/taigent`, then `npx taigent init` (the skills, the `taiga` MCP server entries of `.mcp.json` and `.codex/config.toml`, the headless kit, and `taigent` pinned to its release tag; safe to re-run after an upgrade), then `npm install`. `taiga-setup` checks the CLI, the login (`taigent whoami`; the user runs `npx taigent login` in their own terminal, which stores a token in the OS credential store, never the password) and the MCP server (`taigent mcp`), including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
+- **New machine, or a project that should use these skills** → `taiga-setup`. On a machine: `npm i -g taigent`, then `taigent setup` (the skills and the `taiga` MCP server, `taigent mcp`, in the user config of each client it finds in the home directory: Claude Code, Codex, OMP; safe to re-run after an upgrade); every project then has them. For a project's whole team: `npx taigent setup --project` at its root (the skills, the `taiga` MCP server entries of `.mcp.json` and `.codex/config.toml`, the headless kit, and `taigent` pinned to its npm version), then `npm install`. `taiga-setup` checks the CLI, the login (`taigent whoami`; the user runs `npx taigent login` in their own terminal, which stores a token in the OS credential store, never the password), the MCP server (`taigent mcp`), including a project server left pending or rejected, the skill version and duplicates (`taigent setup --dry-run --json`: `outdatedSkills`, `duplicates`), and names each fix (`docs/cli.md` §Installing for the user, §Setup: skill versions and duplicates, §Using the skills in another project).
+- **A skill older than the CLI, or "which copy runs, mine or the project's?"** → `taiga-setup` checks 4 and 5: every installed skill carries the version that installed it; the fix is running `taigent setup` (user copies) or `npx taigent setup --project` (the project's) again. Setup never removes a copy.
 - **Brand-new Taiga project** → `taiga-bootstrap-project`, then `taiga-plan-backlog` and `taiga-upload-docs`.
 - **Project already on Taiga** (made by hand, no manifest yet) → `taiga-setup` → `taiga-bootstrap-project` with `existing: true` in `project.yaml` (only when you are its admin; it completes modules, tags, members without renaming) → `taiga-plan-backlog`, which runs `taigent snapshot` and adopts hand-made items on demand: only the ones the spec touches (duplicate, needs edit, needed parent), each after your yes, with `taigent adopt`. Taiga is the source of truth; the manifest is a draft of what is not applied yet (ADR 0006). To add one story under a hand-made epic, `taiga-create-user-story` works without a manifest: it reads `taigent snapshot`, adopts that epic (which creates `backlog.yaml`) and creates the story in the same plan; it hands over to `taiga-plan-backlog` only when no epic fits.
 - **Plan exits 6 (blocked items: `remote-edit`, `both-edited`, `unknown`)** → `taiga-plan-backlog` step 3 settles each (`taiga-apply-backlog` follows it): `taigent pull` (Taiga wins), a merge then `pull --keep-manifest`, or `--keep-manifest` only when you deliberately keep the manifest after seeing the item. An item adopted and then edited on Taiga before apply is blocked too. An item whose `src:` tag was removed on Taiga is blocked (`remote-edit`, field `tags`): restore the tag on Taiga or write its `ref` in `backlog.yaml`. When pull cannot parse a story back (exit 4, kind `pull`), the agent rewrites it in its own format: the user story format stays so, a legacy story's criteria are re-split with you, never converted. The first plan after an upgrade shows earlier items that differ from Taiga as `unknown`.
 - **A PRD to turn into stories (a GitHub issue from `/to-spec`, a file or pasted text), with each story traced to its PRD user story** → `prd-to-taiga`, then review and `taiga-apply-backlog`. Without that trace, `taiga-plan-backlog` takes the PRD directly.
 - **Add one user story under an existing epic (manifest or hand-made)** → `taiga-create-user-story`.
-- **The BA/PO left review comments (Taigent Desktop or `review.yaml`)** → `taiga-plan-backlog`: it edits the manifest per comment and marks each resolved with a reply; it never changes verdicts.
+- **"Approve AUTH-LOGIN", "request changes on US5: …", a review remark on a backlog item** → `taiga-review-backlog`, invoked by the reviewer: the agent never records a verdict on its own.
+- **The BA/PO left review comments (`review.yaml`)** → `taiga-plan-backlog`: it edits the manifest per comment and marks each resolved with a reply (`taigent review resolve`); it never sets verdicts.
 - **New or changed requirement** → `taiga-plan-backlog` with the request as the spec, then review and `taiga-apply-backlog`.
 - **A bug, a question or a small enhancement to file on Taiga** → `taiga-plan-backlog`: it writes an issue in the `issues` list of `backlog.yaml`, with the project's own type, severity and priority names (conventions §6.4), then review and `taiga-apply-backlog`. Never MCP `createIssue`, nor the banned `batchCreateIssues`.
 - **"How far along are we?" or "how many …?"** → `taiga-status-report`.
 - **"What are my tickets this week?" or "what did I close last week?"** → `taiga-my-tickets`.
+- **"Dashboard of project X", "how are our releases?", "what is awaiting review?", "what is my workload?"** → `taiga-dashboard`.
 - **"Close #84", "move the login ticket to Ready for test", "comment on #84"** → `taiga-update-ticket`.
 - **Daily ticket messages and chat on Telegram** → README §6 (Bun, bot, plugin, pairing, permissions, schedule), set up once per user and machine; how it works in `docs/cli.md` §Telegram.
 - **Remove, rename or move items on Taiga** → the CLI never deletes. An item dropped from the manifest becomes an **orphan** that `plan` reports; a moved story keeps its old epic link, reported as `staleLinks`. A human cleans both up on Taiga. Keys never change after apply: a new key is a new item.
@@ -58,7 +62,7 @@ The rules every skill above follows; `docs/taiga/conventions.md` holds them in f
 - **Writes go only through the `taigent` CLI.** Taiga MCP is for reading, reports and comments (§1). Some MCP tools are broken and **banned**; the others that write skip the `src:<key>` tag that prevents duplicates (§10).
 - **`--yes` only after an explicit confirmation** of the exact plan or dry run shown, re-planned just before applying. The writing skills (`taiga-apply-backlog`, `taiga-create-user-story`, `taiga-bootstrap-project`, `taiga-upload-docs`) run only when you invoke them. `taigent status`/`comment` take no `--yes`: they edit one of your own tickets that the request names.
 - **Manifests follow the conventions**: project name and slug (§2), template and modules (§3), prefixed tags (§4), item keys (§5), story, task and issue templates (§6), wiki slugs (§8), attachment names (§9). `taigent validate` checks §2–§5 and §8–§9 offline; §6 is on the author, except that `plan`/`apply` check a new story's format and an issue's type, severity and priority names against Taiga. Reports use the exact status names of §7.
-- **Run `npx taigent` from the project root** whose `package.json` is taigent's own or lists `taigent` as a dependency; elsewhere npx would fetch an unrelated package.
+- **`npx taigent` runs the taigent the project pins, else the global one** (`npm i -g taigent`), so the skills work in any directory; the ones that read or write manifests run from the project root, which holds `taiga/`.
 
 ## CLI map
 
@@ -66,8 +70,10 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 
 | Command | Step | Driven by |
 |---|---|---|
-| `taigent validate --project <slug>` | End of every manifest or `review.yaml` edit; offline | plan-backlog, create-user-story, bootstrap-project, upload-docs, apply-backlog (after carrying `preview.md` edits) |
-| `taigent preview --project <slug> [--out <file>]` | Review: the backlog as apply would write it, with verdicts and comments; offline | plan-backlog, prd-to-taiga (`preview.md` + `.preview/base.md`), apply-backlog, the reviewer |
+| `taigent validate --project <slug>` | End of every manifest or `review.yaml` edit; offline | plan-backlog, review-backlog, create-user-story, bootstrap-project, upload-docs, apply-backlog (after carrying `preview.md` edits) |
+| `taigent preview --project <slug> [--out <file>]` | Review: the backlog as apply would write it, with verdicts and comments; offline | review-backlog, plan-backlog, prd-to-taiga (`preview.md` + `.preview/base.md`), apply-backlog |
+| `taigent review approve\|request-changes\|comment --project <slug> <key> [-- <text>]` | Review: record the reviewer's verdict or comment on one item in `review.yaml`; offline | review-backlog |
+| `taigent review resolve --project <slug> <key> <comment-id> -- <reply>` | Answer a review comment: resolved, with a reply; offline | plan-backlog |
 | `taigent plan --project <slug>` | Review: what apply would change, and blocked items (exit 6); read-only | plan-backlog (`--json`), create-user-story, apply-backlog |
 | `taigent apply --project <slug> --yes` | Apply `backlog.yaml`; refuses with exit 6 while items are blocked | apply-backlog, create-user-story |
 | `taigent snapshot --project <slug>` | Read every epic and open story, task and issue, hand-made too, into `snapshot.json`; read-only on Taiga | plan-backlog, create-user-story |
@@ -76,17 +82,19 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 | `taigent bootstrap --project <slug> --dry-run\|--yes` | Create or complete the project from `project.yaml` | bootstrap-project |
 | `taigent upload --project <slug> --dry-run\|--yes` | Wiki pages and attachments from `docs.yaml` | upload-docs |
 | `taigent tickets --from <day> --to <day> [--project <slug>]` | Your tickets closed or due in those days and every open one, with due status and effort; read-only | my-tickets, update-ticket |
+| `taigent metrics --project <slug>` | The project's dashboard metrics for every role; read-only | dashboard |
 | `taigent status --project <slug> <ref> <status>` | Move your ticket to that status, at once | update-ticket |
 | `taigent comment --project <slug> <ref> <text>` | Comment on your ticket, at once | update-ticket |
 | `taigent notify week\|day\|eod [--dry-run]` | Your tickets of the week, of the day, or due by today and still open, to your Telegram chat | a scheduled task (Task Scheduler, cron) |
-| `taigent init [--dry-run]` | Install or update Taigent in a project: skills, MCP entries, headless kit, pinned devDependency; offline | taiga-setup, you |
+| `taigent setup [--dry-run]` | Install or update the skills (each stamped with this taigent's version) and the `taiga` MCP server in the user config of each client found (Claude Code, Codex, OMP), then check the login and the MCP server (logs in only in the user's own terminal); reports skills older than the CLI (`outdatedSkills`) and copies installed both for the user and in the project (`duplicates`), for both scopes | taiga-setup, you |
+| `taigent setup --project [--dry-run]` | Install or update Taigent in a project: skills, MCP entries, headless kit, pinned devDependency; then the same checks and reports | taiga-setup, you |
 | `taigent skills sync\|check` | Skill maintenance, below | you |
 
 ## Maintaining the skills
 
 In the taigent repository; `AGENTS.md` and `docs/cli.md` §Skills hold the full rules.
 
-- The **Taigent skills** are every `taiga-*` skill, `prd-to-taiga` and this one. Edit them in `.agents/skills/`, then run `npx taigent skills sync` to refresh the `.claude/skills/` copies; `npm test` fails while they differ. The other skills are vendored from `mattpocock/skills` (`skills-lock.json`), and taigent leaves them alone.
-- A skill that pre-approves `taigent apply`, `bootstrap` or `upload` is user-only on both agents.
+- The **Taigent skills** are every `taiga-*` skill, `prd-to-taiga` and this one. Edit them in `.agents/skills/`, then run `npx taigent skills sync` to refresh the `.claude/skills/` copies; `npm test` fails while they differ. Never write a `metadata.taigent-version` into them: `taigent setup` stamps its own version into each copy it installs. The other skills are vendored from `mattpocock/skills` (`skills-lock.json`), and taigent leaves them alone.
+- A skill that pre-approves `taigent apply`, `bootstrap` or `upload` is user-only on both agents. So is `taiga-review-backlog`, the only skill that pre-approves `taigent review approve` and `request-changes` (verdicts are the reviewer's); `taiga-plan-backlog` pre-approves only `review resolve`, and the headless allowlist no `review` command.
 - Adding, removing or changing a Taigent skill: update this map in the same change.
 - Bumping the `taiga-mcp-server` pin: its exact version in `package.json`, then the version named in `taiga-setup`, the `taiga-*` skills' tool notes, `docs/cli.md` and `docs/taiga/conventions.md` §10, together.
