@@ -26,12 +26,17 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
      chỉ vào manifest qua `taigent adopt`, sau khi người dùng xác nhận **từng item** (§5).
    - Kết thúc bằng `taigent validate --project <slug>`. Phải ra exit 0.
 2. **Review.** Business Analyst / Product Owner duyệt backlog trước khi apply:
-   - `taigent preview --project <slug>` (offline, in một trang Markdown đúng những gì `apply` sẽ ghi, kèm trạng thái
-     review). Mỗi item được đánh dấu **approved** (đồng ý) hoặc **changes** (cần sửa) và có thể kèm comment. Tất cả
-     nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest (định dạng: `docs/cli.md` mục Review).
-   - Agent đọc `review.yaml`, xử lý từng comment chưa resolved bằng cách sửa manifest, rồi đặt `resolved: true` và
-     `reply` (trả lời ngắn bằng tiếng Việt) cho comment đó. Agent **không bao giờ** đổi verdict; verdict chỉ do người
-     review đặt. Item sửa sau khi đã approved thì verdict thành **stale** (digest khác) và cần duyệt lại.
+   - Người review tự gọi skill `taiga-review-backlog` (chỉ chạy khi người dùng gọi): skill chạy
+     `taigent preview --project <slug>` (offline, in một trang Markdown đúng những gì `apply` sẽ ghi, kèm trạng thái
+     review), rồi chỉ ghi verdict **approved** (đồng ý) hoặc **changes** (cần sửa) và comment cho những item mà người
+     review nói rõ, bằng `taigent review approve|request-changes|comment --project <slug> <key> [-- <text>]`, và kết
+     thúc bằng `taigent validate`. Tất cả nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest (định dạng và lệnh:
+     `docs/cli.md` mục Review). `review.yaml` không ghi tên người review hay role.
+   - Agent (`taiga-plan-backlog`) xử lý từng comment chưa resolved bằng cách sửa manifest, rồi chạy
+     `taigent review resolve --project <slug> <key> <comment-id> -- <reply>` (trả lời ngắn bằng tiếng Việt); không
+     sửa `review.yaml` bằng tay. Agent **không bao giờ** đặt hay đổi verdict; verdict chỉ do người review quyết định
+     (GLOSSARY: Verdict). Item sửa sau khi đã có verdict thì verdict thành **stale** (digest khác) và item quay về
+     Awaiting review.
    - BA cũng có thể sửa thẳng bản preview: `taigent preview --project <slug> --out taiga/<slug>/preview.md`, kèm một
      bản giữ nguyên ở `taiga/<slug>/.preview/base.md` (ghi cùng lúc). Skill `taiga-apply-backlog` so hai bản bằng
      `git diff --no-index`, ghi từng chỗ BA sửa vào `backlog.yaml` (manifest vẫn là nguồn sự thật), chạy `validate`
@@ -449,7 +454,9 @@ Slug chuẩn:
 
 Lệnh `taigent` skill được dùng (allowlist của skill và wrapper headless): `validate`, `preview`, `plan`, `snapshot`
 (chỉ đọc Taiga, chỉ ghi `snapshot.json`), `adopt` và `pull` (chỉ đọc Taiga, chỉ ghi file local), `tickets`, `status`,
-`comment`, và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi người dùng đồng ý (§1).
+`comment`, và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi người dùng đồng ý (§1). `review`
+(offline, chỉ ghi `review.yaml`) không có trong allowlist headless: `review approve|request-changes|comment` chỉ
+trong skill `taiga-review-backlog` mà người review tự gọi, `review resolve` chỉ trong `taiga-plan-backlog`.
 
 Các tool sau của `taiga-mcp-server@1.9.20` đang hỏng hoặc nguy hiểm. Agent **không được gọi** chúng; skill và wrapper
 headless không đưa chúng vào allowlist.

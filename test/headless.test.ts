@@ -72,6 +72,8 @@ test('the headless allowlist pre-approves Taiga MCP read tools and taigent comma
     ...TAIGENT_COMMANDS.map((command) => `Bash(npx taigent ${command} *)`),
     ...TAIGENT_COMMANDS.map((command) => `PowerShell(npx taigent ${command} *)`),
   ]);
+  // A verdict is the reviewer's decision: an unattended run never sets one.
+  for (const rule of shell) assert.doesNotMatch(rule, /npx taigent review (approve|request-changes)\b/, rule);
 });
 
 test('the Codex execpolicy rule allows exactly the taigent commands of the allowlist', async () => {

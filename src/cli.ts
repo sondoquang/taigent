@@ -55,7 +55,7 @@ import {
   readSprints,
   SprintError,
 } from './sprint.ts';
-import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE, reviewKeys } from './review.ts';
+import { buildPreview, loadReview, recordReview, renderPreviewMarkdown, REVIEW_FILE, ReviewError, reviewKeys, type ReviewAction } from './review.ts';
 import { formatSnapshotText, readSnapshot, summarizeSnapshot, writeSnapshot } from './snapshot.ts';
 import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
@@ -71,6 +71,10 @@ Commands:
             the taiga MCP server entries, the headless kit and the pinned taigent devDependency; offline
   validate  Check manifests (and review.yaml) against the conventions, offline (all projects without --project)
   preview   Show the backlog as apply would write it, with its review (review.yaml), as one Markdown page; offline
+  review approve|request-changes|comment|resolve <key> ...   Record the review of backlog item <key> in review.yaml,
+            offline: \`approve <key>\` and \`request-changes <key> [-- <comment>]\` set the verdict on the item's
+            current digest; \`comment <key> -- <text>\` adds a review comment, verdict unchanged;
+            \`resolve <key> <comment-id> -- <reply>\` marks that comment resolved with your reply
   bootstrap Create or complete the Taiga project declared in project.yaml (requires --yes)
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
@@ -148,7 +152,7 @@ Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. chang
             metrics of an unknown project), 3 plan/--dry-run/skills check has changes, 4 manifest invalid (pull:
             Taiga's values do not fit the manifest), 5 Taiga/network error, 6 plan/apply has blocked items`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['init', 'validate', 'preview', 'review', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
@@ -156,6 +160,8 @@ const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
 const SPRINT_ACTIONS = ['list', 'create', 'add'] as const;
 type SprintAction = (typeof SPRINT_ACTIONS)[number];
+const REVIEW_ACTIONS = ['approve', 'request-changes', 'comment', 'resolve'] as const;
+type ReviewActionName = (typeof REVIEW_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
@@ -211,6 +217,8 @@ interface Options {
   out?: string;
   /** `metrics`: directory of the history cache. */
   cacheDir?: string;
+  /** `review`: what to record. */
+  review?: ReviewAction;
   json: boolean;
   yes: boolean;
   dryRun: boolean;
@@ -306,6 +314,33 @@ function parseOptions(argv: string[]): Options | 'help' {
     text = words.join(' ').trim();
     if (text === '') throw new UsageError(`${command} needs ${what} after the ref`);
   }
+  let review: ReviewAction | undefined;
+  if (command === 'review') {
+    const action = extra.shift() as ReviewActionName;
+    if (!REVIEW_ACTIONS.includes(action)) throw new UsageError(`review needs one of: ${REVIEW_ACTIONS.join(', ')}`);
+    // The words after the key (and the comment id), as for `comment`; text with dashes goes after `--`.
+    const [keyArg, ...rest] = extra.splice(0);
+    if (keyArg === undefined || !KEY_PATTERN.test(keyArg)) {
+      throw new UsageError(`review ${action} needs a backlog item key matching ${KEY_PATTERN} (e.g. AUTH-LOGIN)${keyArg === undefined ? '' : `, got "${keyArg}"`}`);
+    }
+    if (action === 'approve') {
+      if (rest.length > 0) throw new UsageError(`unexpected argument "${rest[0]}": review approve takes no text; use review comment`);
+      review = { action, key: keyArg };
+    } else if (action === 'resolve') {
+      const [id, ...words] = rest;
+      const reply = words.join(' ').trim();
+      if (id === undefined || reply === '') throw new UsageError('review resolve needs the comment id (e.g. c1), then -- <reply>');
+      review = { action, key: keyArg, id, reply };
+    } else {
+      const words = rest.join(' ').trim();
+      if (action === 'comment') {
+        if (words === '') throw new UsageError('review comment needs -- <text> after the key');
+        review = { action, key: keyArg, text: words };
+      } else {
+        review = { action, key: keyArg, ...(words !== '' && { text: words }) };
+      }
+    }
+  }
   let key: string | undefined;
   let parent: AdoptParent | undefined;
   if (command === 'adopt') {
@@ -374,6 +409,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     application: values.application,
     out: values.out,
     cacheDir: values['cache-dir'],
+    review,
     json: values.json,
     yes: values.yes,
     dryRun: values['dry-run'],
@@ -615,6 +651,21 @@ async function runPreview(run: Run): Promise<number> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, output);
   emit(run, { out: relative(cwd, path) }, () => `Preview written to ${relative(cwd, path)}\n`);
+  return ExitCode.Ok;
+}
+
+/** `review`: record a verdict, a review comment or a resolved comment in review.yaml. Offline: no env needed. */
+async function runReview(run: Run): Promise<number> {
+  const { options, env, cwd } = run;
+  const slug = options.project!;
+  const result = await recordReview(projectLayout(slug, env, cwd).dir, slug, options.review!);
+  emit(run, result, () => {
+    const { verdict, comments } = result.review;
+    const lines = [`${result.key}: ${verdict === undefined ? 'no verdict' : verdict === 'approved' ? 'approved' : 'changes requested'}`];
+    if (result.comment) lines.push(`  comment ${result.comment.id}: ${result.comment.resolved ? `resolved, reply: ${result.comment.reply}` : result.comment.text}`);
+    lines.push(`  ${comments.filter((comment) => !comment.resolved).length} open comment(s). Written to ${REVIEW_FILE}; run taigent validate --project ${slug}.`);
+    return `${lines.join('\n')}\n`;
+  });
   return ExitCode.Ok;
 }
 
@@ -1058,6 +1109,8 @@ function dispatch(run: Run): Promise<number> {
       return runValidate(run);
     case 'preview':
       return runPreview(run);
+    case 'review':
+      return runReview(run);
     case 'bootstrap':
       return runBootstrap(run);
     case 'upload':
@@ -1152,6 +1205,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
       error instanceof HistoryCacheError ||
       error instanceof AdoptError ||
       error instanceof PullKeyError ||
+      error instanceof ReviewError ||
       error instanceof ManifestChangedError
     ) {
       return fail(secrets, ExitCode.Usage, 'usage', error, json);

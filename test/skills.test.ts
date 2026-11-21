@@ -161,7 +161,7 @@ test('skills commands outside a repository root are a usage error (exit 2)', asy
   assert.match(noAction.stderr, /skills needs one of: sync, check/);
 });
 
-const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-review-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 
 test('the repository holds exactly the Taigent skills, with Claude copies that match .agents/skills', async () => {
   const result = await skills(['check', '--json'], REPO_ROOT);
@@ -202,9 +202,12 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
 
 /**
  * `taigent` commands a skill may pre-approve. The plan-gated writing ones make a skill explicit-only; `status` and
- * `comment` edit one of the user's own tickets, named in the request itself, so their skill may run implicitly.
+ * `comment` edit one of the user's own tickets, named in the request itself, so their skill may run implicitly. The
+ * `review` subcommands are listed one by one: setting a verdict is the reviewer's own decision.
  */
-const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'snapshot', 'adopt', 'pull'];
+const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'snapshot', 'adopt', 'pull', 'review approve', 'review request-changes', 'review comment', 'review resolve'];
+/** The review subcommands that set a verdict. */
+const VERDICT_COMMANDS = ['review approve', 'review request-changes'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
 /** Pre-approvals beside taigent commands and MCP read tools: reading a GitHub issue, and using another Taigent skill. */
@@ -244,7 +247,8 @@ test('each taiga-* skill and prd-to-taiga pre-approve only the commands of their
       'Skill(taiga-plan-backlog)',
       ...['Bash', 'PowerShell'].flatMap((shell) => [`${shell}(gh issue view *)`, ...['validate', 'plan', 'preview', 'snapshot', 'adopt', 'pull'].map((command) => `${shell}(npx taigent ${command} *)`)]),
     ],
-    'taiga-plan-backlog': shellRules('validate', 'plan', 'preview', 'snapshot', 'adopt', 'pull'),
+    'taiga-plan-backlog': shellRules('validate', 'plan', 'preview', 'snapshot', 'adopt', 'pull', 'review resolve'),
+    'taiga-review-backlog': shellRules('preview', 'validate', 'review approve', 'review request-changes', 'review comment'),
     'taiga-apply-backlog': shellRules('validate', 'preview', 'plan', 'apply', 'pull'),
     'taiga-create-user-story': shellRules('validate', 'snapshot', 'adopt', 'plan', 'apply'),
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
@@ -259,6 +263,21 @@ test('each taiga-* skill and prd-to-taiga pre-approve only the commands of their
     const { allowedTools } = await readSkill(name);
     assert.deepEqual(allowedTools.filter((tool) => tool.includes('(')), rules, name);
   }
+});
+
+test('only taiga-review-backlog sets verdicts; it runs only when the user invokes it, on Claude Code and on Codex, and ask-taigent routes to it', async () => {
+  const setters: string[] = [];
+  for (const name of TAIGENT_SKILLS) {
+    const { allowedTools } = await readSkill(name);
+    if (allowedTools.some((tool) => VERDICT_COMMANDS.includes(SHELL_RULE.exec(tool)?.[2] ?? ''))) setters.push(name);
+  }
+  assert.deepEqual(setters, ['taiga-review-backlog']);
+
+  const { frontmatter, openai } = await readSkill('taiga-review-backlog');
+  assert.equal(frontmatter['disable-model-invocation'], true);
+  assert.equal(openai.policy?.allow_implicit_invocation, false);
+  const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
+  assert.match(router, /`taiga-review-backlog`/);
 });
 
 test('taiga-status-report reads Taiga through MCP read tools only, and may be invoked implicitly', async () => {
