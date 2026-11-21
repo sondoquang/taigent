@@ -34,18 +34,22 @@ async function startFakeTelegram(t: TestContext) {
   };
 }
 
-/** YYYY-MM-DD `offset` days from today in TZ. */
+/** YYYY-MM-DD `offset` days from today in TZ (for runs without TAIGENT_NOW). */
 function dayIn(offset: number): string {
   const [year, month, day] = new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date()).split('-').map(Number) as [number, number, number];
   const date = new Date(Date.UTC(year, month - 1, day + offset));
   return date.toISOString().slice(0, 10);
 }
 
-/** `dd/mm` of a YYYY-MM-DD day, as the messages print it. */
-const shortDay = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+// Thursday 2026-11-19, 10:00 local time: the week is 16/11 – 22/11 and the plan starts today.
+const NOW = '2026-11-19T10:00:00+07:00';
 
-type StoryFields = Partial<Pick<FakeUserStory, 'is_closed' | 'finish_date' | 'due_date' | 'status_name'>> & { assigned?: number[] };
+type StoryFields = Partial<Pick<FakeUserStory, 'is_closed' | 'finish_date' | 'due_date' | 'status_name' | 'total_points'>> & { assigned?: number[] };
 
+/**
+ * The plan puts on 19/11 overdue (2h), dueToday (3h) and startToday (3h of 10h, latest start day 19/11), on 20/11
+ * the rest of startToday (7h) and noDueDate is out of it. overdue is At risk: planned to finish 19/11, due 18/11.
+ */
 function seed(fake: FakeTaiga) {
   const me = fake.user.id;
   const other = fake.addUser({ username: 'other' }).id;
@@ -53,12 +57,14 @@ function seed(fake: FakeTaiga) {
   const story = (subject: string, { assigned = [me], ...fields }: StoryFields) =>
     Object.assign(fake.addUserStory({ project: alpha.id, subject }), { assigned_users: assigned, is_closed: fields.finish_date != null, ...fields });
   return {
-    dueToday: story('due today', { due_date: dayIn(0), status_name: 'In progress' }),
-    overdue: story('overdue', { due_date: dayIn(-3), status_name: 'Ready' }),
-    dueLater: story('due later', { due_date: dayIn(30), status_name: 'Ready' }),
-    noDueDate: story('no due date', { status_name: 'In progress' }),
-    closedToday: story('closed today', { due_date: dayIn(0), finish_date: new Date().toISOString() }),
-    someoneElses: story('not mine', { assigned: [other], due_date: dayIn(0) }),
+    overdue: story('overdue', { due_date: '2026-11-18', status_name: 'Ready', total_points: 2 }),
+    dueToday: story('due today', { due_date: '2026-11-19', status_name: 'In progress', total_points: 3 }),
+    startToday: story('start today', { due_date: '2026-11-20', status_name: 'Ready', total_points: 10 }),
+    noPoints: story('no points', { due_date: '2026-12-31', status_name: 'Ready' }),
+    noDueDate: story('no due date', { status_name: 'In progress', total_points: 4 }),
+    waitingForQa: story('waiting for QA', { due_date: '2026-11-19', status_name: 'Ready for test', total_points: 1 }),
+    closedToday: story('closed today', { due_date: '2026-11-19', finish_date: '2026-11-19T01:00:00Z', total_points: 1 }),
+    someoneElses: story('not mine', { assigned: [other], due_date: '2026-11-19', status_name: 'In progress', total_points: 1 }),
   };
 }
 
@@ -71,13 +77,13 @@ async function pluginState(h: Harness, allowFrom: string[]): Promise<string> {
   return dir;
 }
 
-test('notify eod sends your open tickets due by today to the paired chat, with the bot of the Telegram plugin', async (t) => {
+test('notify eod sends your unfinished planned tickets due by today with their re-plan to the paired chat', async (t) => {
   const h = await startHarness(t);
   const telegram = await startFakeTelegram(t);
   const tickets = seed(h.fake);
   const stateDir = await pluginState(h, ['412587349']);
 
-  const result = await h.taigent(['notify', 'eod'], { env: { TZ, TELEGRAM_STATE_DIR: stateDir, TAIGENT_TELEGRAM_API_URL: telegram.url } });
+  const result = await h.taigent(['notify', 'eod'], { env: { TZ, TAIGENT_NOW: NOW, TELEGRAM_STATE_DIR: stateDir, TAIGENT_TELEGRAM_API_URL: telegram.url } });
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.stdout, 'Sent the eod message to Telegram chat 412587349\n');
@@ -85,62 +91,70 @@ test('notify eod sends your open tickets due by today to the paired chat, with t
   const [request] = telegram.requests;
   assert.equal(request!.path, `/bot${TOKEN}/sendMessage`);
   assert.equal(request!.body.chat_id, '412587349');
-  const text = request!.body.text;
-  assert.match(text, /bạn còn 2 ticket đến hạn chưa đóng/);
-  assert.ok(text.includes(`#${tickets.overdue.ref} overdue — Ready · hạn ${shortDay(dayIn(-3))} (alpha)`), text);
-  assert.ok(text.includes(`#${tickets.dueToday.ref} due today — In progress · hạn ${shortDay(dayIn(0))} (alpha)`), text);
-  for (const left of [tickets.dueLater, tickets.noDueDate, tickets.closedToday, tickets.someoneElses]) assert.ok(!text.includes(left.subject), left.subject);
+  const [head, replan, hint] = request!.body.text.split('\n\n');
+  assert.equal(head, [
+    '⏰ Cuối ngày 19/11/2026: bạn còn 2 ticket đến hạn hôm nay hoặc trước đó mà chưa xong.',
+    `• #${tickets.overdue.ref} overdue — Ready · Overdue · hạn 18/11 (alpha)`,
+    `• #${tickets.dueToday.ref} due today — In progress · Due today · hạn 19/11 (alpha)`,
+  ].join('\n'));
+  assert.match(replan!, new RegExp(`^Đề xuất dời hạn \\(re-plan\\):\\n• #${tickets.overdue.ref} overdue: 18/11 → 19/11 — .+$`));
+  assert.equal(hint, 'Xong rồi thì nhắn "đóng hết" hoặc "đóng #<số>" để chuyển sang Ready for test (chờ QA/QC); đồng ý dời hạn thì nhắn "duyệt re-plan".');
   assert.ok(!`${result.stdout}${result.stderr}`.includes(TOKEN));
 });
 
-test('notify eod sends nothing when no open ticket is due by today', async (t) => {
+test('notify eod sends nothing when no unfinished planned ticket is due by today', async (t) => {
   const h = await startHarness(t);
   const telegram = await startFakeTelegram(t);
-  h.fake.addProject({ slug: 'alpha' });
+  const tickets = seed(h.fake);
+  tickets.overdue.status_name = 'Ready for test';
+  tickets.dueToday.status_name = 'Ready for test';
   const stateDir = await pluginState(h, ['412587349']);
 
-  const result = await h.taigent(['notify', 'eod'], { env: { TZ, TELEGRAM_STATE_DIR: stateDir, TAIGENT_TELEGRAM_API_URL: telegram.url } });
+  const result = await h.taigent(['notify', 'eod'], { env: { TZ, TAIGENT_NOW: NOW, TELEGRAM_STATE_DIR: stateDir, TAIGENT_TELEGRAM_API_URL: telegram.url } });
 
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(result.stdout, `Nothing to send: no open ticket is due by ${dayIn(0)}\n`);
+  assert.equal(result.stdout, 'Nothing to send: no unfinished planned ticket is due by 2026-11-19\n');
   assert.deepEqual(telegram.requests, []);
 });
 
-test('notify week --dry-run prints the week by due status without any Telegram setup', async (t) => {
+test('notify week --dry-run prints the whole plan and every warning without any Telegram setup', async (t) => {
   const h = await startHarness(t);
   const tickets = seed(h.fake);
 
-  const result = await h.taigent(['notify', 'week', '--dry-run', '--json'], { env: { TZ, TELEGRAM_STATE_DIR: join(h.cwd, 'nothing-here') } });
+  const result = await h.taigent(['notify', 'week', '--dry-run', '--json'], { env: { TZ, TAIGENT_NOW: NOW, TELEGRAM_STATE_DIR: join(h.cwd, 'nothing-here') } });
 
   assert.equal(result.code, 0, result.stderr);
   const out = result.json<{ kind: string; range: { from: string; to: string }; text: string; sent: boolean; chatId: null }>();
   assert.equal(out.sent, false);
   assert.equal(out.chatId, null);
-  // Monday to Sunday around today.
-  assert.equal(new Date(`${out.range.from}T00:00:00Z`).getUTCDay(), 1);
-  assert.equal(new Date(`${out.range.to}T00:00:00Z`).getUTCDay(), 0);
-  assert.ok(out.range.from <= dayIn(0) && dayIn(0) <= out.range.to);
-  const sections = out.text.split('\n\n');
-  const sectionOf = (title: string) => sections.find((section) => section.startsWith(`${title} (`)) ?? '';
-  assert.match(sectionOf('Quá hạn'), new RegExp(`#${tickets.overdue.ref} overdue`));
-  assert.match(sectionOf('Đến hạn trong tuần'), new RegExp(`#${tickets.dueToday.ref} due today`));
-  assert.match(sectionOf('Hạn sau tuần này'), new RegExp(`#${tickets.dueLater.ref} due later`));
-  assert.match(sectionOf('Chưa có hạn'), new RegExp(`#${tickets.noDueDate.ref} no due date`));
-  assert.match(sectionOf('Đã đóng trong tuần'), new RegExp(`#${tickets.closedToday.ref} closed today`));
-  assert.ok(!out.text.includes('not mine'));
+  assert.deepEqual(out.range, { from: '2026-11-16', to: '2026-11-22' });
+  const [o, d, s, p, n] = [tickets.overdue, tickets.dueToday, tickets.startToday, tickets.noPoints, tickets.noDueDate].map((story) => story.ref);
+  assert.deepEqual(out.text.split('\n\n'), [
+    '📅 Tuần 16/11 – 22/11/2026 · taigent-bot\nChưa xong 5 ticket (Ready 3, In progress 2), chờ test 1, đã Done 1.',
+    `Kế hoạch (từ 19/11):\n• T5 19/11 — 8h: #${o} (2h), #${d} (3h), #${s} (3h)\n• T6 20/11 — 7h: #${s} (7h)`,
+    `Quá hạn (1):\n• #${o} overdue — Ready · Overdue · hạn 18/11 (alpha)`,
+    `Chưa có hạn (1):\n• #${n} no due date — In progress · No due date · chưa có hạn (alpha)`,
+    `Chưa có point (1):\n• #${p} no points — Ready · On track · hạn 31/12 (alpha)`,
+    `Đã tới ngày phải bắt đầu mà còn Ready (2):\n• #${o} overdue — Ready · Overdue · hạn 18/11 (alpha) · bắt đầu muộn nhất 18/11\n• #${s} start today — Ready · On track · hạn 20/11 (alpha) · bắt đầu muộn nhất 19/11`,
+    `Có nguy cơ trễ hạn (1):\n• #${o} overdue — Ready · Overdue · hạn 18/11 (alpha) · dự kiến xong 19/11, chung ngày với #${d}, #${s}`,
+  ]);
 });
 
-test('notify day lists what is due today and overdue, and counts the other open tickets', async (t) => {
+test('notify day lists the plan of today, what must start today, what is due today and what is overdue', async (t) => {
   const h = await startHarness(t);
   const tickets = seed(h.fake);
 
-  const result = await h.taigent(['notify', 'day', '--dry-run'], { env: { TZ } });
+  const result = await h.taigent(['notify', 'day', '--dry-run'], { env: { TZ, TAIGENT_NOW: NOW } });
 
   assert.equal(result.code, 0, result.stderr);
-  const sections = result.stdout.split('\n\n');
-  assert.match(sections.find((s) => s.startsWith('Đến hạn hôm nay (1):')) ?? '', new RegExp(`#${tickets.dueToday.ref} due today`));
-  assert.match(sections.find((s) => s.startsWith('Quá hạn (1):')) ?? '', new RegExp(`#${tickets.overdue.ref} overdue`));
-  assert.match(result.stdout, /Còn mở khác: 2 ticket\.\n$/);
+  const [o, d, s] = [tickets.overdue, tickets.dueToday, tickets.startToday].map((story) => story.ref);
+  assert.deepEqual(result.stdout.split('\n\n'), [
+    '☀️ Hôm nay T5 19/11/2026 · taigent-bot',
+    `Kế hoạch hôm nay (8h):\n• #${o} overdue — 2h (alpha)\n• #${d} due today — 3h (alpha)\n• #${s} start today — 3h (alpha)`,
+    `Phải bắt đầu hôm nay (2):\n• #${s} start today — Ready · On track · hạn 20/11 (alpha)\n• #${d} due today — In progress · Due today · hạn 19/11 (alpha)`,
+    `Đến hạn hôm nay (1):\n• #${d} due today — In progress · Due today · hạn 19/11 (alpha)`,
+    `Quá hạn (1):\n• #${o} overdue — Ready · Overdue · hạn 18/11 (alpha)\n`,
+  ]);
 });
 
 test('notify splits a message longer than Telegram allows at line breaks', async (t) => {

@@ -66,8 +66,9 @@ Commands:
   due <ref> <YYYY-MM-DD> [comment]  Set the due date of your ticket #<ref> of --project, with an optional comment giving
             the reason, in one write, e.g. \`due 84 2026-11-24 shares its days with #85\` (writes at once; nothing when
             it already has that due date and no comment is given)
-  notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
-            Telegram chat (--dry-run prints the message instead)
+  notify week|day|eod     Send to your Telegram chat the week (the whole plan and every warning), the day (today's
+            plan, tickets to start today, Due today and Overdue) or the end-of-day reminder (unfinished planned tickets
+            due by today with their re-plan; nothing when there are none); --dry-run prints the message instead
   skills sync   Copy the Taigent skills (taiga-*, ask-taigent, prd-to-taiga) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
   login     Log in once, in your own terminal: the password is exchanged for a token kept in the OS credential
@@ -744,7 +745,7 @@ async function runNotify(run: Run): Promise<number> {
   if (target && text !== null) await sendTelegram(target, text);
   const sent = target !== undefined && text !== null;
   emit(run, { kind, range, text, sent, chatId: target?.chatId ?? null }, () => {
-    if (text === null) return `Nothing to send: no open ticket is due by ${report.today}\n`;
+    if (text === null) return `Nothing to send: no unfinished planned ticket is due by ${report.today}\n`;
     return sent ? `Sent the ${kind} message to Telegram chat ${target!.chatId}\n` : `${text}\n`;
   });
   return ExitCode.Ok;

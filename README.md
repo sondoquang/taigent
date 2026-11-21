@@ -75,9 +75,10 @@ Ask for your tickets with `/taiga-my-tickets` (e.g. `/taiga-my-tickets October`)
 
 ### 6. Optional: your tickets on Telegram
 
-In a private chat with your own Telegram bot you get your week's tickets on Monday at 08:30, your day's tickets every
-weekday at 08:35, and at 16:45 an end-of-day reminder of the open tickets due today or earlier. Answer it with
-"đóng hết" or "đóng #84" and they move to `Done` right away. The bot acts with your Taiga login, so it is one bot per
+In a private chat with your own Telegram bot you get your week's plan and warnings on Monday at 08:30, your day's
+plan every weekday at 08:35, and at 16:45 an end-of-day reminder of the unfinished planned tickets due today or
+earlier, with their re-plan. Answer it with "đóng hết" or "đóng #84" and they move to `Ready for test` right away, or
+with "duyệt re-plan" to write the new due dates. The bot acts with your Taiga login, so it is one bot per
 person. Nothing to deploy: it runs on your machine, so messages go out while the machine is on, and the bot answers
 while the session of step d is open. Steps 1–4 done (`taiga` connected in `/mcp`)? Start here, in the project root.
 
