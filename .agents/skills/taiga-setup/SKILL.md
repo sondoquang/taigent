@@ -23,7 +23,7 @@ Passes when Node is v24 or later and the second command prints taigent's usage. 
 Fix, by where the user works:
 
 - **A clone of the taigent repository** (`github.com/sondoquang/taigent`): `npm install` in the clone.
-- **Another project**: at the project root, `npm install -D github:sondoquang/taigent` (creates `package.json` when there is none; npm builds the CLI on install and needs read access to the repository), then `npx --no -- taigent setup --project` (below), then `npm install`.
+- **Another project**: `npm i -g taigent` (the CLI from npm, already built), then at the project root `npx --no -- taigent setup --project` (below), then `npm install`.
 
 ## 2. Taiga login
 

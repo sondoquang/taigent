@@ -12,13 +12,13 @@ from your project's root folder.
 ### 1. Install
 
 ```sh
-npm install -D github:sondoquang/taigent
+npm i -g taigent
 npx taigent setup --project
 npm install
 ```
 
-The first command installs the `taigent` CLI and the Taiga MCP server into `node_modules` (nothing system-wide) and
-creates `package.json` if the project has none. `taigent setup --project` then adds the eleven Taigent skills to `.agents/skills/`
+The first command installs the `taigent` CLI from npm, already built, and creates nothing in your project.
+`taigent setup --project` then adds the eleven Taigent skills to `.agents/skills/`
 (Codex) and `.claude/skills/` (Claude Code), the `taiga` MCP server to `.mcp.json` and `.codex/config.toml`, the
 headless kit (`tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`, `.codex/hooks/`, `.codex/rules/`), the
 `.gitignore` lines of the BA preview working copies (`taiga/*/preview.md`, `taiga/*/.preview/`), and pins `taigent` in
@@ -194,8 +194,8 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
 - No credential store (CI, headless Linux)? Set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` (or
   `TAIGA_TOKEN`) in the environment or a git-ignored `.env` (see `.env.example`). They take precedence over the stored
   login.
-- Update later with `npm install -D github:sondoquang/taigent`, then `npx taigent setup --project` (it updates the skills and
-  the pin) and `npm install`.
+- Update later with `npm i -g taigent@latest`, then `npx taigent setup --project` (it updates the skills and the pin) and
+  `npm install`.
 - Details: [docs/cli.md](docs/cli.md) (commands, credentials, manifests, exit codes) and
   [§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).
 
