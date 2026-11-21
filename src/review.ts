@@ -1,7 +1,8 @@
 // Review of a backlog before apply: `taiga/<slug>/review.yaml` holds each item's verdict (approved / changes) and
 // the comments of the Business Analyst / Product Owner, and `buildPreview` shows the backlog exactly as apply would
-// write it, with that review. Offline: no Taiga access. The file is committed with the manifests; the reviewer writes
-// verdicts and comments, the agent answers comments (`resolved` + `reply`) by editing the manifests.
+// write it, with that review. Offline: no Taiga access. The file is committed with the manifests; `taigent review`
+// (`recordReview`) is the one way it is written: the reviewer's verdicts and comments, and the agent's answers to the
+// comments (`resolved` + `reply`).
 
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -203,10 +204,13 @@ export async function saveReview(path: string, review: Review): Promise<void> {
   await writeAtomic(path, stringify({ items }, { lineWidth: 0 }));
 }
 
-/** Sets (or, with `verdict` undefined, clears) the verdict of item `key`, recording the digest it was given on. Pure. */
-export function setVerdict(review: Review, key: string, verdict: Verdict | undefined, digest: string, by: string, at: string): Review {
+/**
+ * Sets (or, with `verdict` undefined, clears) the verdict of item `key`, recording the digest it was given on and, when
+ * given, who gave it. Pure.
+ */
+export function setVerdict(review: Review, key: string, verdict: Verdict | undefined, digest: string, by: string | undefined, at: string): Review {
   const comments = review.items[key]?.comments ?? [];
-  const item: ItemReview = verdict === undefined ? { comments } : { verdict, digest, by, at, comments };
+  const item: ItemReview = verdict === undefined ? { comments } : { verdict, digest, ...(by !== undefined && { by }), at, comments };
   return { items: { ...review.items, [key]: item } };
 }
 
@@ -218,6 +222,79 @@ export function addComment(review: Review, key: string, text: string, by: string
   while (used.has(`c${n}`)) n++;
   const comment: ReviewComment = { id: `c${n}`, by, at, text, resolved: false };
   return { items: { ...review.items, [key]: { ...current, comments: [...current.comments, comment] } } };
+}
+
+/** Marks comment `id` of item `key` resolved with `reply`; undefined when the item has no such comment. Pure. */
+export function resolveComment(review: Review, key: string, id: string, reply: string): Review | undefined {
+  const current = review.items[key];
+  if (!current?.comments.some((comment) => comment.id === id)) return undefined;
+  const comments = current.comments.map((comment) => (comment.id === id ? { ...comment, resolved: true, reply } : comment));
+  return { items: { ...review.items, [key]: { ...current, comments } } };
+}
+
+// ---- taigent review -----------------------------------------------------------------------------
+
+/** A `taigent review` run refused for its key or comment id; nothing was written. */
+export class ReviewError extends Error {}
+
+/**
+ * `by` of the comments `taigent review` writes. review.yaml records no reviewer or role, but a comment's `by` is
+ * required, so every comment written by the CLI is by this generic author.
+ */
+export const REVIEW_AUTHOR = 'reviewer';
+
+export type ReviewAction =
+  | { action: 'approve'; key: string }
+  | { action: 'request-changes'; key: string; text?: string }
+  | { action: 'comment'; key: string; text: string }
+  | { action: 'resolve'; key: string; id: string; reply: string };
+
+export interface ReviewResult {
+  key: string;
+  /** The item's current digest, the one a verdict is given on. */
+  digest: string;
+  /** The item's review after the write. */
+  review: ItemReview;
+  /** The comment added or resolved. */
+  comment?: ReviewComment;
+}
+
+/**
+ * Records one review action in review.yaml of project `slug` (manifests in `dir`): a verdict on the item's current
+ * digest, a new comment, or a resolved comment with its reply. Offline. A key the backlog does not declare, or a comment
+ * id the item lacks, throws ReviewError before anything is written; invalid manifests throw ManifestError.
+ */
+export async function recordReview(dir: string, slug: string, change: ReviewAction, at: string = new Date().toISOString()): Promise<ReviewResult> {
+  const preview = await buildPreview(dir, slug);
+  const items: PreviewItem[] = [...preview.issues];
+  for (const epic of preview.epics) {
+    items.push(epic);
+    for (const story of epic.stories) items.push(story, ...story.tasks);
+  }
+  const item = items.find((candidate) => candidate.key === change.key);
+  if (!item) throw new ReviewError(`${change.key} is not an item of the ${BACKLOG_FILE} of project ${slug}; nothing was written`);
+
+  const path = join(dir, REVIEW_FILE);
+  let review = await loadReview(path);
+  let commentId: string | undefined;
+  if (change.action === 'resolve') {
+    const resolved = resolveComment(review, change.key, change.id, change.reply);
+    if (!resolved) throw new ReviewError(`${change.key} has no review comment ${change.id}; nothing was written`);
+    review = resolved;
+    commentId = change.id;
+  } else {
+    const verdict = change.action === 'approve' ? 'approved' : 'changes';
+    if (change.action !== 'comment') review = setVerdict(review, change.key, verdict, item.digest, undefined, at);
+    const text = change.action === 'approve' ? undefined : change.text;
+    if (text !== undefined) {
+      review = addComment(review, change.key, text, REVIEW_AUTHOR, at);
+      commentId = review.items[change.key]!.comments.at(-1)!.id;
+    }
+  }
+  await saveReview(path, review);
+  const itemReview = review.items[change.key]!;
+  const comment = itemReview.comments.find((candidate) => candidate.id === commentId);
+  return { key: change.key, digest: item.digest, review: itemReview, ...(comment && { comment }) };
 }
 
 // ---- Preview ------------------------------------------------------------------------------------

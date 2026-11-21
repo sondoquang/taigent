@@ -14,7 +14,7 @@ interface SetupReport {
   files: { path: string; status: Status }[];
 }
 
-const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-dashboard', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-dashboard', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-review-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 const KIT = ['tools/taiga/allowlist.txt', 'tools/taiga/omp-guard.mjs', '.codex/hooks/taigent-shell-guard.mjs', '.codex/rules/taigent.rules'];
 const CONFIGS = ['.mcp.json', '.codex/config.toml', 'package.json', '.gitignore'];
 const IGNORES = ['taiga/*/preview.md', 'taiga/*/.preview/', 'taiga/*/snapshot.json'];

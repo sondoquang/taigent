@@ -366,6 +366,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   `--json` prints `{ "valid": true, "projects": [{ "slug", "files": ["taiga/demo/backlog.yaml", …] }] }`.
 - `taigent preview --project <slug> [--out <file>] [--json]`: the backlog as `apply` would write it, with its
   review; offline. See [Review](#review).
+- `taigent review approve|request-changes|comment|resolve --project <slug> <key> … [--json]`: records a verdict, a
+  review comment or a resolved comment with its reply in `review.yaml`; offline. See [Review](#review).
 - `taigent plan --project <slug> [--json]`: reads Taiga, prints the operations `apply` would run, the blocked items
   (see [Baseline and remote edits](#baseline-and-remote-edits); exit 6 when any) and the orphans. Never writes.
 - `taigent apply --project <slug> --yes [--json]`: runs the plan in order, writing `state.json` after each
@@ -460,9 +462,11 @@ project does not define (rule `issue-value`), see [Reconciliation](#reconciliati
 
 ## Review
 
-Before `apply`, the Business Analyst / Product Owner reviews the backlog the agent wrote with `taigent preview`.
+Before `apply`, the Business Analyst / Product Owner reviews the backlog the agent wrote with `taigent preview`, and
+records verdicts and comments with `taigent review` (skill `taiga-review-backlog`, which the reviewer invokes).
 Verdicts and comments live in `taiga/<slug>/review.yaml`, committed
-with the manifests; the agent answers the comments by editing the manifests (skill `taiga-plan-backlog`). The review
+with the manifests; the agent answers the comments by editing the manifests, then `taigent review resolve` (skill
+`taiga-plan-backlog`). The review
 never writes to Taiga, and `plan`/`apply` ignore `review.yaml`: apply still needs the user's explicit approval
 (`docs/taiga/conventions.md` §1).
 
@@ -514,8 +518,8 @@ items:
         by: Lan
         at: 2026-11-02T09:31:00Z
         text: Thiếu tiêu chí khi khoá tài khoản.
-        resolved: true             # default false; the agent sets it once the manifest addresses the comment
-        reply: Đã thêm tiêu chí khoá 15 phút.   # optional, the agent's short answer
+        resolved: true             # default false; review resolve sets it once the manifest addresses the comment
+        reply: Đã thêm tiêu chí khoá 15 phút.   # optional, the agent's short answer (review resolve)
 ```
 
 An item's **digest** is the SHA-256 of what apply writes for it: subject, description as written (a story's with
@@ -530,6 +534,26 @@ for item keys (epics, stories, tasks and issues: `reviewKeys(backlog)`; a key th
 after the item was removed or renamed: move or delete its
 entry), `review-verdict` (a verdict other than `approved`/`changes`) and `review-comment-unique` (a duplicate
 comment id within an item). `preview` itself tolerates unknown keys and lists them in `summary.unknownReviewKeys`.
+
+`taigent review approve|request-changes|comment|resolve --project <slug> <key> … [--json]` writes `review.yaml`,
+offline (no `TAIGA_*` variable, no login), through `recordReview` of `src/review.ts`, the one code path that writes it:
+
+- `review approve <key>`: verdict `approved`; `review request-changes <key> [-- <comment>]`: verdict `changes`, plus an
+  open comment when text follows. Both record the item's current digest (as `preview` computes it) and `at` (now), so
+  editing the item afterwards makes the verdict stale and the item awaiting review again. A new verdict replaces the
+  previous one; comments stay.
+- `review comment <key> -- <text>`: adds an open comment with the next free id (`c1`, `c2`, …); the verdict stays.
+- `review resolve <key> <comment-id> -- <reply>`: marks that comment `resolved: true` with `reply` (resolving it again
+  replaces the reply); its text, author and time stay.
+
+As with `taigent comment`, the words after the key (and the comment id) are the text; put it after `--` when it
+contains words starting with `-`. `review.yaml` records no reviewer or role: verdicts are written without `by`, and the
+comments `review` writes have `by: reviewer` (the field is required). Exit 0 and, with `--json`,
+`{ "key", "digest", "review": { verdict?, digest?, at?, comments }, "comment"?: { id, by, at, text, resolved, reply? } }`
+(`comment`: the one added or resolved). Exit 2, nothing written: a key not in `backlog.yaml` (e.g. after the item was
+renamed), a comment id the item lacks, a missing or unknown subcommand, a malformed key, text after `approve`, or a
+missing text (`comment`) or reply (`resolve`). Exit 4: a manifest or `review.yaml` is invalid, as for `preview`. Run
+`taigent validate --project <slug>` afterwards.
 
 ## Bootstrap
 
@@ -1460,7 +1484,8 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `ask-taigent` | User only (as below) | Router: which Taigent skill, workflow step or CLI command fits a situation, the plan → review → apply rules, and how to maintain the skills. Reads only |
 | `taiga-setup` | Model or user | Checks `npx --no -- taigent --help`, the login (`taigent whoami`; the fix is the user running `npx taigent login` in their own terminal), and the Taiga MCP server (`listProjects`, then `claude mcp get taiga` for its approval state); names each fix (`taigent setup` for the skills and the user-scope `taiga` entries, `npx taigent setup --project` for a project's, or an entry by hand; running `taigent mcp`, once the user agrees), and installs Taigent on request (`taigent setup`, or `taigent setup --project` into a project) |
 | `prd-to-taiga` | User only (as below) | PRD (`gh issue view` of a GitHub issue, a file or pasted text) → numbers its user stories US1, US2, … → `taiga-plan-backlog` (each story's `spec:` a link developers can open, a `# USn` comment above it) → summary table Key / Story / Epic / Tasks / PRD plus the uncovered user stories → asks whether to write `taiga/<slug>/preview.md` and `.preview/base.md` (`taigent preview --out`) for the BA to edit before `taiga-apply-backlog`. Writes files only |
-| `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent snapshot`, `taigent plan --json`, read-only on Taiga) → adopts the hand-made items the spec touches, each after a yes (`taigent adopt`), and settles blocked items (`taigent pull`) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys) → answers the open comments of `review.yaml` (`resolved` + `reply`, never verdicts; `taigent preview` offline), ends with `taigent validate`. Writes files only |
+| `taiga-plan-backlog` | Model or user (`/taiga-plan-backlog`, Codex `$taiga-plan-backlog`, `policy.allow_implicit_invocation: true`) | Spec/PRD → reads what exists (`taigent snapshot`, `taigent plan --json`, read-only on Taiga) → adopts the hand-made items the spec touches, each after a yes (`taigent adopt`), and settles blocked items (`taigent pull`) → edits `taiga/<slug>/backlog.yaml` in place (keeps keys) → answers the open comments of `review.yaml` (`taigent review resolve`, never verdicts; `taigent preview` offline), ends with `taigent validate`. Writes files only |
+| `taiga-review-backlog` | User only (as below) | The BA/PO's review: `taigent preview` → records only the verdicts and comments the reviewer states for each item (`taigent review approve\|request-changes\|comment`) → `taigent validate`. Never decides a verdict, never resolves a comment. Offline, writes `review.yaml` only |
 | `taiga-apply-backlog` | User only: `disable-model-invocation: true` (Claude), `policy.allow_implicit_invocation: false` in `agents/openai.yaml` (Codex) | When `taiga/<slug>/preview.md` exists (a `taigent preview` the BA edited, beside its untouched copy `.preview/base.md`): `git diff --no-index` of the two → writes the edits into `backlog.yaml` → `taigent validate` → refreshes both copies. Then `taigent plan` → shows it → asks → `taigent apply --yes` after an explicit yes |
 | `taiga-create-user-story` | User only (as above) | One user story in the conventions §6.1 format under an existing epic, from the manifest or hand-made (adopted with `taigent adopt` after a yes): drafts it, checks for duplicates (manifest, `taigent snapshot`), adds it to `backlog.yaml`, `taigent validate` → `taigent plan --json` → asks → `taigent apply --yes`; hands over to `taiga-plan-backlog` when no epic fits and to `taiga-apply-backlog` when the plan holds other changes. Creates no epic or task |
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
@@ -1470,11 +1495,14 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-update-ticket` | Model or user (`policy.allow_implicit_invocation: true`) | Finds the tickets a request names (`taigent tickets --json`; "close them" = the end-of-day reminder's list), then `taigent status` / `taigent comment` per ticket, at once, and reports each outcome |
 | `taiga-dashboard` | Model or user (`policy.allow_implicit_invocation: true`) | Read-only **Dashboard** of one project for the user's **Role** (Developer, Product Owner or Business Analyst; asked when the request names none, never stored): `taigent metrics --json`, the one shell command it runs, with that role's metrics first, in glossary terms and the user's language |
 
-Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment|snapshot|adopt|pull|metrics` (as
+Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment|snapshot|adopt|pull|metrics`
+and `npx taigent review approve|request-changes|comment|resolve` (as
 `Bash(...)` and, for Claude Code's Windows PowerShell tool, `PowerShell(...)` rules), Taiga MCP read tools, `gh issue view`
 and `Skill(...)` of another Taigent skill (`prd-to-taiga` reads the PRD issue and runs `taiga-plan-backlog`); every
-skill that pre-approves a plan-gated writing command (`apply`, `bootstrap`, `upload`) is user-only on both agents
-(`test/skills.test.ts` enforces both rules). They grant, not restrict: the gate before `--yes` is the skill's explicit
+skill that pre-approves a plan-gated writing command (`apply`, `bootstrap`, `upload`) is user-only on both agents, and
+so is `taiga-review-backlog`, the one skill that pre-approves `review approve` and `review request-changes` (a verdict
+is the reviewer's decision; `taiga-plan-backlog` has only `review resolve`, and the headless allowlist no `review`
+command) (`test/skills.test.ts` enforces these rules). They grant, not restrict: the gate before `--yes` is the skill's explicit
 confirmation step. `status` and `comment` edit one of the user's own tickets that the request names, so
 `taiga-update-ticket` runs on its own.
 Codex's skill docs do not document `allowed-tools`; there, approvals come from `.codex/config.toml`, the sandbox, the
@@ -1601,7 +1629,7 @@ skill checks all of it and names each fix.
 | Adopt | `src/adopt.ts` | `adoptItem(dir, slug, client, { ref, key, parent? })` → `AdoptResult` (writes `backlog.yaml` through `saveItem` and the copied Taiga values under `adopted` in `state.json`, never Taiga), `AdoptError` (exit 2), `ManifestChangedError` (exit 2, from `src/backlog-write.ts`): the `adopt` command; one case per item type in `backlogItem`, `parent` (`{ type: 'epic' \| 'story', key }`) required for a story and a task |
 | Pull | `src/pull.ts` | `pullItems(layout, backlog, planned, { key?, keepManifest, baseDigest })` → `PullReport` (writes `backlog.yaml` through `saveItems`, refused when it changed since `baseDigest`, read before Taiga, and the baselines of `state.json`, never Taiga), `PullError` (exit 4, kind `pull`), `PullKeyError` and `ManifestChangedError` (exit 2): the `pull` command |
 | Story template | `src/story-template.ts` | pure `storyDescription(story)`: the description apply writes for a story, shared by the planner and `preview`; pure `parseStoryDescription(text, format)`, its inverse for `pull` (undefined unless the parse renders `text` again exactly) |
-| Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, `reviewKeys(backlog)` (the keys `review.yaml` may name), pure `setVerdict`/`addComment`, `itemDigest`, `buildPreview(dir, slug)` → `Preview` (epic tree + `issues`, with the adopt and remote badges of `snapshot.json`), `renderPreviewMarkdown`: the offline `preview` command |
+| Review | `src/review.ts` | `loadReview(path, keys?)`/`saveReview`, `reviewKeys(backlog)` (the keys `review.yaml` may name), pure `setVerdict`/`addComment`/`resolveComment`, `recordReview(dir, slug, action)` (the `review` command: the one way the CLI writes `review.yaml`), `itemDigest`, `buildPreview(dir, slug)` → `Preview` (epic tree + `issues`, with the adopt and remote badges of `snapshot.json`), `renderPreviewMarkdown`: the offline `preview` command |
 | Backlog write | `src/backlog-write.ts` | how `adopt` and `pull` write `backlog.yaml`: `readBacklogFile(dir)` → `{ file, text, digest }` (SHA-256 of the file); `saveItem(dir, { baseDigest, edit?, item })` adds an epic/story/task/issue, or with `edit: true` edits the item `item.key` of its type (`item` = `{ type, key, parent?, fields }`, no `parent` for an issue, whose `fields` add `type`/`severity`/`priority`; a new parent moves the item with its children; a story's `useCase`/`scenarios` replace `acceptance_criteria` and the reverse); `saveItems(dir, { baseDigest, items: [{ edit?, item }] })` does the same for several items in one write, none when one is invalid (`paths`; `pull` uses it). Every write returns `SaveResult`: `saved` (new `digest`), `conflict` (backlog.yaml no longer has the digest given; `current` is the file now, nothing written) or `invalid` (`issues` with `path` + `rule`: the `checkBacklog` issues under a written item only, `key-unique` (`checkKey`, on a written item's key, issues included), `key-reference` for a missing item or parent). Writes go through yaml's Document API, so comments, order, quoting, flow style and line ends of untouched nodes stay; the writes of one process run one at a time (a digest check and its write never interleave), each atomic. review.yaml is never touched: an edited item's verdict turns stale through its digest. Where each item type sits and its field order is the `KINDS` table |
 | Files | `src/files.ts` | `sha256(text)` (the digest a backlog write is checked against) and `writeAtomic(path, text)` / `temporaryPath(path)` (a unique `.<name>.<uuid>.tmp` beside the file, renamed over it): shared by the backlog writes, `saveReview`, `snapshot` and the metrics history cache |
 | Executor | `src/executor.ts` | `executePlan({ plan, baselines }, client, statePath, customAttributes)`, `describeAppliedOperation` |

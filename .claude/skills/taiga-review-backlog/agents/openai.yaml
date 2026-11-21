@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga Review Backlog"
+  short_description: "Record your verdicts and comments on the planned backlog"
+policy:
+  allow_implicit_invocation: false
