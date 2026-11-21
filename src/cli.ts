@@ -34,7 +34,7 @@ import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE, reviewKey
 import { Secrets } from './secrets.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
-import { commentTicket, parseRef, setTicketStatus, TicketError } from './ticket.ts';
+import { commentTicket, parseRef, setTicketDueDate, setTicketStatus, TicketError } from './ticket.ts';
 import { dayRange, formatTicketsText, readTickets } from './tickets.ts';
 import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
 
@@ -61,6 +61,9 @@ Commands:
             criteria, requirements coverage, items awaiting review or pending clarification
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
+  due <ref> <YYYY-MM-DD> [comment]  Set the due date of your ticket #<ref> of --project, with an optional comment giving
+            the reason, in one write, e.g. \`due 84 2026-11-24 shares its days with #85\` (writes at once; nothing when
+            it already has that due date and no comment is given)
   notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
             Telegram chat (--dry-run prints the message instead)
   skills sync   Copy the Taigent skills (taiga-*, ask-taigent, prd-to-taiga) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
@@ -95,7 +98,7 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
-  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap --yes, status, comment) with
+  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap --yes, status, comment, due) with
                                    exit 2; plan, preview, validate, metrics and --dry-run still work (Taigent Desktop's headless runs)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
                                    .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
@@ -105,7 +108,7 @@ Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. chang
             a write under TAIGENT_READ_ONLY, metrics of an unknown project), 3 plan/--dry-run/skills check has changes,
             4 manifest invalid, 5 Taiga/network error`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'report', 'metrics', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'report', 'metrics', 'status', 'comment', 'due', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
@@ -121,7 +124,7 @@ class ReadOnlyError extends Error {}
 
 /** Commands that write to Taiga with `--yes` (without `--dry-run`), and those that write at once. */
 const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap'];
-const IMMEDIATE_WRITES: readonly Command[] = ['status', 'comment'];
+const IMMEDIATE_WRITES: readonly Command[] = ['status', 'comment', 'due'];
 
 /**
  * TAIGENT_READ_ONLY=1 (Taigent Desktop sets it on its headless skill runs, and the agent's shell inherits it): a
@@ -146,10 +149,12 @@ interface Options {
   to?: string;
   /** `skills` subcommand. */
   skillsAction?: SkillsAction;
-  /** `status`, `comment`: the ticket's ref. */
+  /** `status`, `comment`, `due`: the ticket's ref. */
   ref?: number;
-  /** `status`: the status name (its words joined by spaces); `comment`: the comment text. */
+  /** `status`: the status name (its words joined by spaces); `comment`, `due`: the comment text. */
   text?: string;
+  /** `due`: the new due date, YYYY-MM-DD. */
+  day?: string;
   /** `notify`: which message. */
   notifyKind?: NotifyKind;
   /** `login`: Application id for an application token. */
@@ -224,6 +229,17 @@ function parseOptions(argv: string[]): Options | 'help' {
     text = words.join(' ').trim();
     if (text === '') throw new UsageError(`${command} needs ${what} after the ref`);
   }
+  let day: string | undefined;
+  if (command === 'due') {
+    // Like comment: the words after the day are the comment, unquoted.
+    const [refArg, dayArg, ...words] = extra.splice(0);
+    ref = refArg === undefined ? undefined : parseRef(refArg);
+    if (ref === undefined) throw new UsageError(`due needs the ticket's ref (e.g. 84 or #84), then <YYYY-MM-DD>${refArg === undefined ? '' : `, got "${refArg}"`}`);
+    if (dayArg === undefined || !parseDay(dayArg)) throw new UsageError(`due needs the new due date as YYYY-MM-DD after the ref${dayArg === undefined ? '' : `, got "${dayArg}"`}`);
+    day = dayArg;
+    const comment = words.join(' ').trim();
+    if (comment !== '') text = comment;
+  }
   let notifyKind: NotifyKind | undefined;
   if (command === 'notify') {
     const kind = extra.shift();
@@ -260,6 +276,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     skillsAction,
     ref,
     text,
+    day,
     notifyKind,
     application: values.application,
     out: values.out,
@@ -682,6 +699,20 @@ async function runComment(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `due`: set the due date of one of the user's tickets, with an optional comment, at once. */
+async function runDue(run: Run): Promise<number> {
+  const { options } = run;
+  const change = await setTicketDueDate(await connectTaiga(run), options.project!, options.ref!, options.day!, options.text ?? null);
+  const { ticket } = change;
+  const named = `#${ticket.ref} ${ticket.subject} (${ticket.project.slug})`;
+  emit(run, change, () => {
+    const commented = change.comment === null ? '' : ', with a comment';
+    if (change.changed) return `${named}: due date ${change.from ?? 'none'} → ${change.to}${commented}\n`;
+    return change.comment === null ? `${named} is already due ${change.to}: nothing changed\n` : `${named} is already due ${change.to}: commented only\n`;
+  });
+  return ExitCode.Ok;
+}
+
 /** `notify`: build the week/day/eod message from the user's tickets and send it to their Telegram chat. */
 async function runNotify(run: Run): Promise<number> {
   const { options } = run;
@@ -825,6 +856,8 @@ function dispatch(run: Run): Promise<number> {
       return runStatus(run);
     case 'comment':
       return runComment(run);
+    case 'due':
+      return runDue(run);
     case 'notify':
       return runNotify(run);
     case 'plan':

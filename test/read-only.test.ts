@@ -47,6 +47,7 @@ test('under TAIGENT_READ_ONLY every Taiga write refuses with exit 2 and sends no
     ['bootstrap', '--project', SLUG, '--yes'],
     ['status', '--project', SLUG, String(ref), 'Done'],
     ['comment', '--project', SLUG, String(ref), 'Looks good'],
+    ['due', '--project', SLUG, String(ref), '2026-11-24', 'Moved'],
   ];
   const before = h.fake.requests.length;
   for (const args of refused) {
