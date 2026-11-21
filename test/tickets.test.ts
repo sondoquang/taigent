@@ -567,8 +567,8 @@ test('tickets flags a ticket At risk when the plan finishes it after its due dat
       proposedDueDate: '2026-11-23',
       sharingTickets: [id(big, 'beta'), id(safe)],
       comment:
-        'Due date moved from 2026-11-20 to 2026-11-23: the remaining 5h, planned at 8 hours per working day in due-date order, finish on 2026-11-23,' +
-        ` after the due date. It shares its days with beta#${big.ref}, #${safe.ref}.`,
+        'Dời hạn từ 20/11/2026 sang 23/11/2026: còn 5h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày 23/11/2026.' +
+        ` Trùng ngày với beta#${big.ref}, #${safe.ref}.`,
     },
     {
       ...id(overdue),
@@ -578,8 +578,8 @@ test('tickets flags a ticket At risk when the plan finishes it after its due dat
       proposedDueDate: '2026-11-19',
       sharingTickets: [id(big, 'beta')],
       comment:
-        'Due date moved from 2026-11-18 to 2026-11-19: the due date has passed and the remaining 4h, planned at 8 hours per working day in due-date order,' +
-        ` finish on 2026-11-19. It shares its days with beta#${big.ref}.`,
+        'Dời hạn từ 18/11/2026 sang 19/11/2026: đã quá hạn, còn 4h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày 19/11/2026.' +
+        ` Trùng ngày với beta#${big.ref}.`,
     },
   ]);
   assert.deepEqual(
@@ -610,4 +610,35 @@ test('tickets flags a ticket At risk when the plan finishes it after its due dat
     `  alpha#${overdue.ref} due 2026-11-18 -> 2026-11-19: ${report.replan[1]!.comment}`,
   ]);
   assert.ok(lines.includes(`  #${small.ref}  Ready  On track  due 2026-11-20  not finished  5h (estimated from points)  remaining 5h, start by 2026-11-20, planned finish 2026-11-23 (at risk)  small`), text.stdout);
+});
+
+test('tickets --eod plans from the next working day, as the end-of-day reminder does, so a ticket due today is At risk with its re-plan', async (t) => {
+  const h = await startHarness(t);
+  const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha', members: [h.fake.user.id] });
+  const dueToday = addStory(h.fake, alpha.id, 'due today', { status_name: 'In progress', due_date: '2026-11-19', total_points: 3 });
+
+  const eod = await h.taigent(['tickets', ...RANGE, '--eod', '--json'], { env: ENV });
+  const plain = await h.taigent(['tickets', ...RANGE, '--json'], { env: ENV });
+  const misuse = await h.taigent(['notify', 'day', '--eod', '--dry-run'], { env: ENV });
+
+  assert.equal(eod.code, 0, eod.stderr);
+  const report = eod.json<TicketsJson>();
+  assert.deepEqual(report.plan, { start: '2026-11-20', days: [{ date: '2026-11-20', hours: 3, entries: [{ ...id(dueToday), hours: 3 }] }] });
+  assert.deepEqual(report.warnings.atRisk, [id(dueToday)]);
+  assert.deepEqual(report.replan, [
+    {
+      ...id(dueToday),
+      id: dueToday.id,
+      subject: 'due today',
+      dueDate: '2026-11-19',
+      proposedDueDate: '2026-11-20',
+      sharingTickets: [],
+      comment: 'Dời hạn từ 19/11/2026 sang 20/11/2026: còn 3h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày 20/11/2026. Không trùng ngày với ticket nào.',
+    },
+  ]);
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.equal(plain.json<TicketsJson>().plan.start, '2026-11-19');
+  assert.deepEqual(plain.json<TicketsJson>().replan, [], 'before 17:00 today still holds its 3h');
+  assert.equal(misuse.code, 2);
+  assert.match(misuse.stderr, /--eod applies only to tickets/);
 });

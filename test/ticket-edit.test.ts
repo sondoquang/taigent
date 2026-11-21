@@ -11,7 +11,7 @@ interface StatusJson {
   changed: boolean;
 }
 
-/** A project with one open ticket of the fake user (`In progress`) and one story of someone else. */
+/** A project with one planned ticket of the fake user (`In progress`) and one story of someone else. */
 function seed(fake: FakeTaiga) {
   const me = fake.user.id;
   const other = fake.addUser({ username: 'other' }).id;

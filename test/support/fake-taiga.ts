@@ -533,7 +533,7 @@ const USER_STORY_FIELDS: Record<string, true> = {
   assigned_to: true, backlog_order: true, blocked_note: true, client_requirement: true, description: true,
   is_blocked: true, is_closed: true, kanban_order: true, milestone: true, points: true, project: true,
   sprint_order: true, status: true, subject: true, tags: true, team_requirement: true, watchers: true, comment: true,
-  due_date: true, due_date_reason: true,
+  due_date: true,
 };
 
 const TASK_FIELDS: Record<string, true> = {

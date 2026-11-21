@@ -51,7 +51,7 @@ Commands:
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
   tickets   List your planned tickets (Ready, In progress, Ready for test) and those moved to Done from --from to --to,
             by progress group, with finishing day and due status, the plan of their remaining work by working day,
-            warnings and the re-plan of tickets at risk (read-only)
+            warnings and the re-plan of tickets at risk; --eod plans from the next working day (read-only)
   projects  List the Taiga projects you are a member of, with admin rights and whether taiga/<slug>/ exists; with
             --project, that project's issue types, severities and priorities (read-only)
   report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
@@ -64,11 +64,12 @@ Commands:
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   due <ref> <YYYY-MM-DD> [comment]  Set the due date of your ticket #<ref> of --project, with an optional comment giving
-            the reason, in one write, e.g. \`due 84 2026-11-24 shares its days with #85\` (writes at once; nothing when
+            the reason, in one write, e.g. \`due 84 2026-11-24 trùng ngày với #85\` (writes at once; nothing when
             it already has that due date and no comment is given)
   notify week|day|eod     Send to your Telegram chat the week (the whole plan and every warning), the day (today's
             plan, tickets to start today, Due today and Overdue) or the end-of-day reminder (unfinished planned tickets
-            due by today with their re-plan; nothing when there are none); --dry-run prints the message instead
+            due by today with their re-plan, planned from the next working day; nothing when there are none);
+            --dry-run prints the message instead
   skills sync   Copy the Taigent skills (taiga-*, ask-taigent, prd-to-taiga) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
   login     Log in once, in your own terminal: the password is exchanged for a token kept in the OS credential
@@ -80,6 +81,7 @@ Commands:
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets, notify and projects)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
+  --eod             tickets: plan from the next working day, as the end-of-day reminder does
   --out <file>      preview: write the page (or the JSON) to this file instead of stdout
   --cache-dir <dir> metrics: keep the history of each item in this directory and read it again only for items
                     changed since (default: read every history, write nothing)
@@ -159,7 +161,9 @@ interface Options {
   /** `status`: the status name (its words joined by spaces); `comment`, `due`: the comment text. */
   text?: string;
   /** `due`: the new due date, YYYY-MM-DD. */
-  day?: string;
+  dueDate?: string;
+  /** `tickets --eod`: plan from the next working day, as the end-of-day reminder does. */
+  eod: boolean;
   /** `notify`: which message. */
   notifyKind?: NotifyKind;
   /** `login`: Application id for an application token. */
@@ -206,6 +210,7 @@ function parseOptions(argv: string[]): Options | 'help' {
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
+        eod: { type: 'boolean', default: false },
         help: { type: 'boolean', short: 'h', default: false },
       },
     });
@@ -225,25 +230,22 @@ function parseOptions(argv: string[]): Options | 'help' {
   }
   let ref: number | undefined;
   let text: string | undefined;
-  if (command === 'status' || command === 'comment') {
-    // The rest of the words, so `status 84 In progress` needs no quotes (PowerShell 5.1 mangles them).
+  let dueDate: string | undefined;
+  if (command === 'status' || command === 'comment' || command === 'due') {
+    // The rest of the words, so `status 84 In progress` needs no quotes (PowerShell 5.1 mangles them); for due, the
+    // words after the day are the comment, unquoted.
     const [refArg, ...words] = extra.splice(0);
-    const what = command === 'status' ? '<status>' : '<text>';
+    const what = { status: '<status>', comment: '<text>', due: '<YYYY-MM-DD>' }[command];
     ref = refArg === undefined ? undefined : parseRef(refArg);
     if (ref === undefined) throw new UsageError(`${command} needs the ticket's ref (e.g. 84 or #84), then ${what}${refArg === undefined ? '' : `, got "${refArg}"`}`);
-    text = words.join(' ').trim();
-    if (text === '') throw new UsageError(`${command} needs ${what} after the ref`);
-  }
-  let day: string | undefined;
-  if (command === 'due') {
-    // Like comment: the words after the day are the comment, unquoted.
-    const [refArg, dayArg, ...words] = extra.splice(0);
-    ref = refArg === undefined ? undefined : parseRef(refArg);
-    if (ref === undefined) throw new UsageError(`due needs the ticket's ref (e.g. 84 or #84), then <YYYY-MM-DD>${refArg === undefined ? '' : `, got "${refArg}"`}`);
-    if (dayArg === undefined || !parseDay(dayArg)) throw new UsageError(`due needs the new due date as YYYY-MM-DD after the ref${dayArg === undefined ? '' : `, got "${dayArg}"`}`);
-    day = dayArg;
-    const comment = words.join(' ').trim();
-    if (comment !== '') text = comment;
+    if (command === 'due') {
+      const dayArg = words.shift();
+      if (dayArg === undefined || !parseDay(dayArg)) throw new UsageError(`due needs the new due date as YYYY-MM-DD after the ref${dayArg === undefined ? '' : `, got "${dayArg}"`}`);
+      dueDate = dayArg;
+    }
+    const rest = words.join(' ').trim();
+    if (rest === '' && command !== 'due') throw new UsageError(`${command} needs ${what} after the ref`);
+    text = rest === '' ? undefined : rest;
   }
   let notifyKind: NotifyKind | undefined;
   if (command === 'notify') {
@@ -263,6 +265,7 @@ function parseOptions(argv: string[]): Options | 'help' {
   if (values.out === '') throw new UsageError('--out needs a file path');
   if (values['cache-dir'] !== undefined && command !== 'metrics') throw new UsageError('--cache-dir applies only to metrics');
   if (values['cache-dir'] === '') throw new UsageError('--cache-dir needs a directory');
+  if (values.eod && command !== 'tickets') throw new UsageError('--eod applies only to tickets');
   if (command === 'tickets') {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
@@ -281,7 +284,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     skillsAction,
     ref,
     text,
-    day,
+    dueDate,
     notifyKind,
     application: values.application,
     out: values.out,
@@ -289,6 +292,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     json: values.json,
     yes: values.yes,
     dryRun: values['dry-run'],
+    eod: values.eod,
   };
 }
 
@@ -653,7 +657,7 @@ async function runTickets(run: Run): Promise<number> {
   const now = clockNow(run.env);
   const client = await connectTaiga(run);
   const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
-  const report = await readTickets(client, dayRange(options.from!, options.to!), now, project);
+  const report = await readTickets(client, dayRange(options.from!, options.to!), now, project, { endOfDay: options.eod });
   emit(run, report, () => formatTicketsText(report));
   return ExitCode.Ok;
 }
@@ -718,7 +722,7 @@ async function runComment(run: Run): Promise<number> {
 /** `due`: set the due date of one of the user's tickets, with an optional comment, at once. */
 async function runDue(run: Run): Promise<number> {
   const { options } = run;
-  const change = await setTicketDueDate(await connectTaiga(run), options.project!, options.ref!, options.day!, options.text ?? null);
+  const change = await setTicketDueDate(await connectTaiga(run), options.project!, options.ref!, options.dueDate!, options.text ?? null);
   const { ticket } = change;
   const named = `#${ticket.ref} ${ticket.subject} (${ticket.project.slug})`;
   emit(run, change, () => {
@@ -740,7 +744,7 @@ async function runNotify(run: Run): Promise<number> {
   const client = await connectTaiga(run);
   const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
   const range = notifyRange(kind, now);
-  const report = await readTickets(client, dayRange(range.from, range.to), now, project);
+  const report = await readTickets(client, dayRange(range.from, range.to), now, project, { endOfDay: kind === 'eod' });
   const text = notifyMessage(kind, report);
   if (target && text !== null) await sendTelegram(target, text);
   const sent = target !== undefined && text !== null;

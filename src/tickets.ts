@@ -3,7 +3,7 @@
 // Effort; and the Plan of their Remaining work on working days, with its warnings and Re-plan. Read-only. Days are
 // calendar days in the local time zone (TZ); the client knows Taiga's field names.
 
-import { addDays, localDay, localMinute, parseDay } from './days.ts';
+import { addDays, localDay, localMinute, longDay, parseDay, weekdayName, weekdayOf } from './days.ts';
 import { readHistories } from './metrics/history.ts';
 import { historyStatusName } from './metrics/work.ts';
 import type { TaigaAssignedStory, TaigaClient, TaigaHistoryEntry, TaigaStatus } from './taiga/client.ts';
@@ -140,6 +140,12 @@ export interface TicketId {
 }
 
 const ticketId = (ticket: Ticket): TicketId => ({ ref: ticket.ref, project: ticket.project.slug });
+
+/** How text names a ticket: `#12` when it belongs to project `home`, else `alpha#12` (always so without `home`). */
+export const ticketLabel = ({ ref, project }: TicketId, home: string | null = null): string => (project === home ? `#${ref}` : `${project}#${ref}`);
+
+/** Whether `ticket` is the one `id` names. */
+export const isTicket = (ticket: Ticket, id: TicketId): boolean => ticket.ref === id.ref && ticket.project.slug === id.project;
 
 /** Totals of `tickets`. */
 export interface TicketsSummary {
@@ -286,11 +292,13 @@ function bulkCloses(tickets: Ticket[]): TicketsReport['notes']['bulkCloses'] {
 
 /** Hours a working day holds, in hundredths of an hour (the planner counts hundredths so float noise never adds up). */
 const DAY_CAPACITY = 800;
+/** `8h`: DAY_CAPACITY as text. */
+const DAY_HOURS = `${DAY_CAPACITY / 100}h`;
 /** The local hour a working day ends. */
 const DAY_END_HOUR = 17;
 
 const toHundredths = (hours: number) => Math.round(hours * 100);
-const isWorkingDay = (day: string) => ![0, 6].includes(parseDay(day)!.getDay());
+const isWorkingDay = (day: string) => ![0, 6].includes(weekdayOf(day));
 
 /** The first working day after `day`. */
 function nextWorkingDay(day: string): string {
@@ -299,10 +307,13 @@ function nextWorkingDay(day: string): string {
   return next;
 }
 
-/** Today when `now` is before 17:00 on a working day, else the next working day. */
-function planStart(now: Date): string {
+/**
+ * Today when `now` is before 17:00 on a working day, else the next working day; with `endOfDay`, the next working day
+ * whatever the hour, as after 17:00 (the end-of-day reminder's plan).
+ */
+function planStart(now: Date, endOfDay: boolean): string {
   const today = localDay(now);
-  return isWorkingDay(today) && now.getHours() < DAY_END_HOUR ? today : nextWorkingDay(today);
+  return !endOfDay && isWorkingDay(today) && now.getHours() < DAY_END_HOUR ? today : nextWorkingDay(today);
 }
 
 /** Counts `remainingWork` back from the due date (its last working day on or before it), 8 hours per working day. */
@@ -366,16 +377,17 @@ function planTickets(tickets: Ticket[], start: string): Plan {
 }
 
 /**
- * The re-plan entry of an At risk ticket, with a plain comment naming why its due date moves and the tickets sharing
- * its days: `#12` for a ticket of its project, `alpha#12` for one of another project.
+ * The re-plan entry of an At risk ticket, with a comment in Vietnamese (the team's language, written to Taiga) naming
+ * why its due date moves and the tickets sharing its days: `#12` for a ticket of its project, `alpha#12` for one of
+ * another project.
  */
 function replanOf(ticket: Ticket, today: string): ReplanEntry {
   const dueDate = ticket.dueDate!;
   const proposedDueDate = ticket.plannedFinishDay!;
-  const remaining = `the remaining ${ticket.remainingWork}h, planned at 8 hours per working day in due-date order, finish on ${proposedDueDate}`;
-  const reason = dueDate < today ? `the due date has passed and ${remaining}` : `${remaining}, after the due date`;
-  const refs = ticket.sharingTickets.map(({ ref, project }) => (project === ticket.project.slug ? `#${ref}` : `${project}#${ref}`));
-  const sharing = refs.length === 0 ? 'No other ticket shares its days.' : `It shares its days with ${refs.join(', ')}.`;
+  const passed = dueDate < today ? 'đã quá hạn, ' : '';
+  const reason = `${passed}còn ${ticket.remainingWork}h việc, xếp ${DAY_HOURS} mỗi ngày làm việc theo thứ tự hạn thì xong ngày ${longDay(proposedDueDate)}`;
+  const refs = ticket.sharingTickets.map((id) => ticketLabel(id, ticket.project.slug));
+  const sharing = refs.length === 0 ? 'Không trùng ngày với ticket nào.' : `Trùng ngày với ${refs.join(', ')}.`;
   return {
     ...ticketId(ticket),
     id: ticket.id,
@@ -383,15 +395,22 @@ function replanOf(ticket: Ticket, today: string): ReplanEntry {
     dueDate,
     proposedDueDate,
     sharingTickets: ticket.sharingTickets,
-    comment: `Due date moved from ${dueDate} to ${proposedDueDate}: ${reason}. ${sharing}`,
+    comment: `Dời hạn từ ${longDay(dueDate)} sang ${longDay(proposedDueDate)}: ${reason}. ${sharing}`,
   };
 }
 
 /**
  * Reads every story assigned to the user and keeps the Period's tickets, with assignee usernames, finishing day, due
  * status and effort. Only finished tickets have their history read (one request each), with their project's statuses.
+ * With `endOfDay`, the plan starts on the next working day, as after 17:00 (`planStart`).
  */
-export async function readTickets(client: TaigaClient, range: DayRange, now: Date, project?: { id: number; slug: string }): Promise<TicketsReport> {
+export async function readTickets(
+  client: TaigaClient,
+  range: DayRange,
+  now: Date,
+  project?: { id: number; slug: string },
+  { endOfDay = false }: { endOfDay?: boolean } = {},
+): Promise<TicketsReport> {
   const today = localDay(now);
   const me = await client.getMe();
   const stories = (await client.listAssignedStories(me.id, project?.id)).flatMap((story) => {
@@ -444,7 +463,7 @@ export async function readTickets(client: TaigaClient, range: DayRange, now: Dat
     });
   }
   tickets.sort(compareTickets);
-  const plan = planTickets(tickets, planStart(now));
+  const plan = planTickets(tickets, planStart(now, endOfDay));
   const notFinished = tickets.filter((ticket) => !ticket.isFinished);
   const atRisk = tickets.filter((ticket) => ticket.atRisk);
   return {
@@ -484,9 +503,6 @@ const formatCounts = (counts: Record<string, number>) =>
     .map(([name, n]) => `${name} ${n}`)
     .join(', ');
 
-/** `alpha#12`. */
-const formatId = ({ ref, project }: TicketId) => `${project}#${ref}`;
-
 /** `remaining 5h, start by 2026-11-20, planned finish 2026-11-23 (at risk)` as far as the ticket has them, or nothing. */
 function formatPlanned(ticket: Ticket): string {
   if (ticket.remainingWork === null) return '';
@@ -495,8 +511,6 @@ function formatPlanned(ticket: Ticket): string {
   if (ticket.plannedFinishDay !== null) parts.push(`planned finish ${ticket.plannedFinishDay}${ticket.atRisk ? ' (at risk)' : ''}`);
   return `${parts.join(', ')}  `;
 }
-
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
  * Text form: the totals (tickets and effort; by progress group; finished and not finished tickets by due status), the
@@ -515,10 +529,10 @@ export function formatTicketsText(report: TicketsReport): string {
     `Not finished ${notFinished.total}: ${formatCounts(notFinished.byDueStatus)}`,
     `Finished ${finished.total}: ${finishedCounts}`,
     '',
-    plan.days.length === 0 ? `Plan from ${plan.start}: no remaining work to plan` : `Plan from ${plan.start}, 8h per working day:`,
+    plan.days.length === 0 ? `Plan from ${plan.start}: no remaining work to plan` : `Plan from ${plan.start}, ${DAY_HOURS} per working day:`,
     ...plan.days.map(
       ({ date, hours, entries }) =>
-        `  ${date} ${WEEKDAYS[parseDay(date)!.getDay()]}  ${hours}h: ${entries.map((entry) => `${formatId(entry)} ${entry.hours}h`).join(', ')}`,
+        `  ${date} ${weekdayName(date, 'en')}  ${hours}h: ${entries.map((entry) => `${ticketLabel(entry)} ${entry.hours}h`).join(', ')}`,
     ),
   ];
   const byProject = Map.groupBy(tickets, (ticket) => ticket.project.slug);
@@ -533,14 +547,15 @@ export function formatTicketsText(report: TicketsReport): string {
   }
   // Each At risk ticket has its re-plan entry, in the same order, with the tickets sharing its days.
   const atRisk = replan.map(({ sharingTickets, ...id }) =>
-    sharingTickets.length === 0 ? formatId(id) : `${formatId(id)} (shares its days with ${sharingTickets.map(formatId).join(', ')})`,
+    sharingTickets.length === 0 ? ticketLabel(id) : `${ticketLabel(id)} (shares its days with ${sharingTickets.map((other) => ticketLabel(other)).join(', ')})`,
   );
+  const labels = (ids: TicketId[]) => ids.map((id) => ticketLabel(id));
   const warningLines = (
     [
-      ['Overdue', warnings.overdue.map(formatId)],
-      ['No due date', warnings.noDueDate.map(formatId)],
-      ['No points', warnings.noPoints.map(formatId)],
-      ['Late start', warnings.lateStart.map(formatId)],
+      ['Overdue', labels(warnings.overdue)],
+      ['No due date', labels(warnings.noDueDate)],
+      ['No points', labels(warnings.noPoints)],
+      ['Late start', labels(warnings.lateStart)],
       ['At risk', atRisk],
     ] as const
   ).flatMap(([name, list]) => (list.length === 0 ? [] : [`  ${name}: ${list.join(', ')}`]));
@@ -549,7 +564,7 @@ export function formatTicketsText(report: TicketsReport): string {
     lines.push(
       '',
       'Re-plan, written to Taiga only once approved:',
-      ...replan.map((entry) => `  ${formatId(entry)} due ${entry.dueDate} -> ${entry.proposedDueDate}: ${entry.comment}`),
+      ...replan.map((entry) => `  ${ticketLabel(entry)} due ${entry.dueDate} -> ${entry.proposedDueDate}: ${entry.comment}`),
     );
   }
   return `${lines.join('\n')}\n`;

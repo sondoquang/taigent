@@ -16,7 +16,7 @@ Done when `package.json` names `taigent`.
 
 ## 2. Read the tickets
 
-Run `npx taigent tickets --from <today> --to <today> --json` (today as `YYYY-MM-DD`, local time) alone in its own shell call. The chat holds no copy of the end-of-day reminder (a bot receives none of its own messages), so every set below is rebuilt from this JSON: the reminder's tickets are those of `tickets` whose `isFinished` is false and whose `dueDate` is `today` or earlier.
+Run `npx taigent tickets --from <today> --to <today> --eod --json` (today as `YYYY-MM-DD`, local time) alone in its own shell call. The chat holds no copy of the end-of-day reminder (a bot receives none of its own messages), so every set below is rebuilt from this JSON: the reminder's tickets are those of `tickets` whose `isFinished` is false and whose `dueDate` is `today` or earlier, and `--eod` plans from the next working day as the reminder does, so `replan` holds the reminder's entries. When this conversation already shows a `taiga-my-tickets` report, leave out `--eod`: the re-plan to approve is the one that report showed.
 
 Done when you hold its JSON.
 

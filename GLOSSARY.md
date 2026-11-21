@@ -31,7 +31,7 @@ The Business Analyst's or Product Owner's check of the planned backlog items bef
 _Avoid_: Approval (a review is not consent to apply)
 
 **Verdict**:
-A reviewer's decision on one backlog item: approved, or changes requested. Only the reviewer decides it; an agent records it only on the reviewer's explicit word, never on its own judgment.
+A reviewer's decision on one backlog item: approved, or changes requested. Only the reviewer sets it.
 
 **Stale verdict**:
 A verdict given on an earlier version of the item: what apply would write for it has changed since, so it must be reviewed again.
@@ -52,6 +52,9 @@ _Avoid_: Open ticket (a ticket in New is open too)
 **Finished ticket**:
 A ticket in Ready for test or Done: the developer's part is done. A ticket moved back to In progress is no longer finished.
 _Avoid_: Closed ticket (Ready for test is not closed on Taiga)
+
+**Progress group**:
+Where a ticket stands in its work, by its status: Ready, In progress, Ready for test or Done.
 
 **Period's tickets**:
 The planned tickets, plus the tickets that moved to Done in the reporting period.
@@ -99,6 +102,10 @@ _Avoid_: Schedule, sprint
 **Latest start day**:
 The day a ticket must start to be finished by its due date, counting back its remaining work from the due date, eight hours a day.
 
+**Late start**:
+A ticket still in Ready on or after its latest start day.
+_Avoid_: Overdue (about the due date, not the start)
+
 **At risk**:
 A ticket not finished whose plan finishes it after its due date.
 _Avoid_: Overdue (its due date has not passed)
@@ -110,17 +117,13 @@ For each ticket at risk, a proposed new due date, the day the plan finishes it, 
 Three or more tickets closed one after another, each within 60 seconds of the previous one.
 
 **End-of-day reminder**:
-The message, near the end of a working day, listing your planned tickets not finished whose due date is today or earlier, with their re-plan to approve. "Close them" in answer to it moves those tickets to Ready for test; moving them to Done takes your explicit request and your confirmation that they were tested.
+The message, near the end of a working day, listing your planned tickets not finished whose due date is today or earlier, with their re-plan to approve. Its re-plan counts from the next working day, as after 17:00. "Close them" in answer to it moves those tickets to Ready for test; moving them to Done takes your explicit request and your confirmation that they were tested.
 _Avoid_: Stale tickets (it is about due dates, not about how long a status has stood)
 
 ### Dashboards
 
-**Dashboard**:
-The metrics of one project reported for a role, on request. It is a report, not a screen.
-_Avoid_: Screen, panel
-
 **Role**:
-What you do on the project, chosen by you: Developer, Product Owner or Business Analyst. It decides which metrics the dashboard reports first; it is not your role on the Taiga project.
+What you do on the project, chosen by you: Developer, Product Owner or Business Analyst. It decides which dashboard you see first; it is not your role on the Taiga project.
 _Avoid_: Taiga role, membership role (those are the project's own role names)
 
 **Bug**:
@@ -149,7 +152,7 @@ _Avoid_: Sprint, milestone, epic
 
 **Workload**:
 The open user stories and open tasks assigned to one person, counted apart, with the points of those stories.
-_Avoid_: Effort (the hours a closed ticket took)
+_Avoid_: Effort (the hours a ticket took)
 
 **Lead time**:
 From the day a user story or task is created to the day it is closed.
