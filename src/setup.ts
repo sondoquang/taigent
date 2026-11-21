@@ -10,11 +10,12 @@
 // both scopes, the Taigent skills older than this taigent and the copies installed both for the user and in the
 // working directory (with the one each client uses); it never removes anything.
 
-import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { parse as parseToml } from 'smol-toml';
+import { writeAtomic } from './files.ts';
 import { errorMessage, isFileNotFound, isRecord } from './guards.ts';
 import { compareSkillDirs, copySkills, listSkills, type SkillContent, type SkillDirsComparison, type SkillFile, SKILLS_SOURCE, SKILLS_TARGET, skillVersion, stampSkillVersion } from './skills.ts';
 
@@ -385,7 +386,7 @@ class FilePlan {
       for (const { dir, comparison } of this.skillCopies) await copySkills(join(PACKAGE_ROOT, SKILLS_SOURCE), join(this.root, dir), comparison, this.skillContent);
       for (const { path, content } of this.writes) {
         await mkdir(dirname(join(this.root, path)), { recursive: true });
-        await writeFile(join(this.root, path), content);
+        await writeAtomic(join(this.root, path), content);
       }
     }
     return { files: [...this.files].sort((a, b) => (a.path < b.path ? -1 : 1)) };
