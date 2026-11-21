@@ -6,8 +6,8 @@ read-only).
 
 ## Running
 
-Requires Node.js 24+. In the repository it runs the TypeScript sources directly; installed as a package it runs
-the build in `dist/` (`npm run build`, run by `prepare` on install; see [Using the skills in another project](#using-the-skills-in-another-project)).
+Requires Node.js 24+. In the repository it runs the TypeScript sources directly; installed from npm
+(`npm i -g taigent`) it runs the build in `dist/`, compiled before publishing (see [Releasing](#releasing)).
 
 ```sh
 npm install
@@ -1482,7 +1482,7 @@ or lists `taigent` as a dependency: otherwise npx would fetch an unrelated `taig
 Another project needs, at its root:
 
 ```sh
-npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite
+npm i -g taigent                          # the CLI and the docs the skills cite, already built
 npx taigent init                          # the skills, the MCP entries, the headless kit; pins taigent to its tag
 npm install                               # installs the pinned version
 ```
@@ -1508,11 +1508,14 @@ never runs `npm install`. `--dry-run` writes nothing and exits 3 when a file wou
 `unchanged` and `removed` (a file of a Taigent skill the running taigent does not have); the text form lists the files
 that change.
 
-The pin needs releases tagged `v<version>` (`v0.1.0` for 0.1.0). `npm install` from git runs the `prepare` script,
-which compiles `src/` to `dist/` (`tsconfig.build.json`): under `node_modules` Node strips no types, so
-`bin/taigent.js` runs `dist/` there and the TypeScript sources everywhere else. The package (`files` in `package.json`) ships `bin/`, `dist/`, `docs/cli.md` and `docs/taiga/`
-(the docs the skills cite, read from `node_modules/taigent/`) and what `init` installs: the Taigent skills of
-`.agents/skills/`, `tools/taiga/` (with `run-skill`), the Codex hook and rule.
+The pin needs releases tagged `v<version>` (`v0.1.0` for 0.1.0; see [Releasing](#releasing)). The published package
+holds `dist/`, compiled from `src/` by the `prepack` script (`tsconfig.build.json`), so installing it compiles nothing:
+under `node_modules` Node strips no types, so `bin/taigent.js` runs `dist/` there and the TypeScript sources
+everywhere else. The package (`files` in `package.json`) ships `bin/`, `dist/`, `docs/cli.md`, `docs/headless.md`,
+`docs/taiga/` and `docs/telegram-reply.md` (the docs the skills and `run-skill` cite, read from
+`node_modules/taigent/`) and what `init` installs: the Taigent skills of `.agents/skills/`, `tools/taiga/` (with
+`run-skill`), the Codex hook and rule. `test/package.test.ts` checks the `npm pack` file list against what `init`
+copies and the docs the shipped skills and kit cite.
 `init` neither logs in nor approves the MCP server. Each user runs `npx taigent login` once, in their own terminal, at
 the project root; the project commits the files `init` wrote and each user approves the project server once.
 `taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets` and `taiga-update-ticket` need only the CLI
@@ -1673,3 +1676,31 @@ rejects unknown form fields.
 Live smoke test: `npm run test:live` runs `test/live/*.live.ts` against a real Taiga project. It is opt-in
 (`TAIGENT_LIVE_SMOKE=1`, target `TAIGENT_SMOKE_PROJECT`), never part of `npm test`, and only run by a person:
 see `docs/live-smoke.md`. `test/live-smoke.test.ts` runs it against the fake in `npm test`.
+
+## Releasing
+
+`.github/workflows/publish.yml` publishes taigent to npm when a tag `v*` is pushed. It fails unless the tag is
+`v<version>` of `package.json`, then runs `npm ci`, `npm run build`, `npm run typecheck`, `npm test` and
+`npm publish --provenance` (Node 24, npm 11.5.1 or later). A release is:
+
+```sh
+npm version 0.2.0 -m "chore: release %s"   # bumps package.json and package-lock.json, commits, tags v0.2.0
+git push --follow-tags
+```
+
+`npm pack --dry-run` lists what the tarball holds; `prepack` builds `dist/` first.
+
+Human steps on npmjs.com, once (an agent cannot do them):
+
+1. **First publish.** The package `taigent` does not exist on npm yet, and trusted publishing is set on an existing
+   package's settings page. Publish the first version by hand from a clean checkout of the release tag
+   (`npm login`, then `npm publish`; provenance needs CI, so this one has none), or create an npm granular access
+   token with publish rights and store it as the repository secret `NPM_TOKEN` (Settings → Secrets and variables →
+   Actions) before pushing the tag: the workflow passes it as `NODE_AUTH_TOKEN`.
+2. **Trusted publisher.** On npmjs.com, Packages → `taigent` → Settings → Trusted publishing: choose GitHub Actions,
+   organization or user `sondoquang`, repository `taigent`, workflow filename `publish.yml`. The first publish
+   through it must succeed within 2 days or the configuration expires. Trusted publishing works only on
+   GitHub-hosted runners, and provenance only from a public repository whose URL equals `repository.url` of
+   `package.json` (`git+https://github.com/sondoquang/taigent.git`).
+3. Once trusted publishing works, delete the `NPM_TOKEN` secret and revoke the token (if one was created), and on the
+   package settings require two-factor authentication and disallow tokens.
