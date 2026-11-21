@@ -250,7 +250,7 @@ test('each taiga-* skill and prd-to-taiga pre-approve only the commands of their
     'taiga-bootstrap-project': shellRules('validate', 'bootstrap'),
     'taiga-upload-docs': shellRules('validate', 'upload'),
     'taiga-my-tickets': shellRules('tickets'),
-    'taiga-update-ticket': shellRules('tickets', 'status', 'comment'),
+    'taiga-update-ticket': shellRules('tickets', 'status', 'comment', 'due'),
     'taiga-status-report': [],
     'taiga-setup': [],
   };
@@ -290,7 +290,7 @@ test('taiga-update-ticket edits your tickets through taigent only, may be invoke
 
   assert.notEqual(frontmatter['disable-model-invocation'], true);
   assert.equal(openai.policy?.allow_implicit_invocation, true);
-  assert.deepEqual(allowedTools, shellRules('tickets', 'status', 'comment'));
+  assert.deepEqual(allowedTools, shellRules('tickets', 'status', 'comment', 'due'));
   const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
   assert.match(router, /`taiga-update-ticket`/);
 });
