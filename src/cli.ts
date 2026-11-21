@@ -55,7 +55,7 @@ import {
   readSprints,
   SprintError,
 } from './sprint.ts';
-import { buildPreview, loadReview, recordReview, renderPreviewMarkdown, REVIEW_FILE, ReviewError, reviewKeys, type ReviewAction } from './review.ts';
+import { buildPreview, loadReview, recordReview, renderPreviewMarkdown, REVIEW_FILE, ReviewError, type ReviewAction } from './review.ts';
 import { formatSnapshotText, readSnapshot, summarizeSnapshot, writeSnapshot } from './snapshot.ts';
 import { Secrets } from './secrets.ts';
 import { checkInstall, type InstallCheck, mcpCheckTarget, type SetupClient, SetupError, setupProject, type SetupReport, type SetupStatus, setupUser, USER_CLIENTS } from './setup.ts';
@@ -623,8 +623,8 @@ function reviewGate(run: Run, plan: { changes: boolean }, text: () => string): n
 }
 
 /**
- * Validates one project's manifests, or every project under the manifests root, and their review.yaml (whose keys are
- * checked against a valid backlog). Offline: no env needed.
+ * Validates one project's manifests, or every project under the manifests root, and their review.yaml (its keys only
+ * for their format: an entry for an item the backlog no longer declares is ignored). Offline: no env needed.
  */
 async function runValidate(run: Run): Promise<number> {
   const { options, env, cwd } = run;
@@ -647,10 +647,8 @@ async function runValidate(run: Run): Promise<number> {
     }
     const reviewPath = join(dir, REVIEW_FILE);
     if (!existsSync(reviewPath)) continue;
-    // Review keys are only checked against a valid backlog; an invalid one already reports its issues.
-    const backlog = project?.manifests.backlog;
     try {
-      await loadReview(reviewPath, backlog ? reviewKeys(backlog) : undefined);
+      await loadReview(reviewPath);
       project?.files.push(reviewPath);
     } catch (error) {
       if (!(error instanceof ManifestError)) throw error;

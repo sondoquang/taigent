@@ -33,10 +33,13 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
      thúc bằng `taigent validate`. Tất cả nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest (định dạng và lệnh:
      `docs/cli.md` mục Review). `review.yaml` không ghi tên người review hay role.
    - Agent (`taiga-plan-backlog`) xử lý từng comment chưa resolved bằng cách sửa manifest, rồi chạy
-     `taigent review resolve --project <slug> <key> <comment-id> -- <reply>` (trả lời ngắn bằng tiếng Việt); không
-     sửa `review.yaml` bằng tay. Agent **không bao giờ** đặt hay đổi verdict; verdict chỉ do người review quyết định
-     (GLOSSARY: Verdict). Item sửa sau khi đã có verdict thì verdict thành **stale** (digest khác) và item quay về
-     Awaiting review.
+     `taigent review resolve --project <slug> <key> <comment-id> -- <reply>` (trả lời ngắn bằng tiếng Việt). Không
+     ai sửa `review.yaml` bằng tay: `taigent review` là cách duy nhất ghi file. Agent **không bao giờ** đặt hay đổi
+     verdict; verdict chỉ do người review quyết định (GLOSSARY: Verdict). Item sửa sau khi đã có verdict thì verdict
+     thành **stale** (digest khác) và item quay về Awaiting review.
+   - Mục review của key không còn trong `backlog.yaml` (item bị xoá, hoặc đổi key trước khi apply) được giữ nguyên
+     trong file và bị bỏ qua: `validate` không báo lỗi, `preview` liệt kê nó ở `summary.unknownReviewKeys` (kèm cảnh
+     báo). Đổi key trước khi apply nghĩa là bỏ review của item: người review duyệt lại item dưới key mới.
    - BA cũng có thể sửa thẳng bản preview: `taigent preview --project <slug> --out taiga/<slug>/preview.md`, kèm một
      bản giữ nguyên ở `taiga/<slug>/.preview/base.md` (ghi cùng lúc). Skill `taiga-apply-backlog` so hai bản bằng
      `git diff --no-index`, ghi từng chỗ BA sửa vào `backlog.yaml` (manifest vẫn là nguồn sự thật), chạy `validate`
@@ -73,7 +76,7 @@ chuyển legacy sang user story format. Lần `plan` đầu sau khi nâng cấp 
 
 | Rule | Quy tắc |
 |---|---|
-| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá item thì xoá mục review của nó; đổi key item thì chuyển comment sang key mới và bỏ verdict (item cần duyệt lại). |
+| `key-format` | Mỗi key trong `items` của `review.yaml` đúng định dạng key (chữ hoa/số, nhóm cách nhau bằng `-`). Key không còn trong `backlog.yaml` không phải lỗi: mục đó bị bỏ qua (bước 2 ở trên). |
 | `review-verdict` | `verdict` là `approved` hoặc `changes`, và đi kèm `digest` của item lúc duyệt. |
 | `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 

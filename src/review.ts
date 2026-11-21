@@ -2,7 +2,9 @@
 // the comments of the Business Analyst / Product Owner, and `buildPreview` shows the backlog exactly as apply would
 // write it, with that review. Offline: no Taiga access. The file is committed with the manifests; `taigent review`
 // (`recordReview`) is the one way it is written: the reviewer's verdicts and comments, and the agent's answers to the
-// comments (`resolved` + `reply`).
+// comments (`resolved` + `reply`). Nobody edits it by hand. An entry whose key the backlog no longer declares (the item
+// was removed, or renamed before apply) is ignored and left in the file: `validate` accepts it, `preview` lists it in
+// `summary.unknownReviewKeys`, and the item under its new key is reviewed again.
 
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -20,8 +22,8 @@ import {
   type ManifestItem,
   type SnapshotItems,
 } from './managed.ts';
-import { type AttributeValue, type Backlog, BACKLOG_FILE, backlogKeys, type Scenario, type StorySpec } from './manifest/backlog.ts';
-import { checkKeyReference, KEY_PATTERN } from './manifest/conventions.ts';
+import { type AttributeValue, type Backlog, BACKLOG_FILE, type Scenario, type StorySpec } from './manifest/backlog.ts';
+import { KEY_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { SNAPSHOT_FILE } from './manifest/layout.ts';
 import { loadManifests } from './manifest/manifests.ts';
@@ -77,18 +79,12 @@ function isText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '';
 }
 
-/** Every key review.yaml may name: the epic tree's and the issues'. */
-export function reviewKeys(backlog: Backlog): Set<string> {
-  const keys = backlogKeys(backlog);
-  for (const issue of backlog.issues) keys.add(issue.key);
-  return keys;
-}
-
 /**
- * Reads and validates review.yaml at `path`; a missing file is an empty review. With `keys` (the backlog's item keys),
- * an item key not in the backlog is an issue too (rule `key-reference`). Throws ManifestError listing every issue.
+ * Reads and validates review.yaml at `path`; a missing file is an empty review. Item keys are checked for their format
+ * only: one the backlog does not declare is ignored by `buildPreview`, never an issue. Throws ManifestError listing
+ * every issue.
  */
-export async function loadReview(path: string, keys?: ReadonlySet<string>): Promise<Review> {
+export async function loadReview(path: string): Promise<Review> {
   let doc: unknown;
   try {
     doc = await readManifestYaml(path);
@@ -116,7 +112,6 @@ export async function loadReview(path: string, keys?: ReadonlySet<string>): Prom
   for (const [key, raw] of Object.entries(rawItems)) {
     const at = `items.${key}`;
     if (!KEY_PATTERN.test(key)) issue(at, 'key-format', `item key ${key} must be uppercase letters/digits in dash-separated groups`);
-    else if (keys) checkKeyReference(key, at, issue, keys);
     if (!isRecord(raw)) {
       issue(at, 'type', 'item review must be a mapping');
       continue;
@@ -265,13 +260,7 @@ export interface ReviewResult {
  * id the item lacks, throws ReviewError before anything is written; invalid manifests throw ManifestError.
  */
 export async function recordReview(dir: string, slug: string, change: ReviewAction, at: string = new Date().toISOString()): Promise<ReviewResult> {
-  const preview = await buildPreview(dir, slug);
-  const items: PreviewItem[] = [...preview.issues];
-  for (const epic of preview.epics) {
-    items.push(epic);
-    for (const story of epic.stories) items.push(story, ...story.tasks);
-  }
-  const item = items.find((candidate) => candidate.key === change.key);
+  const item = previewItems(await buildPreview(dir, slug)).find((candidate) => candidate.key === change.key);
   if (!item) throw new ReviewError(`${change.key} is not an item of the ${BACKLOG_FILE} of project ${slug}; nothing was written`);
 
   const path = join(dir, REVIEW_FILE);
@@ -382,6 +371,11 @@ export interface Preview {
   summary: PreviewSummary;
   epics: PreviewEpic[];
   issues: PreviewIssue[];
+}
+
+/** Every item of `preview` in manifest order: each epic, its stories and their tasks, then the issues. */
+export function previewItems(preview: Preview): PreviewItem[] {
+  return [...preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]), ...preview.issues];
 }
 
 /** What apply writes for an item, the input of `itemDigest`; `values` only for issues. */
@@ -663,7 +657,7 @@ export function renderPreviewMarkdown(preview: Preview): string {
   }
   lines.push('');
   if (summary.unknownReviewKeys.length > 0) {
-    lines.push(`**Warning:** ${REVIEW_FILE} reviews keys the backlog does not declare: ${summary.unknownReviewKeys.join(', ')}`, '');
+    lines.push(`**Warning:** ${REVIEW_FILE} reviews keys the backlog does not declare, ignored (removed items, or keys renamed before apply, whose items are reviewed again under their new key): ${summary.unknownReviewKeys.join(', ')}`, '');
   }
   if (preview.epics.length === 0 && preview.issues.length === 0) lines.push('_The backlog has no items._', '');
   const readAt = preview.snapshot?.readAt;
