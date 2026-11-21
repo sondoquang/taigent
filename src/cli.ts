@@ -17,7 +17,6 @@ import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout, type ProjectLayout } from './manifest/layout.ts';
 import { readState } from './manifest/state.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
-import { initRepository, InitError, type InitStatus } from './init.ts';
 import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
 import { serveMcp, startProxy } from './mcp.ts';
 import { readBacklogData } from './metrics/backlog.ts';
@@ -58,6 +57,7 @@ import {
 import { buildPreview, loadReview, recordReview, renderPreviewMarkdown, REVIEW_FILE, ReviewError, reviewKeys, type ReviewAction } from './review.ts';
 import { formatSnapshotText, readSnapshot, summarizeSnapshot, writeSnapshot } from './snapshot.ts';
 import { Secrets } from './secrets.ts';
+import { SetupError, setupProject, type SetupStatus } from './setup.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
 import { commentTicket, parseRef, setTicketStatus, TicketError } from './ticket.ts';
@@ -67,8 +67,9 @@ import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, U
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
 Commands:
-  init      Install Taigent into the repository at the working directory, from this taigent: the Taigent skills,
-            the taiga MCP server entries, the headless kit and the pinned taigent devDependency; offline
+  setup --project  Install Taigent into the repository at the working directory, from this taigent: the Taigent
+            skills, the taiga MCP server entries, the headless kit and the taigent devDependency pinned to this
+            version; offline
   validate  Check manifests (and review.yaml) against the conventions, offline (all projects without --project)
   preview   Show the backlog as apply would write it, with its review (review.yaml), as one Markdown page; offline
   review approve|request-changes|comment|resolve <key> ...   Record the review of backlog item <key> in review.yaml,
@@ -130,7 +131,7 @@ Options:
                     instead of a refresh token
   --json            Machine-readable output on stdout
   --yes             Confirm writes (bootstrap, apply, upload, sprint create, sprint add)
-  --dry-run         List the operations without writing anything (exit 3 when there are changes; init: the files it
+  --dry-run         List the operations without writing anything (exit 3 when there are changes; setup: the files it
                     would write); notify: print the message without sending it (exit 0)
   -h, --help        Show this help
 
@@ -152,9 +153,9 @@ Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. chang
             metrics of an unknown project), 3 plan/--dry-run/skills check has changes, 4 manifest invalid (pull:
             Taiga's values do not fit the manifest), 5 Taiga/network error, 6 plan/apply has blocked items`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'review', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['setup', 'validate', 'preview', 'review', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
-const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
+const PROJECTLESS: readonly Command[] = ['setup', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
@@ -163,6 +164,8 @@ type SprintAction = (typeof SPRINT_ACTIONS)[number];
 const REVIEW_ACTIONS = ['approve', 'request-changes', 'comment', 'resolve'] as const;
 type ReviewActionName = (typeof REVIEW_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
+/** Where `setup` installs: `project`, the repository at the working directory (`setup --project`). */
+type SetupScope = 'project';
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
 class UsageError extends Error {}
@@ -219,6 +222,8 @@ interface Options {
   cacheDir?: string;
   /** `review`: what to record. */
   review?: ReviewAction;
+  /** `setup`: where it installs. */
+  setupScope?: SetupScope;
   json: boolean;
   yes: boolean;
   dryRun: boolean;
@@ -241,11 +246,24 @@ function printError(secrets: Secrets, text: string): void {
   process.stderr.write(secrets.redact(text));
 }
 
+/** Options that take a value (`--name value`), so the value is not read as the command. */
+const VALUE_OPTIONS = ['--project', '--from', '--to', '--name', '--application', '--out', '--ref', '--key', '--epic', '--story', '--cache-dir'];
+
+/**
+ * `argv` with `setup`'s value-less `--project` renamed to the flag `--setup-project` (`--project <slug>` everywhere
+ * else); `--project` itself is not skipped as an option with a value, so `setup --project demo` leaves `demo` unexpected.
+ */
+function setupFlags(argv: string[]): string[] {
+  if (argv.includes('--setup-project')) throw new UsageError("Unknown option '--setup-project'");
+  const command = argv.find((arg, index) => !arg.startsWith('-') && !(index > 0 && VALUE_OPTIONS.includes(argv[index - 1]!) && argv[index - 1] !== '--project'));
+  return command === 'setup' ? argv.map((arg) => (arg === '--project' ? '--setup-project' : arg)) : argv;
+}
+
 function parseOptions(argv: string[]): Options | 'help' {
   let parsed;
   try {
     parsed = parseArgs({
-      args: argv,
+      args: setupFlags(argv),
       allowPositionals: true,
       options: {
         project: { type: 'string' },
@@ -260,6 +278,7 @@ function parseOptions(argv: string[]): Options | 'help' {
         story: { type: 'string' },
         'keep-manifest': { type: 'boolean', default: false },
         'cache-dir': { type: 'string' },
+        'setup-project': { type: 'boolean', default: false },
         json: { type: 'boolean', default: false },
         yes: { type: 'boolean', default: false },
         'dry-run': { type: 'boolean', default: false },
@@ -369,6 +388,12 @@ function parseOptions(argv: string[]): Options | 'help' {
     if (!NOTIFY_KINDS.includes(kind as NotifyKind)) throw new UsageError(`notify needs one of: ${NOTIFY_KINDS.join(', ')}`);
     notifyKind = kind as NotifyKind;
   }
+  let setupScope: SetupScope | undefined;
+  if (command === 'setup') {
+    if (values.project !== undefined) throw new UsageError('setup --project takes no value: it installs into the repository at the working directory');
+    if (!values['setup-project']) throw new UsageError('setup needs --project: install Taigent into the repository at the working directory');
+    setupScope = 'project';
+  }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
     if (!PROJECTLESS.includes(command as Command)) throw new UsageError('--project <slug> is required');
@@ -410,6 +435,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     out: values.out,
     cacheDir: values['cache-dir'],
     review,
+    setupScope,
     json: values.json,
     yes: values.yes,
     dryRun: values['dry-run'],
@@ -716,13 +742,13 @@ async function runUpload(run: Run): Promise<number> {
 }
 
 /**
- * `init`: install Taigent into the repository at the working directory, from the running taigent. Offline; exit 3 for
- * a dry run with changes.
+ * `setup --project`: install Taigent into the repository at the working directory, from the running taigent. Offline;
+ * exit 3 for a dry run with changes.
  */
-async function runInit(run: Run): Promise<number> {
+async function runSetup(run: Run): Promise<number> {
   const { options, cwd } = run;
-  const report = await initRepository(cwd, { dryRun: options.dryRun });
-  const count = (status: InitStatus) => report.files.filter((file) => file.status === status).length;
+  const report = await setupProject(cwd, { dryRun: options.dryRun });
+  const count = (status: SetupStatus) => report.files.filter((file) => file.status === status).length;
   const changes = report.files.some(({ status }) => status !== 'unchanged');
   emit(run, report, () => {
     const lines = report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`);
@@ -1103,8 +1129,8 @@ async function runMcp(run: Run): Promise<number> {
 
 function dispatch(run: Run): Promise<number> {
   switch (run.options.command) {
-    case 'init':
-      return runInit(run);
+    case 'setup':
+      return runSetup(run);
     case 'validate':
       return runValidate(run);
     case 'preview':
@@ -1201,7 +1227,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
       error instanceof TicketError ||
       error instanceof SprintError ||
       error instanceof NotifyConfigError ||
-      error instanceof InitError ||
+      error instanceof SetupError ||
       error instanceof HistoryCacheError ||
       error instanceof AdoptError ||
       error instanceof PullKeyError ||

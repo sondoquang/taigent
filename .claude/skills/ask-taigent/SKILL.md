@@ -28,13 +28,14 @@ Beside the main flow:
 - **`taiga-upload-docs`**: specs, ADRs, guides and meeting notes as wiki pages and attachments, declared in `taiga/<slug>/docs.yaml`, after bootstrap (and after the backlog when attachments target item keys).
 - **`taiga-status-report`**: progress by sprint and by epic, or one quick count or lookup. Read-only through the MCP server, any time.
 - **`taiga-my-tickets`**: your tickets (user stories assigned to you) in a period, this week by default: closed, due and still open, with due status and effort. Read-only through `taigent tickets`, any time.
+- **`taiga-dashboard`**: the dashboard of one project for your role (Developer, Product Owner or Business Analyst), that role's metrics first: workload, cycle time and bugs; releases, requirements coverage, items awaiting review and pending clarification; requirement changes. It asks your role when you name none and never stores it. Read-only through `taigent metrics`, any time.
 - **`taiga-update-ticket`**: move your own tickets to another status (close = `Done`) or comment on one, at once: the request is the confirmation. Through `taigent status` and `taigent comment`, never MCP.
 
 ## On-ramps
 
 Starting situations, and where each merges onto the flow.
 
-- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npm install -D github:sondoquang/taigent`, then `npx taigent init` (the skills, the `taiga` MCP server entries of `.mcp.json` and `.codex/config.toml`, the headless kit, and `taigent` pinned to its release tag; safe to re-run after an upgrade), then `npm install`. `taiga-setup` checks the CLI, the login (`taigent whoami`; the user runs `npx taigent login` in their own terminal, which stores a token in the OS credential store, never the password) and the MCP server (`taigent mcp`), including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
+- **New machine, or a project that should use these skills** → `taiga-setup`. In another project: `npm i -g taigent`, then `npx taigent setup --project` (the skills, the `taiga` MCP server entries of `.mcp.json` and `.codex/config.toml`, the headless kit, and `taigent` pinned to its npm version; safe to re-run after an upgrade), then `npm install`. `taiga-setup` checks the CLI, the login (`taigent whoami`; the user runs `npx taigent login` in their own terminal, which stores a token in the OS credential store, never the password) and the MCP server (`taigent mcp`), including a project server left pending or rejected, and names each fix (`docs/cli.md` §Using the skills in another project).
 - **Brand-new Taiga project** → `taiga-bootstrap-project`, then `taiga-plan-backlog` and `taiga-upload-docs`.
 - **Project already on Taiga** (made by hand, no manifest yet) → `taiga-setup` → `taiga-bootstrap-project` with `existing: true` in `project.yaml` (only when you are its admin; it completes modules, tags, members without renaming) → `taiga-plan-backlog`, which runs `taigent snapshot` and adopts hand-made items on demand: only the ones the spec touches (duplicate, needs edit, needed parent), each after your yes, with `taigent adopt`. Taiga is the source of truth; the manifest is a draft of what is not applied yet (ADR 0006). To add one story under a hand-made epic, `taiga-create-user-story` works without a manifest: it reads `taigent snapshot`, adopts that epic (which creates `backlog.yaml`) and creates the story in the same plan; it hands over to `taiga-plan-backlog` only when no epic fits.
 - **Plan exits 6 (blocked items: `remote-edit`, `both-edited`, `unknown`)** → `taiga-plan-backlog` step 3 settles each (`taiga-apply-backlog` follows it): `taigent pull` (Taiga wins), a merge then `pull --keep-manifest`, or `--keep-manifest` only when you deliberately keep the manifest after seeing the item. An item adopted and then edited on Taiga before apply is blocked too. An item whose `src:` tag was removed on Taiga is blocked (`remote-edit`, field `tags`): restore the tag on Taiga or write its `ref` in `backlog.yaml`. When pull cannot parse a story back (exit 4, kind `pull`), the agent rewrites it in its own format: the user story format stays so, a legacy story's criteria are re-split with you, never converted. The first plan after an upgrade shows earlier items that differ from Taiga as `unknown`.
@@ -46,6 +47,7 @@ Starting situations, and where each merges onto the flow.
 - **A bug, a question or a small enhancement to file on Taiga** → `taiga-plan-backlog`: it writes an issue in the `issues` list of `backlog.yaml`, with the project's own type, severity and priority names (conventions §6.4), then review and `taiga-apply-backlog`. Never MCP `createIssue`, nor the banned `batchCreateIssues`.
 - **"How far along are we?" or "how many …?"** → `taiga-status-report`.
 - **"What are my tickets this week?" or "what did I close last week?"** → `taiga-my-tickets`.
+- **"Dashboard of project X", "how are our releases?", "what is awaiting review?", "what is my workload?"** → `taiga-dashboard`.
 - **"Close #84", "move the login ticket to Ready for test", "comment on #84"** → `taiga-update-ticket`.
 - **Daily ticket messages and chat on Telegram** → README §6 (Bun, bot, plugin, pairing, permissions, schedule), set up once per user and machine; how it works in `docs/cli.md` §Telegram.
 - **Remove, rename or move items on Taiga** → the CLI never deletes. An item dropped from the manifest becomes an **orphan** that `plan` reports; a moved story keeps its old epic link, reported as `staleLinks`. A human cleans both up on Taiga. Keys never change after apply: a new key is a new item.
@@ -79,10 +81,11 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 | `taigent bootstrap --project <slug> --dry-run\|--yes` | Create or complete the project from `project.yaml` | bootstrap-project |
 | `taigent upload --project <slug> --dry-run\|--yes` | Wiki pages and attachments from `docs.yaml` | upload-docs |
 | `taigent tickets --from <day> --to <day> [--project <slug>]` | Your tickets closed or due in those days and every open one, with due status and effort; read-only | my-tickets, update-ticket |
+| `taigent metrics --project <slug>` | The project's dashboard metrics for every role; read-only | dashboard |
 | `taigent status --project <slug> <ref> <status>` | Move your ticket to that status, at once | update-ticket |
 | `taigent comment --project <slug> <ref> <text>` | Comment on your ticket, at once | update-ticket |
 | `taigent notify week\|day\|eod [--dry-run]` | Your tickets of the week, of the day, or due by today and still open, to your Telegram chat | a scheduled task (Task Scheduler, cron) |
-| `taigent init [--dry-run]` | Install or update Taigent in a project: skills, MCP entries, headless kit, pinned devDependency; offline | taiga-setup, you |
+| `taigent setup --project [--dry-run]` | Install or update Taigent in a project: skills, MCP entries, headless kit, pinned devDependency; offline | taiga-setup, you |
 | `taigent skills sync\|check` | Skill maintenance, below | you |
 
 ## Maintaining the skills

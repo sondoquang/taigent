@@ -29,11 +29,11 @@ tools/taiga/run-skill.sh --output-format text codex taiga-plan-backlog docs/spec
 
 Options go before the agent. The **repository is the current directory**: run the wrapper from the repository root,
 wherever the script itself lives (`tools/taiga/` of this repository, or `node_modules/taigent/tools/taiga/` in a
-repository set up by `taigent init`). It reads that repository's `.agents/skills/` and
-`tools/taiga/allowlist.txt` (the one `init` installed), the agent starts there (where `.mcp.json`,
+repository set up by `taigent setup --project`). It reads that repository's `.agents/skills/` and
+`tools/taiga/allowlist.txt` (the one `setup --project` installed), the agent starts there (where `.mcp.json`,
 `.codex/config.toml` and the skills live), and the wrapper exits with the agent's exit code. Wrapper errors (unknown
 option, output format, agent or skill; missing arguments; no `tools/taiga/allowlist.txt` in the current directory, or
-for `omp` no `tools/taiga/omp-guard.mjs`, whose messages name `npx taigent init`; agent not on `PATH`) print
+for `omp` no `tools/taiga/omp-guard.mjs`, whose messages name `npx taigent setup --project`; agent not on `PATH`) print
 `run-skill: <reason>` to stderr and exit 2.
 Log in first with `npx taigent login` in your own terminal, on the machine that runs the wrapper (or, on a machine
 without an OS credential store, set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD`); the `taiga-setup` skill
@@ -91,7 +91,7 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
 It holds:
 
 - `Bash(npx taigent <command> *)` and `PowerShell(npx taigent <command> *)` for `validate`, `plan`, `apply`,
-  `bootstrap`, `upload`, `tickets`, `status`, `comment`, `preview`, `projects`, `report`, `snapshot`, `adopt`, `pull`: writes
+  `bootstrap`, `upload`, `tickets`, `status`, `comment`, `preview`, `projects`, `report`, `snapshot`, `adopt`, `pull`, `metrics`: writes
   to Taiga go through the CLI only.
   `apply`/`bootstrap`/`upload` still need `--yes`, which the skills add only after the user's explicit confirmation,
   so a headless run of `taiga-apply-backlog` stops at the plan unless its arguments carry that confirmation.
@@ -100,8 +100,9 @@ It holds:
   `projects` only reads (the user's projects, or one project's issue types, severities and priorities); so do
   `report` (one project's progress by sprint and by epic), `snapshot` (the whole backlog, written to the
   git-ignored `taiga/<slug>/snapshot.json`), `adopt` (one hand-made item, written into `backlog.yaml` and the
-  `adopted` map of `state.json`) and `pull`
-  (Taiga's values of backlog items, written into `backlog.yaml` and `state.json`).
+  `adopted` map of `state.json`), `pull`
+  (Taiga's values of backlog items, written into `backlog.yaml` and `state.json`) and `metrics` (one project's
+  dashboard metrics, for `taiga-dashboard`).
 - The Taiga MCP read tools of `taiga-mcp-server@1.9.20` (`list*`, `get*`, `getMilestoneStats`,
   `getIssuesByMilestone`, `advancedSearch`, `queryHelp`, `validateQuery`) as `mcp__taiga__<tool>`.
 
@@ -112,7 +113,7 @@ the Codex shell hook. Codex gets the MCP tool names as `enabled_tools`; for the 
 `Bash(…)`/`PowerShell(…)` rules of the file on every command, and `.codex/rules/taigent.rules` repeats the taigent
 commands in Codex's rule language, which cannot read files (`test/headless.test.ts` fails when the two lists differ).
 
-`taigent init` installs the allowlist, the OMP guard, the hook and the rule into another repository at these same
+`taigent setup --project` installs the allowlist, the OMP guard, the hook and the rule into another repository at these same
 paths, with the Taigent skills and the MCP entries (`docs/cli.md` §Using the skills in another project); re-running
 it after a taigent upgrade brings them up to date.
 
@@ -177,7 +178,7 @@ How Codex decides a shell command under `codex exec`:
    (`codex-rs/core/src/exec_policy.rs`, `policy_files`). A matching `decision = "allow"` rule runs the command
    **outside the sandbox** without prompting (`Decision::Allow` → `ExecApprovalRequirement::Skip { bypass_sandbox:
    true }`, then `SandboxOverride::BypassSandboxFirstAttempt` in `codex-rs/core/src/tools/sandboxing.rs`), so it has
-   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets|status|comment|preview|projects|report|snapshot|adopt|pull …`; its
+   network access. `.codex/rules/taigent.rules` allows `npx taigent validate|plan|apply|bootstrap|upload|tickets|status|comment|preview|projects|report|snapshot|adopt|pull|metrics …`; its
    `match`/`not_match` examples are checked by Codex when it loads the file.
 3. A command that **no rule matches** is decided by `render_decision_for_unmatched_command_for_platform`
    (`exec_policy.rs`): under `never` it is *allowed* inside the sandbox unless flagged dangerous. Rules cannot

@@ -12,17 +12,17 @@ from your project's root folder.
 ### 1. Install
 
 ```sh
-npm install -D github:sondoquang/taigent
-npx taigent init
+npm i -g taigent
+npx taigent setup --project
 npm install
 ```
 
-The first command installs the `taigent` CLI and the Taiga MCP server into `node_modules` (nothing system-wide) and
-creates `package.json` if the project has none. `taigent init` then adds the eleven Taigent skills to `.agents/skills/`
+The first command installs the `taigent` CLI from npm, already built, and creates nothing in your project.
+`taigent setup --project` then adds the Taigent skills to `.agents/skills/`
 (Codex) and `.claude/skills/` (Claude Code), the `taiga` MCP server to `.mcp.json` and `.codex/config.toml`, the
 headless kit (`tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`, `.codex/hooks/`, `.codex/rules/`), the
 `.gitignore` lines of the BA preview working copies (`taiga/*/preview.md`, `taiga/*/.preview/`), and pins `taigent` in
-`package.json` to its release tag, which `npm install` installs. It keeps your other skills, servers and dependencies,
+`package.json` to its npm version, which `npm install` installs. It keeps your other skills, servers and dependencies,
 and lists every file it wrote (`--dry-run` shows them first).
 
 ### 2. Log in to Taiga
@@ -53,14 +53,14 @@ Credentials: stored login (refresh-token, in Windows Credential Manager)
 
 ### 3. Connect your agent to Taiga
 
-`taigent init` (step 1) wrote the `taiga` server into `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex).
+`taigent setup --project` (step 1) wrote the `taiga` server into `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex).
 
 **Claude Code.** Start `claude` in the project and answer **yes** when it asks to use the `taiga` server. `/mcp` then
 shows `taiga` as connected.
 
 **Codex.** Codex reads `.codex/config.toml` once you trust the project.
 
-None of the files `init` wrote holds a password, so commit them: teammates then only run `npm install` in step 1 and
+None of the files `setup --project` wrote holds a password, so commit them: teammates then only run `npm install` in step 1 and
 skip this step.
 
 ### 4. Check everything
@@ -71,7 +71,7 @@ server: three `ok` means you are done. Anything else comes with the fix.
 ### 5. Try it
 
 Ask for your tickets with `/taiga-my-tickets` (e.g. `/taiga-my-tickets October`), or close one with "close #84"
-(`taiga-update-ticket`). Not sure which skill fits? Ask `/ask-taigent` (`$ask-taigent` in Codex).
+(`taiga-update-ticket`), or ask for a project's dashboard for your role (`taiga-dashboard`). Not sure which skill fits? Ask `/ask-taigent` (`$ask-taigent` in Codex).
 
 ### 6. Optional: your tickets on Telegram
 
@@ -194,8 +194,8 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
 - No credential store (CI, headless Linux)? Set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` (or
   `TAIGA_TOKEN`) in the environment or a git-ignored `.env` (see `.env.example`). They take precedence over the stored
   login.
-- Update later with `npm install -D github:sondoquang/taigent`, then `npx taigent init` (it updates the skills and
-  the pin) and `npm install`.
+- Update later with `npm i -g taigent@latest`, then `npx taigent setup --project` (it updates the skills and the pin) and
+  `npm install`.
 - Details: [docs/cli.md](docs/cli.md) (commands, credentials, manifests, exit codes) and
   [§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).
 

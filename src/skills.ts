@@ -1,5 +1,5 @@
 // Skills: the Taigent skills (every `taiga-*` skill plus `ask-taigent` and `prd-to-taiga`) have one source,
-// `.agents/skills/` (read by Codex). `.claude/skills/` holds byte-identical copies for Claude Code; `taigent init`
+// `.agents/skills/` (read by Codex). `.claude/skills/` holds byte-identical copies for Claude Code; `taigent setup --project`
 // copies both from the running package into another repository. Only Taigent skill directories are compared or
 // written; other skills (e.g. the vendored mattpocock ones) are never touched.
 

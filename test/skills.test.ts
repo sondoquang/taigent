@@ -161,7 +161,7 @@ test('skills commands outside a repository root are a usage error (exit 2)', asy
   assert.match(noAction.stderr, /skills needs one of: sync, check/);
 });
 
-const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-review-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-dashboard', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-review-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 
 test('the repository holds exactly the Taigent skills, with Claude copies that match .agents/skills', async () => {
   const result = await skills(['check', '--json'], REPO_ROOT);
@@ -205,7 +205,7 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
  * `comment` edit one of the user's own tickets, named in the request itself, so their skill may run implicitly. The
  * `review` subcommands are listed one by one: setting a verdict is the reviewer's own decision.
  */
-const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'snapshot', 'adopt', 'pull', 'review approve', 'review request-changes', 'review comment', 'review resolve'];
+const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'snapshot', 'adopt', 'pull', 'metrics', 'review approve', 'review request-changes', 'review comment', 'review resolve'];
 /** The review subcommands that set a verdict. */
 const VERDICT_COMMANDS = ['review approve', 'review request-changes'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
@@ -255,6 +255,7 @@ test('each taiga-* skill and prd-to-taiga pre-approve only the commands of their
     'taiga-upload-docs': shellRules('validate', 'upload'),
     'taiga-my-tickets': shellRules('tickets'),
     'taiga-update-ticket': shellRules('tickets', 'status', 'comment'),
+    'taiga-dashboard': shellRules('metrics'),
     'taiga-status-report': [],
     'taiga-setup': [],
   };
@@ -302,6 +303,31 @@ test('taiga-my-tickets pre-approves only taigent tickets, may be invoked implici
   assert.deepEqual(allowedTools, shellRules('tickets'));
   const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
   assert.match(router, /`taiga-my-tickets`/);
+});
+
+test('taiga-dashboard reads only taigent metrics, may be invoked implicitly, reports each role\'s metrics first in glossary terms, and ask-taigent routes to it', async () => {
+  const { frontmatter, allowedTools, openai } = await readSkill('taiga-dashboard');
+
+  assert.notEqual(frontmatter['disable-model-invocation'], true);
+  assert.equal(openai.policy?.allow_implicit_invocation, true);
+  // Its only pre-approval: nothing that writes a file or to Taiga, so the role it asks for is never stored.
+  assert.deepEqual(allowedTools, shellRules('metrics'));
+
+  const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-dashboard/SKILL.md'), 'utf8');
+  const glossary = new Set([...(await readFile(join(REPO_ROOT, 'GLOSSARY.md'), 'utf8')).matchAll(/^\*\*(.+?)\*\*:\r?$/gm)].map((match) => match[1]!));
+  const firstMetrics: Record<string, string[]> = {
+    Developer: ['Workload', 'Cycle time', 'Bug'],
+    'Product Owner': ['Release', 'Requirements coverage', 'Awaiting review', 'Pending clarification'],
+    'Business Analyst': ['Requirements coverage', 'Requirement change', 'Awaiting review'],
+  };
+  for (const [role, terms] of Object.entries(firstMetrics)) {
+    const section = new RegExp(`^### ${role}\\r?\\n([\\s\\S]*?)(?=^#|(?![\\s\\S]))`, 'm').exec(skill)?.[1] ?? '';
+    const named = [...section.matchAll(/\*\*(.+?)\*\*/g)].map((match) => match[1]!);
+    for (const term of terms) assert.ok(named.includes(term), `${role} reports ${term} first`);
+    for (const term of named) assert.ok(glossary.has(term), `${role}: ${term} is a GLOSSARY.md term`);
+  }
+  const router = await readFile(join(REPO_ROOT, '.agents/skills/ask-taigent/SKILL.md'), 'utf8');
+  assert.match(router, /`taiga-dashboard`/);
 });
 
 test('taiga-update-ticket edits your tickets through taigent only, may be invoked implicitly, and ask-taigent routes to it', async () => {

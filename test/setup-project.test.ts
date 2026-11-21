@@ -10,11 +10,11 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const VERSION = (JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string }).version;
 
 type Status = 'created' | 'updated' | 'unchanged' | 'removed';
-interface InitReport {
+interface SetupReport {
   files: { path: string; status: Status }[];
 }
 
-const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-review-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
+const TAIGENT_SKILLS = ['ask-taigent', 'prd-to-taiga', 'taiga-apply-backlog', 'taiga-bootstrap-project', 'taiga-create-user-story', 'taiga-dashboard', 'taiga-my-tickets', 'taiga-plan-backlog', 'taiga-review-backlog', 'taiga-setup', 'taiga-status-report', 'taiga-update-ticket', 'taiga-upload-docs'];
 const KIT = ['tools/taiga/allowlist.txt', 'tools/taiga/omp-guard.mjs', '.codex/hooks/taigent-shell-guard.mjs', '.codex/rules/taigent.rules'];
 const CONFIGS = ['.mcp.json', '.codex/config.toml', 'package.json', '.gitignore'];
 const IGNORES = ['taiga/*/preview.md', 'taiga/*/.preview/', 'taiga/*/snapshot.json'];
@@ -27,9 +27,9 @@ const toml = (text: string) => JSON.parse(JSON.stringify(parseToml(text)));
 const MCP_ENTRY = JSON.parse(installed(await readFile(join(REPO_ROOT, '.mcp.json'), 'utf8'))).mcpServers.taiga;
 const CODEX_ENTRY = toml(installed(await readFile(join(REPO_ROOT, '.codex/config.toml'), 'utf8'))).mcp_servers.taiga;
 
-const init = (h: Harness, args: string[] = []) => h.taigent(['init', ...args], { env: OFFLINE });
+const setup = (h: Harness, args: string[] = []) => h.taigent(['setup', '--project', ...args], { env: OFFLINE });
 const read = (h: Harness, file: string) => readFile(join(h.cwd, file), 'utf8');
-const statuses = (report: InitReport) => Object.fromEntries(report.files.map(({ path, status }) => [path, status]));
+const statuses = (report: SetupReport) => Object.fromEntries(report.files.map(({ path, status }) => [path, status]));
 
 async function writeFiles(h: Harness, files: Record<string, string>): Promise<void> {
   for (const [file, content] of Object.entries(files)) {
@@ -48,13 +48,13 @@ async function tree(dir: string): Promise<string[]> {
   }
 }
 
-test('init on an empty folder creates the skills, the MCP entries, the headless kit and the pinned devDependency', async (t) => {
+test('setup --project on an empty folder creates the skills, the MCP entries, the headless kit and the devDependency pinned to the npm version', async (t) => {
   const h = await startHarness(t);
 
-  const result = await init(h, ['--json']);
+  const result = await setup(h, ['--json']);
 
   assert.equal(result.code, 0, result.stderr);
-  const report = result.json<InitReport>();
+  const report = result.json<SetupReport>();
   assert.ok(report.files.length > 0);
   assert.ok(report.files.every(({ status }) => status === 'created'), JSON.stringify(report.files));
   const paths = report.files.map(({ path }) => path);
@@ -73,25 +73,25 @@ test('init on an empty folder creates the skills, the MCP entries, the headless 
 
   assert.deepEqual(JSON.parse(await read(h, '.mcp.json')), { mcpServers: { taiga: MCP_ENTRY } });
   assert.deepEqual(toml(await read(h, '.codex/config.toml')), { mcp_servers: { taiga: CODEX_ENTRY } });
-  assert.deepEqual(JSON.parse(await read(h, 'package.json')), { devDependencies: { taigent: `github:sondoquang/taigent#v${VERSION}` } });
+  assert.deepEqual(JSON.parse(await read(h, 'package.json')), { devDependencies: { taigent: VERSION } });
   assert.deepEqual((await read(h, '.gitignore')).split('\n').filter((line) => line && !line.startsWith('#')), IGNORES);
   assert.deepEqual(h.fake.requests, []);
 });
 
-test('init run again finds every file unchanged and exits 0', async (t) => {
+test('setup --project run again finds every file unchanged and exits 0', async (t) => {
   const h = await startHarness(t);
-  assert.equal((await init(h)).code, 0);
+  assert.equal((await setup(h)).code, 0);
 
-  const again = await init(h, ['--json']);
-  const dryRun = await init(h, ['--dry-run', '--json']);
+  const again = await setup(h, ['--json']);
+  const dryRun = await setup(h, ['--dry-run', '--json']);
 
   assert.equal(again.code, 0, again.stderr);
-  assert.ok(again.json<InitReport>().files.every(({ status }) => status === 'unchanged'), again.stdout);
+  assert.ok(again.json<SetupReport>().files.every(({ status }) => status === 'unchanged'), again.stdout);
   assert.equal(dryRun.code, 0, dryRun.stderr);
   assert.deepEqual(dryRun.json(), again.json());
 });
 
-test('init keeps other skills, MCP servers, settings and dependencies, and its merged JSON and TOML stay valid', async (t) => {
+test('setup --project keeps other skills, MCP servers, settings and dependencies, and its merged JSON and TOML stay valid', async (t) => {
   const h = await startHarness(t);
   const codexConfig = [
     '# team settings',
@@ -121,10 +121,10 @@ test('init keeps other skills, MCP servers, settings and dependencies, and its m
     '.gitignore': 'node_modules/\r\ntaiga/*/preview.md  \r\ndist/',
   });
 
-  const result = await init(h, ['--json']);
+  const result = await setup(h, ['--json']);
 
   assert.equal(result.code, 0, result.stderr);
-  const status = statuses(result.json<InitReport>());
+  const status = statuses(result.json<SetupReport>());
   assert.equal(status['.mcp.json'], 'updated');
   assert.equal(status['.codex/config.toml'], 'updated');
   assert.equal(status['package.json'], 'updated');
@@ -149,46 +149,46 @@ test('init keeps other skills, MCP servers, settings and dependencies, and its m
     name: 'app',
     scripts: { test: 'vitest' },
     dependencies: { react: '^19.0.0' },
-    devDependencies: { vitest: '^3.0.0', taigent: `github:sondoquang/taigent#v${VERSION}` },
+    devDependencies: { vitest: '^3.0.0', taigent: VERSION },
   });
   // Only the missing lines are added, in the file's own line endings; every other line stays.
   assert.equal(await read(h, '.gitignore'), `node_modules/\r\ntaiga/*/preview.md  \r\ndist/\r\n\r\n${IGNORE_COMMENT}\r\ntaiga/*/.preview/\r\ntaiga/*/snapshot.json\r\n`);
 
-  const again = await init(h, ['--json']);
-  assert.ok(again.json<InitReport>().files.every(({ status }) => status === 'unchanged'), again.stdout);
+  const again = await setup(h, ['--json']);
+  assert.ok(again.json<SetupReport>().files.every(({ status }) => status === 'unchanged'), again.stdout);
 });
 
-test('init run again on an older install adds the snapshot ignore line once', async (t) => {
+test('setup --project run again on an older install adds the snapshot ignore line once', async (t) => {
   const h = await startHarness(t);
   const older = 'node_modules/\n\n# Taigent: BA preview working copies (taiga-apply-backlog carries the edits into backlog.yaml)\ntaiga/*/preview.md\ntaiga/*/.preview/\n';
   await writeFiles(h, { '.gitignore': older });
 
-  const result = await init(h, ['--json']);
-  const again = await init(h, ['--json']);
+  const result = await setup(h, ['--json']);
+  const again = await setup(h, ['--json']);
 
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(statuses(result.json<InitReport>())['.gitignore'], 'updated');
+  assert.equal(statuses(result.json<SetupReport>())['.gitignore'], 'updated');
   assert.equal(await read(h, '.gitignore'), `${older}\n${IGNORE_COMMENT}\ntaiga/*/snapshot.json\n`);
-  assert.equal(statuses(again.json<InitReport>())['.gitignore'], 'unchanged');
+  assert.equal(statuses(again.json<SetupReport>())['.gitignore'], 'unchanged');
   assert.equal((await read(h, '.gitignore')).split('\n').filter((line) => line === 'taiga/*/snapshot.json').length, 1);
 });
 
-test('init appends the taiga table to a Codex config without one', async (t) => {
+test('setup --project appends the taiga table to a Codex config without one', async (t) => {
   const h = await startHarness(t);
   await writeFiles(h, { '.codex/config.toml': '[mcp_servers.github]\ncommand = "github-mcp"' });
 
-  const result = await init(h, ['--json']);
+  const result = await setup(h, ['--json']);
 
   assert.equal(result.code, 0, result.stderr);
-  assert.equal(statuses(result.json<InitReport>())['.codex/config.toml'], 'updated');
+  assert.equal(statuses(result.json<SetupReport>())['.codex/config.toml'], 'updated');
   const codex = await read(h, '.codex/config.toml');
   assert.deepEqual(toml(codex), { mcp_servers: { github: { command: 'github-mcp' }, taiga: CODEX_ENTRY } });
   assert.ok(codex.startsWith('[mcp_servers.github]\ncommand = "github-mcp"\n'), codex);
 });
 
-test('init updates a Taigent skill that differs and removes a Taigent skill gone from taigent', async (t) => {
+test('setup --project updates a Taigent skill that differs and removes a Taigent skill gone from taigent', async (t) => {
   const h = await startHarness(t);
-  assert.equal((await init(h)).code, 0);
+  assert.equal((await setup(h)).code, 0);
   await writeFiles(h, {
     '.agents/skills/taiga-setup/SKILL.md': 'edited',
     '.claude/skills/taiga-setup/notes.md': 'stale',
@@ -196,10 +196,10 @@ test('init updates a Taigent skill that differs and removes a Taigent skill gone
     '.claude/skills/taiga-old/SKILL.md': 'retired skill',
   });
 
-  const result = await init(h, ['--json']);
+  const result = await setup(h, ['--json']);
 
   assert.equal(result.code, 0, result.stderr);
-  const changed = result.json<InitReport>().files.filter(({ status }) => status !== 'unchanged');
+  const changed = result.json<SetupReport>().files.filter(({ status }) => status !== 'unchanged');
   assert.deepEqual(changed, [
     { path: '.agents/skills/taiga-old/SKILL.md', status: 'removed' },
     { path: '.agents/skills/taiga-setup/SKILL.md', status: 'updated' },
@@ -211,19 +211,19 @@ test('init updates a Taigent skill that differs and removes a Taigent skill gone
   assert.deepEqual(await tree(join(h.cwd, '.claude/skills/taiga-setup')), await tree(join(REPO_ROOT, '.agents/skills/taiga-setup')));
 });
 
-test('init --dry-run lists the changes, writes nothing and exits 3', async (t) => {
+test('setup --project --dry-run lists the changes, writes nothing and exits 3', async (t) => {
   const h = await startHarness(t);
 
-  const empty = await init(h, ['--dry-run', '--json']);
+  const empty = await setup(h, ['--dry-run', '--json']);
 
   assert.equal(empty.code, 3, empty.stderr);
-  const report = empty.json<InitReport>();
+  const report = empty.json<SetupReport>();
   assert.ok(report.files.length > 0 && report.files.every(({ status }) => status === 'created'), empty.stdout);
   assert.deepEqual(await tree(h.cwd), []);
 
   const mcp = JSON.stringify({ mcpServers: { github: { command: 'github-mcp' } } });
   await writeFiles(h, { '.mcp.json': mcp, '.agents/skills/taiga-old/SKILL.md': 'retired skill' });
-  const text = await init(h, ['--dry-run']);
+  const text = await setup(h, ['--dry-run']);
   assert.equal(text.code, 3, text.stderr);
   assert.match(text.stdout, /^\.mcp\.json: updated$/m);
   assert.match(text.stdout, /^\.agents\/skills\/taiga-old\/SKILL\.md: removed$/m);
@@ -231,13 +231,13 @@ test('init --dry-run lists the changes, writes nothing and exits 3', async (t) =
   assert.equal(await read(h, '.mcp.json'), mcp);
 });
 
-test('init refuses a config it cannot merge (exit 2) and writes nothing', async (t) => {
+test('setup --project refuses a config it cannot merge (exit 2) and writes nothing', async (t) => {
   const invalid: [file: string, content: string][] = [['.mcp.json', '{ "mcpServers": '], ['.codex/config.toml', '[mcp_servers.taiga\n'], ['package.json', '[]']];
   for (const [file, content] of invalid) {
     const h = await startHarness(t);
     await writeFiles(h, { [file]: content });
 
-    const result = await init(h, ['--json']);
+    const result = await setup(h, ['--json']);
 
     assert.equal(result.code, 2, `${file}: ${result.stdout}`);
     assert.equal(result.json<{ error: { kind: string; message: string } }>().error.kind, 'usage');
@@ -246,9 +246,30 @@ test('init refuses a config it cannot merge (exit 2) and writes nothing', async 
   }
 });
 
-test('init refuses to install taigent into the running taigent itself (exit 2)', async () => {
-  const result = await runTaigent(['init', '--dry-run'], { env: OFFLINE, cwd: REPO_ROOT });
+test('setup --project refuses to install taigent into the running taigent itself (exit 2)', async () => {
+  const result = await runTaigent(['setup', '--project', '--dry-run'], { env: OFFLINE, cwd: REPO_ROOT });
 
   assert.equal(result.code, 2, result.stdout);
   assert.match(result.stderr, /another repository/);
+});
+
+test('init is no longer a command: an unknown command (exit 2) that writes nothing', async (t) => {
+  const h = await startHarness(t);
+
+  const result = await h.taigent(['init'], { env: OFFLINE });
+
+  assert.equal(result.code, 2, result.stdout);
+  assert.match(result.stderr, /unknown command "init"/);
+  assert.deepEqual(await tree(h.cwd), []);
+});
+
+test('setup without --project, or --project with a value, is a usage error (exit 2) that writes nothing', async (t) => {
+  const h = await startHarness(t);
+  for (const args of [['setup'], ['setup', '--dry-run'], ['setup', '--project', 'demo'], ['setup', '--project=demo'], ['validate', '--setup-project']]) {
+    const result = await h.taigent([...args, '--json'], { env: OFFLINE });
+
+    assert.equal(result.code, 2, `${args.join(' ')}: ${result.stdout}`);
+    assert.equal(result.json<{ error: { kind: string } }>().error.kind, 'usage', args.join(' '));
+  }
+  assert.deepEqual(await tree(h.cwd), []);
 });
