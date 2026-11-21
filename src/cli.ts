@@ -49,7 +49,8 @@ Commands:
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
-  tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
+  tickets   List your planned tickets (Ready, In progress, Ready for test) and those moved to Done from --from to --to,
+            by progress group, with finishing day and due status (read-only)
   projects  List the Taiga projects you are a member of, with admin rights and whether taiga/<slug>/ exists; with
             --project, that project's issue types, severities and priorities (read-only)
   report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
@@ -100,6 +101,8 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
   TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap --yes, status, comment, due) with
                                    exit 2; plan, preview, validate, metrics and --dry-run still work (Taigent Desktop's headless runs)
+  TAIGENT_NOW                      tickets, notify: the instant used as now (ISO 8601 with offset, e.g.
+                                   2026-11-19T10:00:00+07:00); default: the system clock
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
                                    .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
                                    (default: <CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram)
@@ -359,6 +362,16 @@ async function connectTaiga(run: Run, auth?: Auth): Promise<TaigaClient> {
   const common = { apiUrl: resolved.apiUrl, retryUnitMs: retryUnitMs(run.env), secrets: run.secrets };
   if (resolved.source === 'login') return TaigaClient.connect({ ...common, authorizer: resolved.session });
   return TaigaClient.connect({ ...common, token: resolved.token, credentials: resolved.credentials });
+}
+
+/** TAIGENT_NOW: the instant `tickets` and `notify` take as now (ISO 8601 with a time and an offset), else the system clock. */
+function clockNow(env: NodeJS.ProcessEnv): Date {
+  const raw = env.TAIGENT_NOW;
+  if (raw === undefined || raw === '') return new Date();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(raw) || Number.isNaN(Date.parse(raw))) {
+    throw new UsageError(`TAIGENT_NOW must be an ISO 8601 instant with an offset (e.g. 2026-11-19T10:00:00+07:00), got "${raw}"`);
+  }
+  return new Date(raw);
 }
 
 /** TAIGENT_RETRY_UNIT_MS: milliseconds per second of 429 backoff (default 1000). */
@@ -632,12 +645,13 @@ async function runPlan(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `tickets`: the user's Period's tickets with their due status. Read-only. */
+/** `tickets`: the user's Period's tickets by progress group, with their finishing day and due status. Read-only. */
 async function runTickets(run: Run): Promise<number> {
   const { options } = run;
+  const now = clockNow(run.env);
   const client = await connectTaiga(run);
   const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
-  const report = await readTickets(client, dayRange(options.from!, options.to!), project);
+  const report = await readTickets(client, dayRange(options.from!, options.to!), now, project);
   emit(run, report, () => formatTicketsText(report));
   return ExitCode.Ok;
 }
@@ -720,10 +734,11 @@ async function runNotify(run: Run): Promise<number> {
   // Before Taiga, so a missing Telegram setup fails fast; the token joins the secrets no output may show.
   const target = options.dryRun ? undefined : resolveTelegram(run.env);
   run.secrets.add(target?.token);
+  const now = clockNow(run.env);
   const client = await connectTaiga(run);
   const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
-  const range = notifyRange(kind, new Date());
-  const report = await readTickets(client, dayRange(range.from, range.to), project);
+  const range = notifyRange(kind, now);
+  const report = await readTickets(client, dayRange(range.from, range.to), now, project);
   const text = notifyMessage(kind, report);
   if (target && text !== null) await sendTelegram(target, text);
   const sent = target !== undefined && text !== null;

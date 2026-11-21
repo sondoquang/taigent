@@ -44,20 +44,20 @@ function section(title: string, tickets: Ticket[]): string[] {
 
 /**
  * The message of `kind`, in Vietnamese (the team's language), or null when there is nothing to say: `eod` with no
- * open ticket due by today.
- * - `week`: every open ticket by due status (Overdue, due this week, due later, no due date), and those closed so far.
- * - `day`: open tickets due today and Overdue ones, and how many others are open.
- * - `eod`: open tickets due today or Overdue, with how to close them from the chat.
+ * planned ticket not finished and due by today.
+ * - `week`: every planned ticket not finished by due date (Overdue, due this week, due later, no due date), and those done so far.
+ * - `day`: tickets not finished due today and Overdue ones, and how many others are not finished.
+ * - `eod`: tickets not finished due today or Overdue, with how to close them from the chat.
  */
 export function notifyMessage(kind: NotifyKind, report: TicketsReport): string | null {
-  const open = report.tickets.filter((ticket) => !ticket.isClosed);
+  const open = report.tickets.filter((ticket) => !ticket.isFinished);
   const overdue = open.filter((ticket) => ticket.dueStatus === 'Overdue');
   const scope = report.project === null ? '' : ` · ${report.project}`;
   if (kind === 'week') {
     const dueThisWeek = open.filter((ticket) => ticket.dueDate !== null && ticket.dueDate >= report.range.from && ticket.dueDate <= report.range.to);
     const dueLater = open.filter((ticket) => ticket.dueDate !== null && ticket.dueDate > report.range.to);
     const noDueDate = open.filter((ticket) => ticket.dueDate === null);
-    const closed = report.tickets.filter((ticket) => ticket.closedAt !== null && Date.parse(ticket.closedAt) >= Date.parse(report.range.start));
+    const closed = report.tickets.filter((ticket) => ticket.progress === 'Done');
     return [
       `📅 Tuần ${shortDay(report.range.from)} – ${longDay(report.range.to)} · ${report.user.username}${scope}`,
       `Đang mở ${open.length} ticket: quá hạn ${overdue.length}, đến hạn trong tuần ${dueThisWeek.length}, hạn sau ${dueLater.length}, chưa có hạn ${noDueDate.length}.`,

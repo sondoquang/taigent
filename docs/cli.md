@@ -39,6 +39,7 @@ the same variables, so `.env` reaches the Taiga MCP server too.
 | `TAIGENT_CREDENTIAL_STORE` | Where `login` keeps its token: `keyring` (default: Windows Credential Manager, macOS Keychain, Linux Secret Service) or `file` (`credentials.json` in the config directory, mode 0600, plain JSON: for machines without a credential store) |
 | `TAIGENT_CONFIG_DIR` | Config directory of the stored login, default `%APPDATA%\taigent` (Windows), `~/Library/Application Support/taigent` (macOS), `$XDG_CONFIG_HOME/taigent` or `~/.config/taigent` (Linux) |
 | `TAIGENT_READ_ONLY` | `1`: refuse every write to Taiga, see [Read-only runs](#read-only-runs). Taigent Desktop sets it on its headless skill runs |
+| `TAIGENT_NOW` | [`tickets`](#tickets) and [`notify`](#notify): the instant taken as now, ISO 8601 with a time and an offset (e.g. `2026-11-19T10:00:00+07:00`); default: the system clock. A seam for reproducible runs and tests |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | [`notify`](#notify): the bot and the chat to send to; default: the Claude Code Telegram plugin's own (see [Notify](#notify)) |
 | `TELEGRAM_STATE_DIR` | `notify`: the Telegram plugin's state directory, default `<CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram` (the plugin's own default) |
 | `TAIGENT_TELEGRAM_API_URL` | `notify`: Bot API base URL, default `https://api.telegram.org` (tests point it at a stand-in) |
@@ -932,22 +933,39 @@ the user (kind `project`; unlike `report`, which exits 5); exit 4 when `project.
 ## Tickets
 
 `taigent tickets --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--json]` lists the **Period's tickets**
-(`GLOSSARY.md`) of the user the CLI logs in as: the user stories assigned to them that Taiga closed between the two
-days, or that are due between them, plus every story still open, each with its **Due status**. Tasks and issues are not
-tickets. Read-only: it needs no manifest and writes nothing. Days are calendar days in the machine's local time zone
-(`TZ`), both included; `--project` keeps one project, otherwise every project the user sees. It answers what the Taiga
-MCP server (taiga-mcp-server@1.9.20) cannot: no MCP tool shows when an item was closed, and `advancedSearch` matches
-nothing on status, assignee or dates.
+(`GLOSSARY.md`) of the user the CLI logs in as: every **Planned ticket** (a user story assigned to them in `Ready`,
+`In progress` or `Ready for test`, whatever its due date) plus the stories that Taiga closed in `Done` between the two
+days, each with its progress group, **Finishing day** and **Due status**. Stories in `New` (not planned yet) or
+`Archived` are not tickets, nor are tasks and issues. Read-only: it needs no manifest and writes nothing. Days are
+calendar days in the machine's local time zone (`TZ`), both included; `--project` keeps one project, otherwise every
+project the user sees. It answers what the Taiga MCP server (taiga-mcp-server@1.9.20) cannot: no MCP tool shows when
+an item was closed or finished, and `advancedSearch` matches nothing on status, assignee or dates.
+
+"Now" is `TAIGENT_NOW` when set (an ISO 8601 instant with a time and an offset, e.g. `2026-11-19T10:00:00+07:00`),
+else the system clock; `today` is its local day. `TAIGENT_NOW` is a seam for reproducible runs and tests (`notify`
+uses the same clock); an invalid value is a usage error (exit 2) before Taiga is contacted.
 
 It reads `GET /users/me`, then every `GET /userstories?assigned_users=<me>` (open and closed, plus `project=<id>` with
 `--project`; pagination disabled, so no page is missed), then `GET /projects/<id>` for each project holding a ticket,
-to turn assignee ids into usernames and find its user story custom attribute "Spent Time", then, in a project that has
-it, `GET /userstories/custom-attributes-values/<id>` for each ticket. A story is a ticket when its `finish_date` falls
-in the range, its `due_date` (a plain day) falls in it, or it is open. Due status compares calendar days: a closed
-ticket's local closing day on or before its due date is `On time`, after it `Late`; an open ticket's due date before
-today is `Overdue`, otherwise `On track`; without a due date, `No due date`. A closed story without a `finish_date`
-still counts as closed, has no `closedAt`, and is a ticket only when due in the range; its due status is `null`
-(unknown, it cannot be compared).
+to turn assignee ids into usernames and find its user story custom attribute "Spent Time". In a project holding a
+**Finished ticket** (`Ready for test` or `Done`) it reads `GET /userstory-statuses?project=<id>` and, for each finished
+ticket only, `GET /history/userstory/<id>`, the reads `metrics` makes, with the same status-name resolution (a status
+the history recorded is named as in the project's status list). Then, in a project that has "Spent Time",
+`GET /userstories/custom-attributes-values/<id>` for each ticket. Status names are matched exactly, as the default
+template names them (`docs/taiga/conventions.md` §7); a `Done` story is a ticket when its `finish_date` falls in the
+range (a `Done` story without one is not).
+
+The progress group (`progress`) is the ticket's status: `Ready` (planned, not started), `In progress`,
+`Ready for test` (waiting for QA/QC) or `Done`; a ticket in the last two is finished (`isFinished`). Its finishing day
+(`finishedAt`, an instant) is the last status change in its history *into* `Ready for test` or `Done` from a status
+that is neither, so a ticket QA/QC returned to `In progress` and that was finished again finishes on the later move,
+and `Ready for test` → `Done` does not move it. Without such a change, a `Done` ticket finishes at Taiga's closing
+instant (`closedAt`, its `finish_date`) and a `Ready for test` ticket has no finishing day (`null`).
+
+Due status compares calendar days, the due date being the day the ticket must be finished. A finished ticket's local
+finishing day on or before its due date is `On time`, after it `Late`; with a due date but no finishing day its due
+status is `null` (unknown: it cannot be compared). A ticket not finished whose due date is before today is `Overdue`,
+today `Due today`, after today `On track`. Without a due date, any ticket is `No due date`.
 
 **Effort** (`GLOSSARY.md`) is in hours. The "Spent Time" attribute is found by name in each project (trimmed, any case),
 since its id differs from project to project. A ticket whose Spent Time holds a number has that effort, source
@@ -956,61 +974,65 @@ since its id differs from project to project. A ticket whose Spent Time holds a 
 `notes.missingEffort` (`ref`, project slug). A project without the attribute uses points only.
 
 Missing or invalid days, or `--from` after `--to`, are a usage error (exit 2) before Taiga is contacted. The text form
-gives one line of totals (closed tickets by due status, open tickets by due status, total effort with the number of
-tickets per source), then each project with one line per ticket (ref, due status, status, due date, local closing
-time, effort, subject); an effort from points reads `5h (estimated from points)`, a missing one `no effort`.
-`tickets --json` prints a `TicketsReport`:
+gives a line of totals (tickets, today, total effort with the number of tickets per source), one line of counts by
+progress group, one of tickets not finished by due status and one of finished tickets by due status (with
+`without a finishing day N` when some have none), then each project with one line per ticket (ref, progress group, due
+status, due date, `finished <local time>` or `not finished`, effort, subject); an effort from points reads
+`5h (estimated from points)`, a missing one `no effort`. `tickets --json` prints a `TicketsReport`:
 
 ```json
 {
   "user": { "id": 12, "username": "son.do" },
   "project": null,
-  "range": { "from": "2026-10-26", "to": "2026-11-01", "start": "2026-10-25T17:00:00.000Z", "end": "2026-11-01T17:00:00.000Z" },
-  "today": "2026-11-01",
-  "generatedAt": "2026-11-01T07:05:12.345Z",
+  "range": { "from": "2026-11-16", "to": "2026-11-22", "start": "2026-11-15T17:00:00.000Z", "end": "2026-11-22T17:00:00.000Z" },
+  "today": "2026-11-19",
+  "generatedAt": "2026-11-19T03:00:00.000Z",
   "tickets": [
-    { "id": 281, "ref": 84, "subject": "Guideline flow", "status": "Done", "isClosed": true,
-      "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" }, "assignees": ["son.do", "an.tran"],
-      "dueDate": "2026-10-30", "closedAt": "2026-11-01T04:26:49.642Z", "dueStatus": "Late",
-      "effort": 8, "effortSource": "spent" }
+    { "id": 281, "ref": 84, "subject": "Guideline flow", "status": "Ready for test", "progress": "Ready for test",
+      "isFinished": true, "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" },
+      "assignees": ["son.do", "an.tran"], "dueDate": "2026-11-18", "closedAt": null,
+      "finishedAt": "2026-11-18T09:12:40.118Z", "dueStatus": "Late", "effort": 8, "effortSource": "spent" }
   ],
   "days": [
-    { "date": "2026-10-26", "closed": 0, "effort": 0 },
-    { "date": "2026-11-01", "closed": 18, "effort": 96 }
+    { "date": "2026-11-16", "finished": 0, "effort": 0 },
+    { "date": "2026-11-18", "finished": 3, "effort": 14 }
   ],
   "summary": {
-    "tickets": 21,
-    "closed": { "total": 19, "byDueStatus": { "On time": 1, "Late": 17, "No due date": 1 }, "withoutClosingDay": 0 },
-    "open": { "total": 2, "byDueStatus": { "Overdue": 2, "On track": 0, "No due date": 0 } },
-    "effort": { "hours": 104, "spent": { "hours": 60, "tickets": 11 }, "points": { "hours": 44, "tickets": 8 } },
+    "tickets": 12,
+    "byProgress": { "Ready": 4, "In progress": 2, "Ready for test": 3, "Done": 3 },
+    "finished": { "total": 6, "byDueStatus": { "On time": 4, "Late": 1, "No due date": 0 }, "withoutFinishingDay": 1 },
+    "notFinished": { "total": 6, "byDueStatus": { "Overdue": 1, "Due today": 1, "On track": 2, "No due date": 2 } },
+    "effort": { "hours": 52, "spent": { "hours": 30, "tickets": 5 }, "points": { "hours": 22, "tickets": 5 } },
     "projects": [{ "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub", "tickets": 8 }]
   },
   "notes": {
-    "bulkCloses": [{ "count": 18, "first": "2026-11-01T04:26:30.101Z", "last": "2026-11-01T04:27:41.880Z",
+    "bulkCloses": [{ "count": 3, "first": "2026-11-18T04:26:30.101Z", "last": "2026-11-18T04:27:41.880Z",
       "tickets": [{ "ref": 84, "project": "vigo-medical-hub" }, { "ref": 31, "project": "vigo-auth" }] }],
     "missingEffort": [{ "ref": 12, "project": "internal-taigent" }]
   }
 }
 ```
 
-`today` is the local day open tickets are compared with. `assignees` lists every assignee's username, or the user id
-when it matches no project member. `tickets` come closed first, by `closedAt` (those without one last), then open:
-`Overdue`, `On track`, `No due date`, each by due date.
+`today` is the local day of now; `generatedAt` is now. `status` is the status name as Taiga gives it, `progress` its
+progress group. `closedAt` is a `Done` ticket's closing instant (null otherwise, or when Taiga recorded none).
+`assignees` lists every assignee's username, or the user id when it matches no project member. `tickets` come by
+progress group (`Ready`, `In progress`, `Ready for test`, `Done`); tickets not finished by due date, finished ones by
+`finishedAt`, those without one last; then by ref.
 
-`days` holds every day from `--from` to `--to`, days without a closed ticket included (0): the tickets whose local
-closing day it is, and the sum of their effort in hours (a missing effort counts 0). A ticket closed before the period
-(a ticket because it is due in it) appears in no day.
+`days` holds every day from `--from` to `--to`, days without a finished ticket included (0): the tickets whose local
+finishing day it is, and the sum of their effort in hours (a missing effort counts 0). A ticket finished outside the
+period (a `Ready for test` ticket finished earlier, or a `Done` one tested before the period) appears in no day.
 
-`summary` totals `tickets`: their number; closed ones by due status (`On time`, `Late`, `No due date`) plus
-`withoutClosingDay`, the closed ones with no closing day and so no due status; open ones by due status (`Overdue`,
-`On track`, `No due date`); the total effort in hours, and the hours and number of tickets of each source (`spent`,
-`points`); and the number of tickets per project, most first, then by slug. Hours are rounded to hundredths.
+`summary` totals `tickets`: their number; their number per progress group (`byProgress`); finished ones by due status
+(`On time`, `Late`, `No due date`) plus `withoutFinishingDay`, the finished ones with a due date but no finishing day
+and so no due status; ones not finished by due status (`Overdue`, `Due today`, `On track`, `No due date`); the total
+effort in hours, and the hours and number of tickets of each source (`spent`, `points`); and the number of tickets per
+project, most first, then by slug. Hours are rounded to hundredths.
 
-`notes.bulkCloses` lists, by closing time, every run of 3 or more tickets each closed at most 60 seconds after the
-previous one (`count`, the `first` and `last` closing instants, and `tickets` as `ref` and project slug, like
-`missingEffort`): a closing day in such a run may be later
-than when the work was actually done. A gap over 60 seconds starts a new run; a run of 2 is not listed.
-`notes.missingEffort` lists the tickets with no effort.
+`notes.bulkCloses` lists, by Taiga's closing instant, every run of 3 or more tickets each closed at most 60 seconds
+after the previous one (`count`, the `first` and `last` closing instants, and `tickets` as `ref` and project slug, like
+`missingEffort`): a closing day in such a run may be later than when the work was actually done. A gap over 60 seconds
+starts a new run; a run of 2 is not listed. `notes.missingEffort` lists the tickets with no effort.
 
 ## Status and comment
 
@@ -1256,7 +1278,7 @@ skill checks all of it and names each fix.
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment`/`due` on a ref that is not one of your tickets, `status` with an unknown status, `due` without a valid `YYYY-MM-DD` day, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `tickets` without valid `--from`/`--to`, `tickets`/`notify` with an invalid `TAIGENT_NOW`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment`/`due` on a ref that is not one of your tickets, `status` with an unknown status, `due` without a valid `YYYY-MM-DD` day, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
 | 3 | `plan` or `--dry-run` found changes (`init --dry-run`: a file would change); `skills check` found differing copies |
 | 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project (except for `metrics`: exit 2), version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
@@ -1284,7 +1306,7 @@ skill checks all of it and names each fix.
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `prd-to-taiga`, `ask-taigent`), `.agents/skills/` → `.claude/skills/`; `compareSkillDirs(source, target)` (file by file, `same` included) and `copySkills(source, target, comparison)` for any two directories |
 | Init | `src/init.ts` | `initRepository(root, { dryRun })` → `InitReport` (`files: [{ path, status }]`), `InitError` (exit 2): the offline `init` command, copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed) |
-| Tickets | `src/tickets.ts` | `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
+| Tickets | `src/tickets.ts` | `dayRange(from, to)`, `readTickets(client, range, now, project?)` → `TicketsReport` (finishing days from each finished ticket's history through `metrics/history.ts` and `historyStatusName`), `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories, `TAIGA_CONCURRENCY` requests at a time) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
 | Metrics | `src/metrics/` | the read-only `metrics` command: `readSnapshot(client, slug, cacheDir?)` → `MetricsSnapshot`, all I/O (`snapshot.ts`; `ProjectNotFoundError`, exit 2), with `history`: each story's, task's and bug's `TaigaHistoryEntry[]` (status and sprint changes, whether the description changed, oldest first) read by `readHistories` (`history.ts`: `client.listHistory(type, id)`, 8 at a time and none started after one fails, and the `--cache-dir` file keyed by API URL, project, type and id, hit while the item's fingerprint (`modified_date`, status, sprint, closed flag and date: `fingerprint` in `snapshot.ts`) is unchanged, written with `writeAtomic`; `HistoryCacheError`, exit 2); `readReleases(dir, slug)` → the `releases` of project.yaml (`releases.ts`); `readBacklogData(dir, slug)` → `BacklogData` (`backlog.ts`: the `buildPreview` of the manifests, or why there is none: `missing`, `invalid` with the issues); pure `computeMetrics(snapshot, local, now)` → `MetricsReport` (`compute.ts`), which builds the `MetricsContext` (`context.ts`: local data `MetricsLocal`, periods, work items, `notes` for warnings and unavailable metrics) and calls one module per Role section (`developer.ts`, `bugs.ts` for `developer.bugs` and `productOwner.bugTrend`, `releases.ts` for `productOwner.releaseBurndown`, `product-owner.ts` for the rest of `productOwner`: current sprint, velocity, planned, scope change (`sprint-scope.ts`: each story's sprint over time from its sprint changes), health and `report`'s tables, `business-analyst.ts` for `businessAnalyst`); periods (`periods.ts`), work items closed by status flag, with the day they first entered In progress, and `historyStatusName`, how every metric names a status of a history (`work.ts`), `formatMetricsText` (`text.ts`, each section formats its own lines) |

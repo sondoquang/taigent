@@ -55,8 +55,8 @@ function seed(fake: FakeTaiga) {
   return {
     dueToday: story('due today', { due_date: dayIn(0), status_name: 'In progress' }),
     overdue: story('overdue', { due_date: dayIn(-3), status_name: 'Ready' }),
-    dueLater: story('due later', { due_date: dayIn(30) }),
-    noDueDate: story('no due date', {}),
+    dueLater: story('due later', { due_date: dayIn(30), status_name: 'Ready' }),
+    noDueDate: story('no due date', { status_name: 'In progress' }),
     closedToday: story('closed today', { due_date: dayIn(0), finish_date: new Date().toISOString() }),
     someoneElses: story('not mine', { assigned: [other], due_date: dayIn(0) }),
   };
@@ -148,7 +148,7 @@ test('notify splits a message longer than Telegram allows at line breaks', async
   const telegram = await startFakeTelegram(t);
   const alpha = h.fake.addProject({ slug: 'alpha' });
   for (let i = 0; i < 60; i += 1) {
-    Object.assign(h.fake.addUserStory({ project: alpha.id, subject: `story ${i} ${'x'.repeat(100)}` }), { assigned_users: [h.fake.user.id], due_date: dayIn(-1) });
+    Object.assign(h.fake.addUserStory({ project: alpha.id, subject: `story ${i} ${'x'.repeat(100)}` }), { assigned_users: [h.fake.user.id], due_date: dayIn(-1), status_name: 'Ready' });
   }
 
   const result = await h.taigent(['notify', 'eod'], { env: { TZ, TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT_ID: '42', TAIGENT_TELEGRAM_API_URL: telegram.url } });
