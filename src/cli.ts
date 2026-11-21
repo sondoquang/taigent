@@ -61,7 +61,7 @@ import { Secrets } from './secrets.ts';
 import { checkInstall, type InstallCheck, mcpCheckTarget, type SetupClient, SetupError, setupProject, type SetupReport, type SetupStatus, setupUser, USER_CLIENTS } from './setup.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
-import { commentTicket, parseRef, setTicketStatus, TicketError } from './ticket.ts';
+import { commentTicket, parseRef, setTicketDueDate, setTicketStatus, TicketError } from './ticket.ts';
 import { dayRange, formatTicketsText, readTickets } from './tickets.ts';
 import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, UploadTooLargeError } from './upload.ts';
 
@@ -93,7 +93,9 @@ Commands:
             them its baseline in state.json (--keep-manifest: the baseline only, so apply writes the manifest's
             values); reads Taiga, writes local files only
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
-  tickets   List your tickets (user stories) closed or due from --from to --to, and every open one, with due status (read-only)
+  tickets   List your planned tickets (Ready, In progress, Ready for test) and those moved to Done from --from to --to,
+            by progress group, with finishing day and due status, the plan of their remaining work by working day,
+            warnings and the re-plan of tickets at risk; --eod plans from the next working day (read-only)
   projects  List the Taiga projects you are a member of, with admin rights and whether taiga/<slug>/ exists; with
             --project, that project's issue types, severities and priorities (read-only)
   report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
@@ -112,8 +114,13 @@ Commands:
             already in it)
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
-  notify week|day|eod     Send your tickets of the week, of the day, or those still open and due by today to your
-            Telegram chat (--dry-run prints the message instead)
+  due <ref> <YYYY-MM-DD> [comment]  Set the due date of your ticket #<ref> of --project, with an optional comment giving
+            the reason, in one write, e.g. \`due 84 2026-11-24 trùng ngày với #85\` (writes at once; nothing when
+            it already has that due date and no comment is given)
+  notify week|day|eod     Send to your Telegram chat the week (the whole plan and every warning), the day (today's
+            plan, tickets to start today, Due today and Overdue) or the end-of-day reminder (unfinished planned tickets
+            due by today with their re-plan, planned from the next working day; nothing when there are none);
+            --dry-run prints the message instead
   skills sync   Copy the Taigent skills (taiga-*, ask-taigent, prd-to-taiga) from ${SKILLS_SOURCE} to ${SKILLS_TARGET} (run from the repository root)
   skills check  Compare them (exit 3 when the copies differ)
   login     Log in once, in your own terminal: the password is exchanged for a token kept in the OS credential
@@ -126,6 +133,7 @@ Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets, notify and projects)
   --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone); sprint create: the
                     sprint's first and last day
+  --eod             tickets: plan from the next working day, as the end-of-day reminder does
   --name <name>     sprint create, sprint add: the sprint's name
   --ref <n>, --key <KEY>  adopt: the Taiga ref of the hand-made item and the key of the new backlog item; pull: --key
                     only, the backlog item to pull (default: every blocked item)
@@ -152,6 +160,8 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
+  TAIGENT_NOW                      tickets, notify: the instant used as now (ISO 8601 with offset, e.g.
+                                   2026-11-19T10:00:00+07:00); default: the system clock
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
                                    .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
                                    (default: <CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram)
@@ -161,7 +171,7 @@ Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. chang
             changes, 4 manifest invalid (pull: Taiga's values do not fit the manifest), 5 Taiga/network error (setup:
             login or MCP check), 6 plan/apply has blocked items`;
 
-const COMMANDS = ['setup', 'validate', 'preview', 'review', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['setup', 'validate', 'preview', 'review', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'due', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
 const PROJECTLESS: readonly Command[] = ['setup', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
@@ -210,10 +220,14 @@ interface Options {
   sprintAction?: SprintAction;
   name?: string;
   refs?: number[];
-  /** `status`, `comment`: the ticket's ref; `adopt`: the hand-made item's ref (`--ref`). */
+  /** `status`, `comment`, `due`: the ticket's ref; `adopt`: the hand-made item's ref (`--ref`). */
   ref?: number;
-  /** `status`: the status name (its words joined by spaces); `comment`: the comment text. */
+  /** `status`: the status name (its words joined by spaces); `comment`, `due`: the comment text. */
   text?: string;
+  /** `due`: the new due date, YYYY-MM-DD. */
+  dueDate?: string;
+  /** `tickets --eod`: plan from the next working day, as the end-of-day reminder does. */
+  eod: boolean;
   /** `adopt`: key of the new backlog item (`--key`); `pull`: the backlog item to pull, absent for every blocked one. */
   key?: string;
   /** `adopt`: the manifest parent of the new backlog item (`--epic` for a story, `--story` for a task). */
@@ -272,6 +286,7 @@ const OPTIONS = {
   json: { type: 'boolean', default: false },
   yes: { type: 'boolean', default: false },
   'dry-run': { type: 'boolean', default: false },
+  eod: { type: 'boolean', default: false },
   help: { type: 'boolean', short: 'h', default: false },
 } as const satisfies ParseArgsOptionsConfig;
 
@@ -331,14 +346,22 @@ function parseOptions(argv: string[]): Options | 'help' {
   }
   let ref: number | undefined;
   let text: string | undefined;
-  if (command === 'status' || command === 'comment') {
-    // The rest of the words, so `status 84 In progress` needs no quotes (PowerShell 5.1 mangles them).
+  let dueDate: string | undefined;
+  if (command === 'status' || command === 'comment' || command === 'due') {
+    // The rest of the words, so `status 84 In progress` needs no quotes (PowerShell 5.1 mangles them); for due, the
+    // words after the day are the comment, unquoted.
     const [refArg, ...words] = extra.splice(0);
-    const what = command === 'status' ? '<status>' : '<text>';
+    const what = { status: '<status>', comment: '<text>', due: '<YYYY-MM-DD>' }[command];
     ref = refArg === undefined ? undefined : parseRef(refArg);
     if (ref === undefined) throw new UsageError(`${command} needs the ticket's ref (e.g. 84 or #84), then ${what}${refArg === undefined ? '' : `, got "${refArg}"`}`);
-    text = words.join(' ').trim();
-    if (text === '') throw new UsageError(`${command} needs ${what} after the ref`);
+    if (command === 'due') {
+      const dayArg = words.shift();
+      if (dayArg === undefined || !parseDay(dayArg)) throw new UsageError(`due needs the new due date as YYYY-MM-DD after the ref${dayArg === undefined ? '' : `, got "${dayArg}"`}`);
+      dueDate = dayArg;
+    }
+    const rest = words.join(' ').trim();
+    if (rest === '' && command !== 'due') throw new UsageError(`${command} needs ${what} after the ref`);
+    text = rest === '' ? undefined : rest;
   }
   let review: ReviewAction | undefined;
   if (command === 'review') {
@@ -412,6 +435,7 @@ function parseOptions(argv: string[]): Options | 'help' {
   if (values.out === '') throw new UsageError('--out needs a file path');
   if (values['cache-dir'] !== undefined && command !== 'metrics') throw new UsageError('--cache-dir applies only to metrics');
   if (values['cache-dir'] === '') throw new UsageError('--cache-dir needs a directory');
+  if (values.eod && command !== 'tickets') throw new UsageError('--eod applies only to tickets');
   if (command === 'tickets' || (command === 'sprint' && sprintAction === 'create')) {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
@@ -433,6 +457,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     refs,
     ref,
     text,
+    dueDate,
     key,
     parent,
     keepManifest: values['keep-manifest'],
@@ -445,6 +470,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     json: values.json,
     yes: values.yes,
     dryRun: values['dry-run'],
+    eod: values.eod,
   };
 }
 
@@ -520,6 +546,16 @@ async function connectTaiga(run: Run, auth?: Auth): Promise<TaigaClient> {
   const common = { apiUrl: resolved.apiUrl, retryUnitMs: retryUnitMs(run.env), secrets: run.secrets };
   if (resolved.source === 'login') return TaigaClient.connect({ ...common, authorizer: resolved.session });
   return TaigaClient.connect({ ...common, token: resolved.token, credentials: resolved.credentials });
+}
+
+/** TAIGENT_NOW: the instant `tickets` and `notify` take as now (ISO 8601 with a time and an offset), else the system clock. */
+function clockNow(env: NodeJS.ProcessEnv): Date {
+  const raw = env.TAIGENT_NOW;
+  if (raw === undefined || raw === '') return new Date();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(raw) || Number.isNaN(Date.parse(raw))) {
+    throw new UsageError(`TAIGENT_NOW must be an ISO 8601 instant with an offset (e.g. 2026-11-19T10:00:00+07:00), got "${raw}"`);
+  }
+  return new Date(raw);
 }
 
 /** TAIGENT_RETRY_UNIT_MS: milliseconds per second of 429 backoff (default 1000). */
@@ -1042,12 +1078,13 @@ async function runPull(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `tickets`: the user's Period's tickets with their due status. Read-only. */
+/** `tickets`: the user's Period's tickets by progress group, with their finishing day and due status, and the plan. Read-only. */
 async function runTickets(run: Run): Promise<number> {
   const { options } = run;
+  const now = clockNow(run.env);
   const client = await connectTaiga(run);
   const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
-  const report = await readTickets(client, dayRange(options.from!, options.to!), project);
+  const report = await readTickets(client, dayRange(options.from!, options.to!), now, project, { endOfDay: options.eod });
   emit(run, report, () => formatTicketsText(report));
   return ExitCode.Ok;
 }
@@ -1157,6 +1194,20 @@ async function runComment(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `due`: set the due date of one of the user's tickets, with an optional comment, at once. */
+async function runDue(run: Run): Promise<number> {
+  const { options } = run;
+  const change = await setTicketDueDate(await connectTaiga(run), options.project!, options.ref!, options.dueDate!, options.text ?? null);
+  const { ticket } = change;
+  const named = `#${ticket.ref} ${ticket.subject} (${ticket.project.slug})`;
+  emit(run, change, () => {
+    const commented = change.comment === null ? '' : ', with a comment';
+    if (change.changed) return `${named}: due date ${change.from ?? 'none'} → ${change.to}${commented}\n`;
+    return change.comment === null ? `${named} is already due ${change.to}: nothing changed\n` : `${named} is already due ${change.to}: commented only\n`;
+  });
+  return ExitCode.Ok;
+}
+
 /** `notify`: build the week/day/eod message from the user's tickets and send it to their Telegram chat. */
 async function runNotify(run: Run): Promise<number> {
   const { options } = run;
@@ -1164,15 +1215,16 @@ async function runNotify(run: Run): Promise<number> {
   // Before Taiga, so a missing Telegram setup fails fast; the token joins the secrets no output may show.
   const target = options.dryRun ? undefined : resolveTelegram(run.env);
   run.secrets.add(target?.token);
+  const now = clockNow(run.env);
   const client = await connectTaiga(run);
   const project = options.project === undefined ? undefined : await client.getProjectBySlug(options.project);
-  const range = notifyRange(kind, new Date());
-  const report = await readTickets(client, dayRange(range.from, range.to), project);
+  const range = notifyRange(kind, now);
+  const report = await readTickets(client, dayRange(range.from, range.to), now, project, { endOfDay: kind === 'eod' });
   const text = notifyMessage(kind, report);
   if (target && text !== null) await sendTelegram(target, text);
   const sent = target !== undefined && text !== null;
   emit(run, { kind, range, text, sent, chatId: target?.chatId ?? null }, () => {
-    if (text === null) return `Nothing to send: no open ticket is due by ${report.today}\n`;
+    if (text === null) return `Nothing to send: no unfinished planned ticket is due by ${report.today}\n`;
     return sent ? `Sent the ${kind} message to Telegram chat ${target!.chatId}\n` : `${text}\n`;
   });
   return ExitCode.Ok;
@@ -1317,6 +1369,8 @@ function dispatch(run: Run): Promise<number> {
       return runStatus(run);
     case 'comment':
       return runComment(run);
+    case 'due':
+      return runDue(run);
     case 'notify':
       return runNotify(run);
     case 'plan':

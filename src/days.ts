@@ -41,5 +41,27 @@ export function daysBetween(from: string, to: string): number {
 
 /** The Monday of the week (Monday to Sunday) holding the calendar day `day`. */
 export function mondayOf(day: string): string {
-  return addDays(day, -((parseDay(day)!.getDay() + 6) % 7));
+  return addDays(day, -((weekdayOf(day) + 6) % 7));
 }
+
+const WEEKDAYS = {
+  en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+  // Thứ Hai = T2 … Chủ nhật = CN.
+  vi: ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'],
+} as const;
+
+/** The day of the week of the calendar day `day`: 0 for Sunday … 6 for Saturday. */
+export function weekdayOf(day: string): number {
+  return parseDay(day)!.getDay();
+}
+
+/** The short weekday name of the calendar day `day`: `Thu` in English, `T5` in Vietnamese. */
+export function weekdayName(day: string, language: keyof typeof WEEKDAYS): string {
+  return WEEKDAYS[language][weekdayOf(day)]!;
+}
+
+/** `30/10` from `2026-10-30`. */
+export const shortDay = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
+
+/** `30/10/2026` from `2026-10-30`. */
+export const longDay = (day: string) => `${shortDay(day)}/${day.slice(0, 4)}`;

@@ -38,6 +38,7 @@ the same variables, so `.env` reaches the Taiga MCP server too.
 | `TAIGENT_RETRY_UNIT_MS` | Milliseconds per second of 429 backoff, default `1000` (tests set it low) |
 | `TAIGENT_CREDENTIAL_STORE` | Where `login` keeps its token: `keyring` (default: Windows Credential Manager, macOS Keychain, Linux Secret Service) or `file` (`credentials.json` in the config directory, mode 0600, plain JSON: for machines without a credential store) |
 | `TAIGENT_CONFIG_DIR` | Config directory of the stored login, default `%APPDATA%\taigent` (Windows), `~/Library/Application Support/taigent` (macOS), `$XDG_CONFIG_HOME/taigent` or `~/.config/taigent` (Linux) |
+| `TAIGENT_NOW` | [`tickets`](#tickets) and [`notify`](#notify): the instant taken as now, ISO 8601 with a time and an offset (e.g. `2026-11-19T10:00:00+07:00`); default: the system clock. A seam for reproducible runs and tests |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | [`notify`](#notify): the bot and the chat to send to; default: the Claude Code Telegram plugin's own (see [Notify](#notify)) |
 | `TELEGRAM_STATE_DIR` | `notify`: the Telegram plugin's state directory, default `<CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram` (the plugin's own default) |
 | `TAIGENT_TELEGRAM_API_URL` | `notify`: Bot API base URL, default `https://api.telegram.org` (tests point it at a stand-in) |
@@ -384,8 +385,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
 - `taigent pull --project <slug> [--key <KEY>] [--keep-manifest] [--json]`: writes Taiga's values of a backlog item,
   or of every blocked item, into `backlog.yaml` and makes them their baseline in `state.json`; reads Taiga, writes
   local files only. See [Pull](#pull).
-- `taigent tickets`, `taigent status`, `taigent comment`, `taigent notify`: see [Tickets](#tickets),
-  [Status and comment](#status-and-comment) and [Notify](#notify).
+- `taigent tickets`, `taigent status`, `taigent comment`, `taigent due`, `taigent notify`: see [Tickets](#tickets),
+  [Status and comment](#status-and-comment), [Due](#due) and [Notify](#notify).
 - `taigent projects [--project <slug>] [--json]`: the Taiga projects you are a member of, or the issue values of one
   project; read-only. See [Projects](#projects).
 - `taigent report --project <slug> [--json]`: the project's progress by sprint and by epic, and its stories in no
@@ -1261,86 +1262,192 @@ the user (kind `project`; unlike `report`, which exits 5); exit 4 when `project.
 
 ## Tickets
 
-`taigent tickets --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--json]` lists the **Period's tickets**
-(`GLOSSARY.md`) of the user the CLI logs in as: the user stories assigned to them that Taiga closed between the two
-days, or that are due between them, plus every story still open, each with its **Due status**. Tasks and issues are not
-tickets. Read-only: it needs no manifest and writes nothing. Days are calendar days in the machine's local time zone
-(`TZ`), both included; `--project` keeps one project, otherwise every project the user sees. It answers what the Taiga
-MCP server (taiga-mcp-server@1.9.20) cannot: no MCP tool shows when an item was closed, and `advancedSearch` matches
-nothing on status, assignee or dates.
+`taigent tickets --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--eod] [--json]` lists the **Period's tickets**
+(`GLOSSARY.md`) of the user the CLI logs in as: every **Planned ticket** (a user story assigned to them in `Ready`,
+`In progress` or `Ready for test`, whatever its due date) plus the stories that Taiga closed in `Done` between the two
+days, each with its progress group, **Finishing day** and **Due status**, plus the **Plan** of their **Remaining work**
+on working days, its warnings and the **Re-plan** of the tickets **At risk**. Stories in `New` (not planned yet) or
+`Archived` are not tickets, nor are tasks and issues. Read-only: it needs no manifest and writes nothing. Days are
+calendar days in the machine's local time zone (`TZ`), both included; `--project` keeps one project, otherwise every
+project the user sees. It answers what the Taiga MCP server (taiga-mcp-server@1.9.20) cannot: no MCP tool shows when
+an item was closed or finished, and `advancedSearch` matches nothing on status, assignee or dates.
+
+"Now" is `TAIGENT_NOW` when set (an ISO 8601 instant with a time and an offset, e.g. `2026-11-19T10:00:00+07:00`),
+else the system clock; `today` is its local day. `TAIGENT_NOW` is a seam for reproducible runs and tests (`notify`
+uses the same clock); an invalid value is a usage error (exit 2) before Taiga is contacted.
 
 It reads `GET /users/me`, then every `GET /userstories?assigned_users=<me>` (open and closed, plus `project=<id>` with
 `--project`; pagination disabled, so no page is missed), then `GET /projects/<id>` for each project holding a ticket,
-to turn assignee ids into usernames and find its user story custom attribute "Spent Time", then, in a project that has
-it, `GET /userstories/custom-attributes-values/<id>` for each ticket. A story is a ticket when its `finish_date` falls
-in the range, its `due_date` (a plain day) falls in it, or it is open. Due status compares calendar days: a closed
-ticket's local closing day on or before its due date is `On time`, after it `Late`; an open ticket's due date before
-today is `Overdue`, otherwise `On track`; without a due date, `No due date`. A closed story without a `finish_date`
-still counts as closed, has no `closedAt`, and is a ticket only when due in the range; its due status is `null`
-(unknown, it cannot be compared).
+to turn assignee ids into usernames and find its user story custom attribute "Spent Time". In a project holding a
+**Finished ticket** (`Ready for test` or `Done`) it reads `GET /userstory-statuses?project=<id>` and, for each finished
+ticket only, `GET /history/userstory/<id>`, the reads `metrics` makes, with the same status-name resolution (a status
+the history recorded is named as in the project's status list). Then, in a project that has "Spent Time",
+`GET /userstories/custom-attributes-values/<id>` for each ticket. Status names are matched exactly, as the default
+template names them (`docs/taiga/conventions.md` §7); a `Done` story is a ticket when its `finish_date` falls in the
+range (a `Done` story without one is not).
+
+The progress group (`progress`) is the ticket's status: `Ready` (planned, not started), `In progress`,
+`Ready for test` (waiting for QA/QC) or `Done`; a ticket in the last two is finished (`isFinished`). Its finishing day
+(`finishedAt`, an instant) is the last status change in its history *into* `Ready for test` or `Done` from a status
+that is neither, so a ticket QA/QC returned to `In progress` and that was finished again finishes on the later move,
+and `Ready for test` → `Done` does not move it. Without such a change, a `Done` ticket finishes at Taiga's closing
+instant (`closedAt`, its `finish_date`) and a `Ready for test` ticket has no finishing day (`null`).
+
+Due status compares calendar days, the due date being the day the ticket must be finished. A finished ticket's local
+finishing day on or before its due date is `On time`, after it `Late`; with a due date but no finishing day its due
+status is `null` (unknown: it cannot be compared). A ticket not finished whose due date is before today is `Overdue`,
+today `Due today`, after today `On track`. Without a due date, any ticket is `No due date`.
 
 **Effort** (`GLOSSARY.md`) is in hours. The "Spent Time" attribute is found by name in each project (trimmed, any case),
 since its id differs from project to project. A ticket whose Spent Time holds a number has that effort, source
 `spent` (0 included); otherwise its `total_points` (the sum of every role's points, 1 point = 1 hour), source
 `points`, an estimate; with neither, `effort` and `effortSource` are null and the ticket is listed in
-`notes.missingEffort` (`ref`, project slug). A project without the attribute uses points only.
+`notes.missingEffort` (`ref`, project slug). A project without the attribute uses points only. Each ticket also gives
+the two inputs apart: `points` (its `total_points`, or null) and `spentTime` (the Spent Time number, or null when empty,
+not a number, or the project has no such attribute).
+
+### Plan
+
+**Remaining work** (`remainingWork`, hours) is `max(0, points − spentTime)` (an empty Spent Time counts 0) for a ticket
+not finished (`Ready` or `In progress`) that has points; it is null for a finished ticket or one without points. The
+**Plan** (`plan`) lays the remaining work of the tickets not finished that have both a due date and points on
+**Working days** (Monday to Friday, 8 hours, ending at 17:00; holidays are not modelled):
+
+- `plan.start` is today when now is before 17:00 local time on a working day, else the next working day (after 17:00,
+  and on Saturday or Sunday, the plan starts on the next Monday-to-Friday day). With `--eod` it is the next working day
+  whatever the hour, as after 17:00: the plan of the **End-of-day reminder** ([Notify](#notify)), so every ticket due
+  today and not finished is At risk and has its re-plan entry. `--eod` changes only the plan and what follows from it
+  (`plannedFinishDay`, `atRisk`, `sharingTickets`, `warnings.atRisk`, `replan`); it applies only to `tickets`.
+- Order: due date ascending; on the same date `In progress` before `Ready`; then ref.
+- Each day is filled forward up to 8 hours, a ticket split across days when it does not fit; the plan goes on past
+  the end of the week until all remaining work is placed. `plan.days` lists each working day from `plan.start` that
+  holds work: `date`, `hours` (the day's total, never above 8) and `entries` (`ref`, project slug, `hours`), in plan
+  order. Hours are counted in hundredths.
+- A ticket's `plannedFinishDay` is the day its last hour lands; with no remaining work it is `plan.start` (and it has
+  no entry). `atRisk` is true when `plannedFinishDay` is after its due date, so an `Overdue` ticket still not finished
+  is always At risk. `sharingTickets` lists the other tickets (`ref`, project slug) with an entry on any of its days, in
+  plan order.
+- `latestStartDay` counts its remaining work back from the due date (from the last working day on or before it), 8
+  hours per working day, ignoring other tickets: a 10-point ticket due Friday 2026-11-20 must start on Thursday
+  2026-11-19.
+
+A ticket out of the plan (finished, or without a due date or points) has `plannedFinishDay` and `latestStartDay`
+null, `atRisk` false and `sharingTickets` empty; one not finished without a due date still has its `remainingWork`.
+
+`warnings` holds lists of tickets (`ref`, project slug), each in the order of `tickets`: `overdue` (not finished, due
+date passed), `noDueDate` and `noPoints` (not finished, so out of the plan; a ticket can be in both), `lateStart` (in
+`Ready` while today is on or after its `latestStartDay`) and `atRisk`.
+
+`replan` has one entry per At risk ticket, in the same order as `warnings.atRisk`: `ref`, `project` (slug), `id`,
+`subject`, `dueDate` (current), `proposedDueDate` (its `plannedFinishDay`), `sharingTickets` and `comment`, a drafted
+comment in Vietnamese (the team's language: it is written to Taiga and shown in the end-of-day reminder) with dates as
+`DD/MM/YYYY`, naming the reason and the sharing tickets (`#12` in the same project, `alpha#12` in another), e.g.
+`Dời hạn từ 20/11/2026 sang 23/11/2026: còn 5h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày
+23/11/2026. Trùng ngày với vigo-auth#1, #3.` (an Overdue ticket reads `…: đã quá hạn, còn 4h việc, …`; with no sharing
+ticket, `Không trùng ngày với ticket nào.`). Nothing is written: once the user approves, each entry is written with
+`taigent due --project <project> <ref> <proposedDueDate> <comment>` ([Due](#due)).
+
+### Text and JSON
 
 Missing or invalid days, or `--from` after `--to`, are a usage error (exit 2) before Taiga is contacted. The text form
-gives one line of totals (closed tickets by due status, open tickets by due status, total effort with the number of
-tickets per source), then each project with one line per ticket (ref, due status, status, due date, local closing
-time, effort, subject); an effort from points reads `5h (estimated from points)`, a missing one `no effort`.
+gives a line of totals (tickets, today, total effort with the number of tickets per source), one line of counts by
+progress group, one of tickets not finished by due status and one of finished tickets by due status (with
+`without a finishing day N` when some have none); then the plan, `Plan from 2026-11-19, 8h per working day:` with
+one line per day (`2026-11-19 Thu  8h: alpha#3 4h, beta#1 4h`), or `Plan from <day>: no remaining work to plan`; then
+each project with one line per ticket (ref, progress group, due status, due date, `finished <local time>` or
+`not finished`, effort, for a ticket with remaining work `remaining 5h, start by <day>, planned finish <day>` with
+` (at risk)` when At risk, as far as it has them, then subject); an effort from points reads
+`5h (estimated from points)`, a missing one `no effort`. Then `Warnings:` with one line per non-empty list
+(`Overdue`, `No due date`, `No points`, `Late start`, `At risk`, the last naming each ticket's sharing tickets as
+`alpha#2 (shares its days with beta#1, alpha#3)`), and `Re-plan, written to Taiga only once approved:` with one line
+per entry (`alpha#2 due 2026-11-20 -> 2026-11-23: <comment>`); each section is left out when empty.
 `tickets --json` prints a `TicketsReport`:
 
 ```json
 {
   "user": { "id": 12, "username": "son.do" },
   "project": null,
-  "range": { "from": "2026-10-26", "to": "2026-11-01", "start": "2026-10-25T17:00:00.000Z", "end": "2026-11-01T17:00:00.000Z" },
-  "today": "2026-11-01",
-  "generatedAt": "2026-11-01T07:05:12.345Z",
+  "range": { "from": "2026-11-16", "to": "2026-11-22", "start": "2026-11-15T17:00:00.000Z", "end": "2026-11-22T17:00:00.000Z" },
+  "today": "2026-11-19",
+  "generatedAt": "2026-11-19T03:00:00.000Z",
   "tickets": [
-    { "id": 281, "ref": 84, "subject": "Guideline flow", "status": "Done", "isClosed": true,
-      "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" }, "assignees": ["son.do", "an.tran"],
-      "dueDate": "2026-10-30", "closedAt": "2026-11-01T04:26:49.642Z", "dueStatus": "Late",
-      "effort": 8, "effortSource": "spent" }
+    { "id": 281, "ref": 84, "subject": "Guideline flow", "status": "Ready for test", "progress": "Ready for test",
+      "isFinished": true, "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" },
+      "assignees": ["son.do", "an.tran"], "dueDate": "2026-11-18", "closedAt": null,
+      "finishedAt": "2026-11-18T09:12:40.118Z", "dueStatus": "Late", "effort": 8, "effortSource": "spent",
+      "points": 5, "spentTime": 8, "remainingWork": null, "latestStartDay": null, "plannedFinishDay": null,
+      "atRisk": false, "sharingTickets": [] },
+    { "id": 290, "ref": 2, "subject": "Export", "status": "Ready", "progress": "Ready", "isFinished": false,
+      "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" }, "assignees": ["son.do"],
+      "dueDate": "2026-11-20", "closedAt": null, "finishedAt": null, "dueStatus": "On track", "effort": 5,
+      "effortSource": "points", "points": 5, "spentTime": null, "remainingWork": 5, "latestStartDay": "2026-11-20",
+      "plannedFinishDay": "2026-11-23", "atRisk": true,
+      "sharingTickets": [{ "ref": 1, "project": "vigo-auth" }, { "ref": 3, "project": "vigo-medical-hub" }] }
   ],
   "days": [
-    { "date": "2026-10-26", "closed": 0, "effort": 0 },
-    { "date": "2026-11-01", "closed": 18, "effort": 96 }
+    { "date": "2026-11-16", "finished": 0, "effort": 0 },
+    { "date": "2026-11-18", "finished": 3, "effort": 14 }
   ],
   "summary": {
-    "tickets": 21,
-    "closed": { "total": 19, "byDueStatus": { "On time": 1, "Late": 17, "No due date": 1 }, "withoutClosingDay": 0 },
-    "open": { "total": 2, "byDueStatus": { "Overdue": 2, "On track": 0, "No due date": 0 } },
-    "effort": { "hours": 104, "spent": { "hours": 60, "tickets": 11 }, "points": { "hours": 44, "tickets": 8 } },
+    "tickets": 12,
+    "byProgress": { "Ready": 4, "In progress": 2, "Ready for test": 3, "Done": 3 },
+    "finished": { "total": 6, "byDueStatus": { "On time": 4, "Late": 1, "No due date": 0 }, "withoutFinishingDay": 1 },
+    "notFinished": { "total": 6, "byDueStatus": { "Overdue": 1, "Due today": 1, "On track": 2, "No due date": 2 } },
+    "effort": { "hours": 52, "spent": { "hours": 30, "tickets": 5 }, "points": { "hours": 22, "tickets": 5 } },
     "projects": [{ "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub", "tickets": 8 }]
   },
+  "plan": {
+    "start": "2026-11-19",
+    "days": [
+      { "date": "2026-11-19", "hours": 8, "entries": [{ "ref": 7, "project": "vigo-medical-hub", "hours": 4 }, { "ref": 1, "project": "vigo-auth", "hours": 4 }] },
+      { "date": "2026-11-20", "hours": 8, "entries": [{ "ref": 1, "project": "vigo-auth", "hours": 6 }, { "ref": 2, "project": "vigo-medical-hub", "hours": 2 }] },
+      { "date": "2026-11-23", "hours": 5, "entries": [{ "ref": 2, "project": "vigo-medical-hub", "hours": 3 }, { "ref": 3, "project": "vigo-medical-hub", "hours": 2 }] }
+    ]
+  },
+  "warnings": {
+    "overdue": [{ "ref": 7, "project": "vigo-medical-hub" }],
+    "noDueDate": [{ "ref": 12, "project": "internal-taigent" }],
+    "noPoints": [{ "ref": 12, "project": "internal-taigent" }],
+    "lateStart": [{ "ref": 1, "project": "vigo-auth" }],
+    "atRisk": [{ "ref": 2, "project": "vigo-medical-hub" }, { "ref": 7, "project": "vigo-medical-hub" }]
+  },
+  "replan": [
+    { "ref": 2, "project": "vigo-medical-hub", "id": 290, "subject": "Export", "dueDate": "2026-11-20",
+      "proposedDueDate": "2026-11-23",
+      "sharingTickets": [{ "ref": 1, "project": "vigo-auth" }, { "ref": 3, "project": "vigo-medical-hub" }],
+      "comment": "Dời hạn từ 20/11/2026 sang 23/11/2026: còn 5h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày 23/11/2026. Trùng ngày với vigo-auth#1, #3." },
+    { "ref": 7, "project": "vigo-medical-hub", "id": 288, "subject": "Audit log", "dueDate": "2026-11-18",
+      "proposedDueDate": "2026-11-19", "sharingTickets": [{ "ref": 1, "project": "vigo-auth" }],
+      "comment": "Dời hạn từ 18/11/2026 sang 19/11/2026: đã quá hạn, còn 4h việc, xếp 8h mỗi ngày làm việc theo thứ tự hạn thì xong ngày 19/11/2026. Trùng ngày với vigo-auth#1." }
+  ],
   "notes": {
-    "bulkCloses": [{ "count": 18, "first": "2026-11-01T04:26:30.101Z", "last": "2026-11-01T04:27:41.880Z",
+    "bulkCloses": [{ "count": 3, "first": "2026-11-18T04:26:30.101Z", "last": "2026-11-18T04:27:41.880Z",
       "tickets": [{ "ref": 84, "project": "vigo-medical-hub" }, { "ref": 31, "project": "vigo-auth" }] }],
     "missingEffort": [{ "ref": 12, "project": "internal-taigent" }]
   }
 }
 ```
 
-`today` is the local day open tickets are compared with. `assignees` lists every assignee's username, or the user id
-when it matches no project member. `tickets` come closed first, by `closedAt` (those without one last), then open:
-`Overdue`, `On track`, `No due date`, each by due date.
+`today` is the local day of now; `generatedAt` is now. `status` is the status name as Taiga gives it, `progress` its
+progress group. `closedAt` is a `Done` ticket's closing instant (null otherwise, or when Taiga recorded none).
+`assignees` lists every assignee's username, or the user id when it matches no project member. `tickets` come by
+progress group (`Ready`, `In progress`, `Ready for test`, `Done`); tickets not finished by due date, finished ones by
+`finishedAt`, those without one last; then by ref.
 
-`days` holds every day from `--from` to `--to`, days without a closed ticket included (0): the tickets whose local
-closing day it is, and the sum of their effort in hours (a missing effort counts 0). A ticket closed before the period
-(a ticket because it is due in it) appears in no day.
+`days` holds every day from `--from` to `--to`, days without a finished ticket included (0): the tickets whose local
+finishing day it is, and the sum of their effort in hours (a missing effort counts 0). A ticket finished outside the
+period (a `Ready for test` ticket finished earlier, or a `Done` one tested before the period) appears in no day.
 
-`summary` totals `tickets`: their number; closed ones by due status (`On time`, `Late`, `No due date`) plus
-`withoutClosingDay`, the closed ones with no closing day and so no due status; open ones by due status (`Overdue`,
-`On track`, `No due date`); the total effort in hours, and the hours and number of tickets of each source (`spent`,
-`points`); and the number of tickets per project, most first, then by slug. Hours are rounded to hundredths.
+`summary` totals `tickets`: their number; their number per progress group (`byProgress`); finished ones by due status
+(`On time`, `Late`, `No due date`) plus `withoutFinishingDay`, the finished ones with a due date but no finishing day
+and so no due status; ones not finished by due status (`Overdue`, `Due today`, `On track`, `No due date`); the total
+effort in hours, and the hours and number of tickets of each source (`spent`, `points`); and the number of tickets per
+project, most first, then by slug. Hours are rounded to hundredths.
 
-`notes.bulkCloses` lists, by closing time, every run of 3 or more tickets each closed at most 60 seconds after the
-previous one (`count`, the `first` and `last` closing instants, and `tickets` as `ref` and project slug, like
-`missingEffort`): a closing day in such a run may be later
-than when the work was actually done. A gap over 60 seconds starts a new run; a run of 2 is not listed.
-`notes.missingEffort` lists the tickets with no effort.
+`notes.bulkCloses` lists, by Taiga's closing instant, every run of 3 or more tickets each closed at most 60 seconds
+after the previous one (`count`, the `first` and `last` closing instants, and `tickets` as `ref` and project slug, like
+`missingEffort`): a closing day in such a run may be later than when the work was actually done. A gap over 60 seconds
+starts a new run; a run of 2 is not listed. `notes.missingEffort` lists the tickets with no effort.
 
 ## Status and comment
 
@@ -1368,6 +1475,28 @@ changed`, or `Commented on #84 Login form (vigo-auth)`. `status --json` prints
 `{ "ticket": { "id", "ref", "subject", "project": { "id", "slug", "name" } }, "from", "to", "isClosed", "changed" }`
 (`isClosed`: whether `to` is a closed status); `comment --json` prints `{ "ticket", "comment" }`.
 
+## Due
+
+`taigent due --project <slug> <ref> <YYYY-MM-DD> [comment…] [--json]` sets the due date of the user's ticket `#<ref>`
+of one project to that day and, when words follow the day, adds them as one comment (the reason, e.g. a **Re-plan**'s
+drafted comment, `GLOSSARY.md`). Like `status` and `comment` it writes at once, without `--yes`, on one of the user's
+own tickets named on the command line (the skill `taiga-update-ticket` runs it once per approved re-plan entry). The
+ref is `84` or `#84`; the day must be a calendar day as `YYYY-MM-DD` (anything else: exit 2 before Taiga is
+contacted). The comment's words are joined with spaces; words after `--` are taken as they are, as for `comment`.
+
+It finds the ticket like `status` and `comment` (someone else's story or an unknown ref: exit 2, nothing written),
+then sends one `PATCH /userstories/<id>` with `{ due_date, comment?, version }`. When the ticket already has that due
+date, the due date is not sent: with a comment it sends `{ comment, version }` only, without one it writes nothing and
+exits 0, so approving the same re-plan twice is harmless. A story changed on Taiga since it was read is a `conflict`
+(exit 5) with `key: "#<ref>"`.
+
+Text output: `#84 Login form (vigo-auth): due date 2026-11-20 → 2026-11-24` (`none` when it had no due date;
+`, with a comment` appended when one was added), `#84 Login form (vigo-auth) is already due 2026-11-24: nothing
+changed`, or `… is already due 2026-11-24: commented only`. `--json` prints
+`{ "ticket": { "id", "ref", "subject", "project": { "id", "slug", "name" } }, "from", "to", "changed", "comment" }`:
+`from` the previous due date (`YYYY-MM-DD`, or `null`), `to` the new one, `changed` false when the due date was already
+`to` (not written), `comment` the comment added or `null`.
+
 ## Notify
 
 `taigent notify week|day|eod [--project <slug>] [--dry-run] [--json]` builds a message about the user's tickets from
@@ -1377,9 +1506,14 @@ text, split at line breaks into messages of at most 4096 characters). Meant for 
 
 | Kind | Days read | Message |
 |---|---|---|
-| `week` | Monday to Sunday of today | Open tickets by group: overdue, due this week, due later, no due date; then the ones closed this week |
-| `day` | today | Open tickets due today, overdue ones, and how many others are open |
-| `eod` | today | Open tickets due today or earlier (the **end-of-day reminder**), and how to close them from the chat; nothing is sent when there are none |
+| `week` | Monday to Sunday of today | The counts by progress group, the whole **plan** day by day (hours and tickets), then every warning: Overdue, no due date, no points, **Late start**, and **At risk** (planned finish day and the tickets sharing its days) |
+| `day` | today | The plan's entries of today (hours per ticket), the tickets whose latest start day is today, the **Due today** and the **Overdue** ones |
+| `eod` | today | The **end-of-day reminder**: unfinished planned tickets due today or earlier, the **re-plan** entries among them, and the hint: reply "đóng hết"/"đóng #<số>" to move them to `Ready for test`, or "duyệt re-plan" to approve the re-plan (`taiga-update-ticket`); nothing is sent when there are none |
+
+All three come from the same `TicketsReport` as [`tickets`](#tickets), at `TAIGENT_NOW` when set. `week` and `day` plan
+from now; `eod` plans from the next working day, as after 17:00 (`tickets --eod`): sent near the end of the day, it
+gives every ticket due today and not finished a re-plan entry to approve. The plan names a ticket `#12` when all the
+tickets belong to one project (or `--project` is given), else `alpha#12`.
 
 The bot token is `TELEGRAM_BOT_TOKEN` (environment or `.env`), else the one the Claude Code Telegram plugin saved
 (`/telegram:configure` writes `<TELEGRAM_STATE_DIR>/.env`). The chat is `TELEGRAM_CHAT_ID`, else the one user paired
@@ -1388,8 +1522,8 @@ several paired users without `TELEGRAM_CHAT_ID` is exit 2. Missing Telegram sett
 contacted; `--dry-run` needs none: it prints the message and sends nothing (exit 0). A message the Bot API refuses, or
 an unreachable Bot API, is exit 5 with kind `telegram`. The token joins the redacted secrets.
 
-Text output: `Sent the eod message to Telegram chat 412587349`, `Nothing to send: no open ticket is due by
-2026-11-02`, or the message itself with `--dry-run`. `--json` prints
+Text output: `Sent the eod message to Telegram chat 412587349`, `Nothing to send: no unfinished planned
+ticket is due by 2026-11-02`, or the message itself with `--dry-run`. `--json` prints
 `{ "kind", "range": { "from", "to" }, "text" (null: nothing to send), "sent", "chatId" (null with --dry-run) }`.
 
 ## Telegram
@@ -1407,13 +1541,15 @@ use the same bot:
   claude.ai or Console login, and on Team/Enterprise plans an admin's approval). The model answers with
   `taiga-update-ticket`. [`telegram-reply.md`](telegram-reply.md) has it call the plugin's `reply` tool with
   `format: "markdownv2"` and bold the key facts, falling back to plain text when Telegram refuses the markup.
-  `.claude/settings.json` pre-allows `npx taigent tickets|status|comment` (as `Bash(...)` and `PowerShell(...)`),
+  `.claude/settings.json` pre-allows `npx taigent tickets|status|comment|due` (as `Bash(...)` and `PowerShell(...)`),
   because a skill's `allowed-tools` cover only the turn that invoked it and a follow-up chat message would otherwise
   stop at a permission prompt; other prompts reach Telegram as buttons (the plugin relays them).
 
 The chat session does not see what `notify` sent (a bot receives no copy of its own messages, and the Bot API keeps
-no history), so `taiga-update-ticket` rebuilds "close them" from `taigent tickets`: the open tickets due today or
-earlier, exactly the end-of-day reminder's list at that moment.
+no history), so `taiga-update-ticket` rebuilds the end-of-day reminder from `taigent tickets --eod`: "close them" means
+the planned tickets not finished whose due date is today or earlier, moved to `Ready for test` (`Done` only on the
+user's explicit request once they were tested), and "duyệt re-plan" means the `replan` entries of those tickets,
+exactly the reminder's lists at that moment.
 
 ## Login and the MCP server
 
@@ -1498,11 +1634,11 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-bootstrap-project` | User only (as above) | Writes or checks `taiga/<slug>/project.yaml`, `taigent validate` → `taigent bootstrap --dry-run` → asks → `taigent bootstrap --yes` |
 | `taiga-upload-docs` | User only (as above) | Updates `taiga/<slug>/docs.yaml` (referencing documents where they already are, no copies), `taigent validate` → `taigent upload --dry-run` → asks → `taigent upload --yes` |
 | `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools only (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); hands questions about your own tickets to `taiga-my-tickets` |
-| `taiga-my-tickets` | Model or user | Read-only report of your tickets in a period (the current week, Monday to Sunday, by default): `taigent tickets --json`, the one shell command it runs, laid out as header, summary, by day, by project, still open, notes, in the user's language |
-| `taiga-update-ticket` | Model or user (`policy.allow_implicit_invocation: true`) | Finds the tickets a request names (`taigent tickets --json`; "close them" = the end-of-day reminder's list), then `taigent status` / `taigent comment` per ticket, at once, and reports each outcome |
+| `taiga-my-tickets` | Model or user | Read-only report of your tickets in a period (the current week, Monday to Sunday, by default): `taigent tickets --json`, the one shell command it runs, laid out as header, summary by progress group and due status, finished by day, plan by day, by project, warnings, re-plan proposal (nothing written until approved, and how to approve it), notes (bulk closes, missing effort), in the user's language |
+| `taiga-update-ticket` | Model or user (`policy.allow_implicit_invocation: true`) | Finds the tickets a request names (`taigent tickets --json`; "close them"/"đóng hết" = the end-of-day reminder's list), then `taigent status` / `taigent comment` per ticket, at once (close = `Ready for test`; `Done` only on explicit request with confirmation the tickets were tested); "approve the re-plan"/"duyệt re-plan" = one `taigent due --project <p> <ref> <proposedDueDate> -- <comment>` per `replan` entry, rebuilt from `taigent tickets --json`; reports each outcome |
 | `taiga-dashboard` | Model or user (`policy.allow_implicit_invocation: true`) | Read-only **Dashboard** of one project for the user's **Role** (Developer, Product Owner or Business Analyst; asked when the request names none, never stored): `taigent metrics --json`, the one shell command it runs, with that role's metrics first, in glossary terms and the user's language |
 
-Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment|snapshot|adopt|pull|metrics`
+Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment|due|snapshot|adopt|pull|metrics`
 and `npx taigent review approve|request-changes|comment|resolve` (as
 `Bash(...)` and, for Claude Code's Windows PowerShell tool, `PowerShell(...)` rules), Taiga MCP read tools, `gh issue view`
 and `Skill(...)` of another Taigent skill (`prd-to-taiga` reads the PRD issue and runs `taiga-plan-backlog`); every
@@ -1510,7 +1646,7 @@ skill that pre-approves a plan-gated writing command (`apply`, `bootstrap`, `upl
 so is `taiga-review-backlog`, the one skill that pre-approves `review approve` and `review request-changes` (a verdict
 is the reviewer's decision; `taiga-plan-backlog` has only `review resolve`, and the headless allowlist no `review`
 command) (`test/skills.test.ts` enforces these rules). They grant, not restrict: the gate before `--yes` is the skill's explicit
-confirmation step. `status` and `comment` edit one of the user's own tickets that the request names, so
+confirmation step. `status`, `comment` and `due` edit one of the user's own tickets that the request names, so
 `taiga-update-ticket` runs on its own.
 Codex's skill docs do not document `allowed-tools`; there, approvals come from `.codex/config.toml`, the sandbox, the
 execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell hook `.codex/hooks/taigent-shell-guard.mjs`
@@ -1700,7 +1836,7 @@ everywhere else. The package (`files` in `package.json`) ships `bin/`, `dist/`, 
 runs `setup --project` in a terminal without a login is logged in by it), at the project root; the project commits the
 files `setup --project` wrote and each user approves the project server once.
 `taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets`, `taiga-update-ticket` and `taiga-dashboard`
-need only the CLI (`taigent tickets`, `status`, `comment`, `metrics`). For chats from Telegram, also add the six `tickets|status|comment` rules of
+need only the CLI (`taigent tickets`, `status`, `comment`, `due`, `metrics`). For chats from Telegram, also add the eight `tickets|status|comment|due` rules of
 the README's step 6e to the project's `.claude/settings.json`.
 To run a skill without interaction, run `node_modules/taigent/tools/taiga/run-skill.ps1` (or `run-skill.sh`) from the
 project root: it uses the project's skills and the allowlist `setup --project` installed ([docs/headless.md](headless.md)).
@@ -1713,7 +1849,7 @@ skill checks all of it and names each fix.
 |---|---|
 | 0 | Success; nothing left to change (`setup` without a login and without a terminal: files installed, checks skipped) |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, a flag on a command that does not take it (e.g. `--epic`, `--story`, `--ref` or `--keep-manifest` elsewhere than `adopt`/`pull`), missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `adopt` refusals ([Adopt](#adopt): closed or already tagged item, unknown ref, key or ref taken, missing or wrong parent, a story whose Taiga epics do not include `--epic`), `pull --key` naming an item not in `backlog.yaml` or not on Taiga yet, `backlog.yaml` changed while adopting or pulling (kind `usage`), `tickets` or `sprint create` without valid `--from`/`--to`, `--from`/`--to` with another command, `sprint create`/`sprint add` with changes but no `--yes`, `sprint create` on a name taken with other days, `sprint add` with an unknown sprint name or a ref that is no user story of the project, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `review` refusals, nothing written ([Review](#review): a key not in `backlog.yaml`, a comment id the item lacks, a missing or unknown subcommand, a malformed key, text after `approve`, a missing text or reply), `notify` without a bot token or a single chat, `setup` on a client config (`~/.claude.json`, `~/.codex/config.toml`, `~/.omp/agent/mcp.json`) it cannot merge or whose `taiga` server command is not on PATH (`taigent` after `npx taigent setup`), `setup --project` with a value, on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
+| 2 | Usage or configuration error: unknown command/flag, a flag on a command that does not take it (e.g. `--epic`, `--story`, `--ref` or `--keep-manifest` elsewhere than `adopt`/`pull`), missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `adopt` refusals ([Adopt](#adopt): closed or already tagged item, unknown ref, key or ref taken, missing or wrong parent, a story whose Taiga epics do not include `--epic`), `pull --key` naming an item not in `backlog.yaml` or not on Taiga yet, `backlog.yaml` changed while adopting or pulling (kind `usage`), `tickets` or `sprint create` without valid `--from`/`--to`, `tickets`/`notify` with an invalid `TAIGENT_NOW`, `--from`/`--to` with another command, `sprint create`/`sprint add` with changes but no `--yes`, `sprint create` on a name taken with other days, `sprint add` with an unknown sprint name or a ref that is no user story of the project, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment`/`due` on a ref that is not one of your tickets, `status` with an unknown status, `due` without a valid `YYYY-MM-DD` day, `review` refusals, nothing written ([Review](#review): a key not in `backlog.yaml`, a comment id the item lacks, a missing or unknown subcommand, a malformed key, text after `approve`, a missing text or reply), `notify` without a bot token or a single chat, `setup` on a client config (`~/.claude.json`, `~/.codex/config.toml`, `~/.omp/agent/mcp.json`) it cannot merge or whose `taiga` server command is not on PATH (`taigent` after `npx taigent setup`), `setup --project` with a value, on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
 | 3 | `plan` or `--dry-run` found changes (`setup --dry-run`, `setup --project --dry-run`: a file would change); `skills check` found differing copies |
 | 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); `pull`: Taiga's values do not fit the manifest (kind `pull`, [Pull](#pull)), no file written; nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project (except for `metrics`: exit 2), version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable; `setup`'s login check or MCP check failed ([Setup: login and checks](#setup-login-and-checks)) |
@@ -1730,7 +1866,7 @@ skill checks all of it and names each fix.
 | Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
 | MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set), `checkMcp` (setup's MCP check: spawns the `taiga` entry setup wrote, without a shell, and calls `listProjects` over JSON-RPC; `McpStartError` when its command is not on PATH, exit 2; `McpCheckError`, exit 5) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`, `listStatuses(type, projectId)`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`, and `listProjectTasks` for `metrics`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`, `listStatuses(type, projectId)`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `editStory` (status, sprint, due date, comment) for `status`, `comment`, `due` and `sprint add`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`, and `listProjectTasks` for `metrics`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links (of epics tagged `src:` or adopted by `ref`), issue values (when the backlog has issues) and attribute values `buildPlan` needs |
 | Managed values | `src/managed.ts` | pure `manifestManagedValues(entry)` and `remoteManagedValues(type, item, remote, attributes, backlogKey)` → `ManagedValues` (plain JSON, also the baseline stored in `state.json`): the fields taigent owns on an item (subject, description, `type:`/`area:` tags, declared custom attributes, an issue's type/severity/priority names, a task's story key, a story's epic keys), projected the same way from the manifest and from Taiga (`backlogKey`, from `backlogKeyOf(backlog)`, resolves a Taiga item to its backlog key: its `src:` tag, else the backlog item naming its `ref`; shared by plan, preview and adopt); `snapshotManagedValues(type, item, manifest, baseline, backlogKey)` projects a `snapshot.json` item the same way (custom attributes taken from the baseline); `differingFields(manifest, remote)` (tags and epic links additive), `remoteEditedFields(baseline, remote, manifest)` (what changed on Taiga since the baseline), `blockedFields(manifest, remote, baseline)` → `{ kind: BlockedKind, fields }` or undefined (the three-way table of [Baseline and remote edits](#baseline-and-remote-edits), shared by `plan` and `preview`), `keyOf(item)`, `isSrcTag(tag)`, `managedTags(tags)`, `issueValueName(values, id)`. Status, assignee, sprint, points and unprefixed tags are outside the projection |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote, state)` (`state`: `items` and `adopted` of `state.json`, whose baselines count via `recordedBaseline(entry, type, id)` of `src/manifest/state.ts`) → `{ plan, baselines, counterparts }` (operations `create`, `update`, `adopt`, `link`, `skip`, orphans, stale links, blocked items and `handMadeChildren`, plus the baseline apply records per key, adopted items included, and `counterparts`: the Taiga item each backlog item is or adopts (`adopting`) with both sides' managed values, for `pull`), or `RefMismatchError` naming the backlog items whose `ref` does not match Taiga (reported as `item-ref` issues of `backlog.yaml`), `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)` |
@@ -1745,7 +1881,7 @@ skill checks all of it and names each fix.
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `prd-to-taiga`, `ask-taigent`), `.agents/skills/` → `.claude/skills/`; `compareSkillDirs(source, target, content?)` (file by file, `same` included) and `copySkills(source, target, comparison, content?)` for any two directories, a copy holding what `content` makes of each source file (setup: `stampSkillVersion`; `skillVersion` reads it back) |
 | Setup | `src/setup.ts` | `setupUser(home, { dryRun })` and `setupProject(root, { dryRun })` → `SetupReport` (`files: [{ path, status }]`, `clients` for `setupUser`), `SetupError` (exit 2): the offline file part of `setup` and `setup --project` (`FilePlan` plans every file before the first write and writes each with `writeAtomic`, each skill stamped with the running version; `USER_CLIENTS` lists each client's label, marker, skills directory and MCP config, and how it ranks a project copy against them; `mcpServer` builds each scope's `taiga` entry, JSON and Codex table, from one command line), copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed); `mcpCheckTarget(scope, root)` → the command line setup wrote and the fix when it cannot start, or why there is nothing to start yet; `checkInstall(home, cwd)` → `InstallCheck` (`taigentVersion`, `outdatedSkills`, `duplicates`). `runSetup` in `src/cli.ts` runs the files, `setupLogin` (`interactiveLogin`, as `taigent login`, then `whoami`), `setupMcpCheck` (`checkMcp`) and `checkInstall`, then prints the report |
-| Tickets | `src/tickets.ts` | `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
+| Tickets | `src/tickets.ts` | `dayRange(from, to)`, `readTickets(client, range, now, project?)` → `TicketsReport` (finishing days from each finished ticket's history through `metrics/history.ts` and `historyStatusName`), `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories, `TAIGA_CONCURRENCY` requests at a time) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
 | Snapshot | `src/snapshot.ts` | `readSnapshot(client, slug)` → `Snapshot` (GET only), `writeSnapshot(path, snapshot)`, `readSnapshotFile(path)` (undefined without one; `preview` reads it), `summarizeSnapshot`, `formatSnapshotText`: the read-only `snapshot` command; the file is `projectLayout(...).snapshot` (`SNAPSHOT_FILE` in `src/manifest/layout.ts`) |
@@ -1753,7 +1889,7 @@ skill checks all of it and names each fix.
 | Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `localMinute`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify`, the manifests and `metrics` |
 | Concurrency | `src/taiga/concurrency.ts` | `mapLimited(items, limit, read)` and `TAIGA_CONCURRENCY` (8): one read of Taiga per sprint, epic or item, a few at a time, none started after one fails (`report`, `metrics`) |
 | Sprints | `src/sprint.ts` | `readSprints`/`formatSprintListText` (`sprint list`), `planSprintCreate`/`executeSprintCreate` (`POST /milestones`, idempotent by name and days), `planSprintAdd`/`executeSprintAdd` (story `milestone` via `editStory`, OCC), `SprintError` (exit 2) |
-| Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
+| Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket`, `setTicketDueDate` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |
 
 Every plan/execute command has the same three steps: a reader (`read*Remote`, all I/O), a pure planner, an executor.
@@ -1816,8 +1952,8 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   `editAttributeValues("userstory", storyId, { [attributeId]: hours })`. Every project gets the default template's
   story statuses (`state.storyStatuses`: `New`, `Ready`, `In progress`, `Ready for test`, `Done` and `Archived`
   closed), served by `GET /userstory-statuses?project=`; a story PATCH with `status` sets its `status_name`,
-  `is_closed` and `finish_date` (set on closing, cleared on reopening), and a `comment` lands in `state.comments`
-  (`{ itemType, item, user, comment }`). `test/notify.test.ts` runs its own Bot API stand-in through
+  `is_closed` and `finish_date` (set on closing, cleared on reopening), it accepts `due_date`, and a `comment` lands in
+  `state.comments` (`{ itemType, item, user, comment }`). `test/notify.test.ts` runs its own Bot API stand-in through
   `TAIGENT_TELEGRAM_API_URL`; the harness drops the developer's `TELEGRAM_*` and `CLAUDE_CONFIG_DIR`.
 - Edits like a Taiga user (bump `version`, recorded for OCC): `editItem(item, changes)`, `editWikiPage(page, changes)`,
   `editAttributeValues(itemType, itemId, values)`.

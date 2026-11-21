@@ -5,12 +5,12 @@
 # the mcp__taiga__ tool names and runs the Codex shell hook. Never add an MCP write tool or a tool banned in
 # docs/taiga/conventions.md §10: writes to Taiga go through the taigent CLI (test/headless.test.ts enforces this).
 
-# taigent CLI, as Claude Code's Bash and (Windows) PowerShell tools run it. status/comment edit one of the user's own
-# tickets, named in the request (taiga-update-ticket); snapshot only reads Taiga and writes taiga/<slug>/snapshot.json;
-# adopt only reads Taiga and writes taiga/<slug>/backlog.yaml (one hand-made item the user confirmed); pull only reads
-# Taiga and writes taiga/<slug>/backlog.yaml and state.json; metrics only reads (taiga-dashboard); review resolve
-# answers a review comment in taiga/<slug>/review.yaml (taiga-plan-backlog). Never review approve, request-changes or
-# comment: verdicts and comments are the reviewer's own.
+# taigent CLI, as Claude Code's Bash and (Windows) PowerShell tools run it. status/comment/due edit one of the user's
+# own tickets, named in the request (taiga-update-ticket); snapshot only reads Taiga and writes
+# taiga/<slug>/snapshot.json; adopt only reads Taiga and writes taiga/<slug>/backlog.yaml (one hand-made item the user
+# confirmed); pull only reads Taiga and writes taiga/<slug>/backlog.yaml and state.json; metrics only reads
+# (taiga-dashboard); review resolve answers a review comment in taiga/<slug>/review.yaml (taiga-plan-backlog). Never
+# review approve, request-changes or comment: verdicts and comments are the reviewer's own.
 Bash(npx taigent validate *)
 Bash(npx taigent plan *)
 Bash(npx taigent apply *)
@@ -19,6 +19,7 @@ Bash(npx taigent upload *)
 Bash(npx taigent tickets *)
 Bash(npx taigent status *)
 Bash(npx taigent comment *)
+Bash(npx taigent due *)
 Bash(npx taigent preview *)
 Bash(npx taigent projects *)
 Bash(npx taigent report *)
@@ -35,6 +36,7 @@ PowerShell(npx taigent upload *)
 PowerShell(npx taigent tickets *)
 PowerShell(npx taigent status *)
 PowerShell(npx taigent comment *)
+PowerShell(npx taigent due *)
 PowerShell(npx taigent preview *)
 PowerShell(npx taigent projects *)
 PowerShell(npx taigent report *)

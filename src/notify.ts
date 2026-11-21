@@ -6,9 +6,9 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
-import { addDays, localDay, mondayOf } from './days.ts';
+import { addDays, localDay, longDay, mondayOf, shortDay, weekdayName } from './days.ts';
 import { isFileNotFound, isRecord } from './guards.ts';
-import type { Ticket, TicketsReport } from './tickets.ts';
+import { isTicket, type Ticket, type TicketId, type TicketsReport, ticketLabel } from './tickets.ts';
 
 export const NOTIFY_KINDS = ['week', 'day', 'eod'] as const;
 export type NotifyKind = (typeof NOTIFY_KINDS)[number];
@@ -27,63 +27,88 @@ export function notifyRange(kind: NotifyKind, now: Date): { from: string; to: st
   return { from: monday, to: addDays(monday, 6) };
 }
 
-/** `30/10` from `2026-10-30`. */
-const shortDay = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
-/** `30/10/2026` from `2026-10-30`. */
-const longDay = (day: string) => `${shortDay(day)}/${day.slice(0, 4)}`;
-
-function ticketLine(ticket: Ticket): string {
+function ticketLine(ticket: Ticket, extra = ''): string {
   const due = ticket.dueDate === null ? 'chưa có hạn' : `hạn ${shortDay(ticket.dueDate)}`;
-  return `• #${ticket.ref} ${ticket.subject} — ${ticket.status} · ${due} (${ticket.project.slug})`;
+  return `• #${ticket.ref} ${ticket.subject} — ${ticket.status} · ${ticket.dueStatus ?? '?'} · ${due} (${ticket.project.slug})${extra}`;
 }
 
-/** A titled list of tickets, or nothing when there are none. */
-function section(title: string, tickets: Ticket[]): string[] {
-  return tickets.length === 0 ? [] : ['', `${title} (${tickets.length}):`, ...tickets.map(ticketLine)];
+/** A titled list of lines, or nothing when there are none. */
+function section(title: string, lines: string[]): string[] {
+  return lines.length === 0 ? [] : ['', `${title} (${lines.length}):`, ...lines];
 }
 
 /**
- * The message of `kind`, in Vietnamese (the team's language), or null when there is nothing to say: `eod` with no
- * open ticket due by today.
- * - `week`: every open ticket by due status (Overdue, due this week, due later, no due date), and those closed so far.
- * - `day`: open tickets due today and Overdue ones, and how many others are open.
- * - `eod`: open tickets due today or Overdue, with how to close them from the chat.
+ * The message of `kind`, in Vietnamese (the team's language), from the report alone, or null when there is nothing to
+ * say: `eod` with no unfinished planned ticket due by today.
+ * - `week`: the whole plan and every warning.
+ * - `day`: the plan's entries of today, tickets whose latest start day is today, Due today and Overdue.
+ * - `eod` (end-of-day reminder): unfinished planned tickets due today or earlier, their re-plan (from a report planned
+ *   from the next working day, `readTickets`' `endOfDay`), and how to move them to Ready for test or approve the
+ *   re-plan from the chat.
  */
 export function notifyMessage(kind: NotifyKind, report: TicketsReport): string | null {
-  const open = report.tickets.filter((ticket) => !ticket.isClosed);
-  const overdue = open.filter((ticket) => ticket.dueStatus === 'Overdue');
   const scope = report.project === null ? '' : ` · ${report.project}`;
+  const open = report.tickets.filter((ticket) => !ticket.isFinished);
+  const byId = (id: TicketId) => report.tickets.find((ticket) => isTicket(ticket, id))!;
+  const listed = (ids: TicketId[], extra: (ticket: Ticket) => string = () => '') => ids.map(byId).map((ticket) => ticketLine(ticket, extra(ticket)));
+  const { warnings } = report;
   if (kind === 'week') {
-    const dueThisWeek = open.filter((ticket) => ticket.dueDate !== null && ticket.dueDate >= report.range.from && ticket.dueDate <= report.range.to);
-    const dueLater = open.filter((ticket) => ticket.dueDate !== null && ticket.dueDate > report.range.to);
-    const noDueDate = open.filter((ticket) => ticket.dueDate === null);
-    const closed = report.tickets.filter((ticket) => ticket.closedAt !== null && Date.parse(ticket.closedAt) >= Date.parse(report.range.start));
-    return [
+    const count = report.summary.byProgress;
+    const lines = [
       `📅 Tuần ${shortDay(report.range.from)} – ${longDay(report.range.to)} · ${report.user.username}${scope}`,
-      `Đang mở ${open.length} ticket: quá hạn ${overdue.length}, đến hạn trong tuần ${dueThisWeek.length}, hạn sau ${dueLater.length}, chưa có hạn ${noDueDate.length}.`,
-      ...section('Quá hạn', overdue),
-      ...section('Đến hạn trong tuần', dueThisWeek),
-      ...section('Hạn sau tuần này', dueLater),
-      ...section('Chưa có hạn', noDueDate),
-      ...section('Đã đóng trong tuần', closed),
-    ].join('\n');
+      `Chưa xong ${open.length} ticket (Ready ${count.Ready}, In progress ${count['In progress']}), chờ test ${count['Ready for test']}, đã Done ${count.Done}.`,
+      '',
+    ];
+    if (report.plan.days.length === 0) lines.push('Kế hoạch: không còn việc nào để xếp.');
+    else {
+      lines.push(`Kế hoạch (từ ${shortDay(report.plan.start)}):`);
+      // `#12` for a ticket of --project or of the one project all the tickets belong to; else `alpha#12`.
+      const home = report.project ?? (report.summary.projects.length === 1 ? report.summary.projects[0]!.slug : null);
+      for (const day of report.plan.days) {
+        const entries = day.entries.map((entry) => `${ticketLabel(entry, home)} (${entry.hours}h)`).join(', ');
+        lines.push(`• ${weekdayName(day.date, 'vi')} ${shortDay(day.date)} — ${day.hours}h: ${entries}`);
+      }
+    }
+    lines.push(
+      ...section('Quá hạn', listed(warnings.overdue)),
+      ...section('Chưa có hạn', listed(warnings.noDueDate)),
+      ...section('Chưa có point', listed(warnings.noPoints)),
+      ...section('Đã tới ngày phải bắt đầu mà còn Ready', listed(warnings.lateStart, (ticket) => ` · bắt đầu muộn nhất ${shortDay(ticket.latestStartDay!)}`)),
+      ...section('Có nguy cơ trễ hạn', listed(warnings.atRisk, (ticket) => {
+        const sharing = ticket.sharingTickets.length === 0 ? '' : `, chung ngày với ${ticket.sharingTickets.map((id) => ticketLabel(id, ticket.project.slug)).join(', ')}`;
+        return ` · dự kiến xong ${shortDay(ticket.plannedFinishDay!)}${sharing}`;
+      })),
+    );
+    return lines.join('\n');
   }
-  const dueToday = open.filter((ticket) => ticket.dueDate === report.today);
+  const overdue = open.filter((ticket) => ticket.dueStatus === 'Overdue');
+  const dueToday = open.filter((ticket) => ticket.dueStatus === 'Due today');
   if (kind === 'day') {
-    const others = open.length - dueToday.length - overdue.length;
-    const lines = [`☀️ Hôm nay ${longDay(report.today)} · ${report.user.username}${scope}`];
-    if (dueToday.length === 0 && overdue.length === 0) lines.push('Không có ticket nào đến hạn hôm nay hoặc quá hạn.');
-    lines.push(...section('Đến hạn hôm nay', dueToday), ...section('Quá hạn', overdue), '', `Còn mở khác: ${others} ticket.`);
+    const lines = [`☀️ Hôm nay ${weekdayName(report.today, 'vi')} ${longDay(report.today)} · ${report.user.username}${scope}`, ''];
+    const today = report.plan.days.find((day) => day.date === report.today);
+    if (today === undefined) lines.push('Kế hoạch không xếp việc nào cho hôm nay.');
+    else {
+      lines.push(`Kế hoạch hôm nay (${today.hours}h):`);
+      for (const entry of today.entries) {
+        const ticket = byId(entry);
+        lines.push(`• #${ticket.ref} ${ticket.subject} — ${entry.hours}h (${ticket.project.slug})`);
+      }
+    }
+    const startToday = open.filter((ticket) => ticket.latestStartDay === report.today);
+    lines.push(...section('Phải bắt đầu hôm nay', startToday.map((t) => ticketLine(t))), ...section('Đến hạn hôm nay', dueToday.map((t) => ticketLine(t))), ...section('Quá hạn', overdue.map((t) => ticketLine(t))));
     return lines.join('\n');
   }
   const pending = open.filter((ticket) => ticket.dueDate !== null && ticket.dueDate <= report.today);
   if (pending.length === 0) return null;
-  return [
-    `⏰ Cuối ngày ${longDay(report.today)}: bạn còn ${pending.length} ticket đến hạn chưa đóng${scope}.`,
-    ...pending.map(ticketLine),
-    '',
-    'Xong rồi thì nhắn "đóng hết" hoặc "đóng #<số>" để chuyển sang Done.',
-  ].join('\n');
+  const replan = report.replan.filter((entry) => pending.some((ticket) => isTicket(ticket, entry)));
+  const lines = [`⏰ Cuối ngày ${longDay(report.today)}: bạn còn ${pending.length} ticket đến hạn hôm nay hoặc trước đó mà chưa xong${scope}.`, ...pending.map((t) => ticketLine(t))];
+  if (replan.length > 0) {
+    lines.push('', 'Đề xuất dời hạn (re-plan):');
+    for (const entry of replan) lines.push(`• #${entry.ref} ${entry.subject}: ${shortDay(entry.dueDate)} → ${shortDay(entry.proposedDueDate)} — ${entry.comment}`);
+  }
+  const approve = replan.length > 0 ? '; đồng ý dời hạn thì nhắn "duyệt re-plan"' : '';
+  lines.push('', `Xong rồi thì nhắn "đóng hết" hoặc "đóng #<số>" để chuyển sang Ready for test (chờ QA/QC)${approve}.`);
+  return lines.join('\n');
 }
 
 /** Where `notify` sends: the bot token, the chat and the Bot API base URL. */

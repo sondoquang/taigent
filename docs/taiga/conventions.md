@@ -81,9 +81,10 @@ chuyển legacy sang user story format. Lần `plan` đầu sau khi nâng cấp 
 | `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 
 Ngoại lệ duy nhất của quy trình trên là sửa **ticket của chính mình** (user story được giao cho mình):
-`taigent status` (đổi status) và `taigent comment` (thêm comment) ghi ngay, không cần `--yes`, vì chính yêu cầu của
-người dùng đã nêu rõ ticket và việc cần làm (skill `taiga-update-ticket`, kể cả khi yêu cầu đến từ Telegram). CLI
-từ chối story không được giao cho người đang đăng nhập.
+`taigent status` (đổi status), `taigent comment` (thêm comment) và `taigent due` (đổi due date, kèm comment nêu lý do)
+ghi ngay, không cần `--yes`, vì chính yêu cầu của người dùng đã nêu rõ ticket và việc cần làm (skill
+`taiga-update-ticket`, kể cả khi yêu cầu đến từ Telegram, ví dụ duyệt một **Re-plan**). CLI từ chối story không được
+giao cho người đang đăng nhập.
 
 ## 2. Tên và slug project
 
@@ -457,7 +458,7 @@ Slug chuẩn:
 
 Lệnh `taigent` skill được dùng (allowlist của skill và wrapper headless): `validate`, `preview`, `plan`, `snapshot`
 (chỉ đọc Taiga, chỉ ghi `snapshot.json`), `adopt` và `pull` (chỉ đọc Taiga, chỉ ghi file local), `metrics` (chỉ đọc,
-skill `taiga-dashboard`), `tickets`, `status`, `comment`, `review resolve` (offline, chỉ ghi `review.yaml`: trả lời
+skill `taiga-dashboard`), `tickets`, `status`, `comment`, `due`, `review resolve` (offline, chỉ ghi `review.yaml`: trả lời
 comment review, skill `taiga-plan-backlog`), và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi
 người dùng đồng ý (§1). `review approve|request-changes|comment` không có trong allowlist headless: chỉ trong skill
 `taiga-review-backlog` mà người review tự gọi.

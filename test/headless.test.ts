@@ -41,7 +41,7 @@ const MCP_WRITE_TOOLS = [
  * The taigent commands headless runs allow. `review resolve` lets taiga-plan-backlog answer review comments
  * unattended; the other review subcommands (verdicts, new comments) are the reviewer's and never allowed.
  */
-const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'preview', 'projects', 'report', 'snapshot', 'adopt', 'pull', 'metrics', 'review resolve'];
+const TAIGENT_COMMANDS = ['validate', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'due', 'preview', 'projects', 'report', 'snapshot', 'adopt', 'pull', 'metrics', 'review resolve'];
 const REVIEWER_COMMANDS = ['npx taigent review approve --project vigo-auth AUTH', 'npx taigent review request-changes --project vigo-auth AUTH -- why', 'npx taigent review comment --project vigo-auth AUTH -- why'];
 
 function parseAllowlist(text: string): string[] {

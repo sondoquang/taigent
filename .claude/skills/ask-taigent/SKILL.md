@@ -27,9 +27,9 @@ Beside the main flow:
 - **`taiga-create-user-story`**: one user story in the user story format (Mike Cohn + Gherkin, conventions §6) under an epic already on Taiga: draft → `taigent snapshot` and duplicate check → pick the epic (a hand-made one is adopted with `taigent adopt` after you confirm) → `backlog.yaml` → `taigent plan` (`adopt` epic + `create` story) → one confirm → `taigent apply --yes`. Hands over to `taiga-plan-backlog` when no epic fits, and to `taiga-apply-backlog` when the plan holds other changes or blocked items (exit 6).
 - **`taiga-upload-docs`**: specs, ADRs, guides and meeting notes as wiki pages and attachments, declared in `taiga/<slug>/docs.yaml`, after bootstrap (and after the backlog when attachments target item keys).
 - **`taiga-status-report`**: progress by sprint and by epic, or one quick count or lookup. Read-only through the MCP server, any time.
-- **`taiga-my-tickets`**: your tickets (user stories assigned to you) in a period, this week by default: closed, due and still open, with due status and effort. Read-only through `taigent tickets`, any time.
+- **`taiga-my-tickets`**: your tickets (user stories assigned to you) in a period, this week by default: by progress group and due status, with effort, the plan of the remaining work by day, the warnings and the re-plan proposal of the tickets at risk. Read-only through `taigent tickets`, any time.
 - **`taiga-dashboard`**: the dashboard of one project for your role (Developer, Product Owner or Business Analyst), that role's metrics first: workload, cycle time and bugs; releases, requirements coverage, items awaiting review and pending clarification; requirement changes. It asks your role when you name none and never stores it. Read-only through `taigent metrics`, any time.
-- **`taiga-update-ticket`**: move your own tickets to another status (close = `Done`) or comment on one, at once: the request is the confirmation. Through `taigent status` and `taigent comment`, never MCP.
+- **`taiga-update-ticket`**: move your own tickets to another status (close = `Ready for test`; `Done` only on your explicit request once they were tested), comment on one, or approve the re-plan (one `taigent due` per entry), at once: the request is the confirmation. Through `taigent status`, `taigent comment` and `taigent due`, never MCP.
 
 ## On-ramps
 
@@ -47,9 +47,10 @@ Starting situations, and where each merges onto the flow.
 - **New or changed requirement** → `taiga-plan-backlog` with the request as the spec, then review and `taiga-apply-backlog`.
 - **A bug, a question or a small enhancement to file on Taiga** → `taiga-plan-backlog`: it writes an issue in the `issues` list of `backlog.yaml`, with the project's own type, severity and priority names (conventions §6.4), then review and `taiga-apply-backlog`. Never MCP `createIssue`, nor the banned `batchCreateIssues`.
 - **"How far along are we?" or "how many …?"** → `taiga-status-report`.
-- **"What are my tickets this week?" or "what did I close last week?"** → `taiga-my-tickets`.
+- **"What are my tickets this week?", "what did I finish last week?" or "what is my plan?"** → `taiga-my-tickets`.
 - **"Dashboard of project X", "how are our releases?", "what is awaiting review?", "what is my workload?"** → `taiga-dashboard`.
-- **"Close #84", "move the login ticket to Ready for test", "comment on #84"** → `taiga-update-ticket`.
+- **"Close #84", "close them"/"đóng hết" (the end-of-day reminder's tickets), "move the login ticket to Done, it was tested", "comment on #84"** → `taiga-update-ticket`.
+- **"Approve the re-plan"/"duyệt re-plan"** → `taiga-update-ticket`: one `taigent due` per re-plan entry, rebuilt from `taigent tickets` (`--eod` for the end-of-day reminder's).
 - **Daily ticket messages and chat on Telegram** → README §6 (Bun, bot, plugin, pairing, permissions, schedule), set up once per user and machine; how it works in `docs/cli.md` §Telegram.
 - **Remove, rename or move items on Taiga** → the CLI never deletes. An item dropped from the manifest becomes an **orphan** that `plan` reports; a moved story keeps its old epic link, reported as `staleLinks`. A human cleans both up on Taiga. Keys never change after apply: a new key is a new item.
 - **Status of your own tickets** → `taiga-update-ticket`. Assignee, sprint, points, and the status of other people's items and of issues: people set these on Taiga; manifests carry none of them.
@@ -60,7 +61,7 @@ Starting situations, and where each merges onto the flow.
 The rules every skill above follows; `docs/taiga/conventions.md` holds them in full.
 
 - **Writes go only through the `taigent` CLI.** Taiga MCP is for reading, reports and comments (§1). Some MCP tools are broken and **banned**; the others that write skip the `src:<key>` tag that prevents duplicates (§10).
-- **`--yes` only after an explicit confirmation** of the exact plan or dry run shown, re-planned just before applying. The writing skills (`taiga-apply-backlog`, `taiga-create-user-story`, `taiga-bootstrap-project`, `taiga-upload-docs`) run only when you invoke them. `taigent status`/`comment` take no `--yes`: they edit one of your own tickets that the request names.
+- **`--yes` only after an explicit confirmation** of the exact plan or dry run shown, re-planned just before applying. The writing skills (`taiga-apply-backlog`, `taiga-create-user-story`, `taiga-bootstrap-project`, `taiga-upload-docs`) run only when you invoke them. `taigent status`/`comment`/`due` take no `--yes`: they edit one of your own tickets that the request names.
 - **Manifests follow the conventions**: project name and slug (§2), template and modules (§3), prefixed tags (§4), item keys (§5), story, task and issue templates (§6), wiki slugs (§8), attachment names (§9). `taigent validate` checks §2–§5 and §8–§9 offline; §6 is on the author, except that `plan`/`apply` check a new story's format and an issue's type, severity and priority names against Taiga. Reports use the exact status names of §7.
 - **`npx taigent` runs the taigent the project pins, else the global one** (`npm i -g taigent`), so the skills work in any directory; the ones that read or write manifests run from the project root, which holds `taiga/`.
 
@@ -81,11 +82,12 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 | `taigent pull --project <slug> [--key <KEY>] [--keep-manifest]` | Settle blocked items: Taiga's values into `backlog.yaml` and baselines into `state.json` (or keep the manifest, baselines only); writes local files only | plan-backlog, apply-backlog |
 | `taigent bootstrap --project <slug> --dry-run\|--yes` | Create or complete the project from `project.yaml` | bootstrap-project |
 | `taigent upload --project <slug> --dry-run\|--yes` | Wiki pages and attachments from `docs.yaml` | upload-docs |
-| `taigent tickets --from <day> --to <day> [--project <slug>]` | Your tickets closed or due in those days and every open one, with due status and effort; read-only | my-tickets, update-ticket |
+| `taigent tickets --from <day> --to <day> [--project <slug>] [--eod]` | Your planned tickets and those moved to Done in those days, by progress group with due status and effort, the plan, its warnings and the re-plan (`--eod`: planned from the next working day, as the end-of-day reminder); read-only | my-tickets, update-ticket |
 | `taigent metrics --project <slug>` | The project's dashboard metrics for every role; read-only | dashboard |
 | `taigent status --project <slug> <ref> <status>` | Move your ticket to that status, at once | update-ticket |
 | `taigent comment --project <slug> <ref> <text>` | Comment on your ticket, at once | update-ticket |
-| `taigent notify week\|day\|eod [--dry-run]` | Your tickets of the week, of the day, or due by today and still open, to your Telegram chat | a scheduled task (Task Scheduler, cron) |
+| `taigent due --project <slug> <ref> <YYYY-MM-DD> [comment]` | Set your ticket's due date, with the reason as a comment, at once (an approved re-plan entry) | update-ticket |
+| `taigent notify week\|day\|eod [--dry-run]` | The week's plan and warnings, today's plan, or the end-of-day reminder (planned tickets not finished due by today, with their re-plan), to your Telegram chat | a scheduled task (Task Scheduler, cron) |
 | `taigent setup [--dry-run]` | Install or update the skills (each stamped with this taigent's version) and the `taiga` MCP server in the user config of each client found (Claude Code, Codex, OMP), then check the login and the MCP server (logs in only in the user's own terminal); reports skills older than the CLI (`outdatedSkills`) and copies installed both for the user and in the project (`duplicates`), for both scopes | taiga-setup, you |
 | `taigent setup --project [--dry-run]` | Install or update Taigent in a project: skills, MCP entries, headless kit, pinned devDependency; then the same checks and reports | taiga-setup, you |
 | `taigent skills sync\|check` | Skill maintenance, below | you |

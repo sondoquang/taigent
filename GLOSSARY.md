@@ -77,24 +77,41 @@ A reviewer's remark on one backlog item; open until the agent addresses it in th
 A user story assigned to you. Tasks and issues are not tickets.
 _Avoid_: Card, item (for a story); ticket for a task or an issue
 
+**Planned ticket**:
+A ticket in Ready, In progress or Ready for test: work planned for you. A ticket in New is not planned yet.
+_Avoid_: Open ticket (a ticket in New is open too)
+
+**Finished ticket**:
+A ticket in Ready for test or Done: the developer's part is done. A ticket moved back to In progress is no longer finished.
+_Avoid_: Closed ticket (Ready for test is not closed on Taiga)
+
+**Progress group**:
+Where a ticket stands in its work, by its status: Ready, In progress, Ready for test or Done.
+
 **Period's tickets**:
-The tickets of a reporting period: those closed in it, those due in it, and every ticket still open.
+The planned tickets, plus the tickets that moved to Done in the reporting period.
 
 **Due status**:
-Where a ticket stands against its due date, compared by calendar day in local time: one of On time, Late, Overdue, On track, No due date. A closed ticket with a due date but no closing day has no due status.
+Where a ticket stands against its due date, compared by calendar day in local time: one of On time, Late, Overdue, Due today, On track, No due date. The due date is the day the ticket must be finished.
+
+**Finishing day**:
+The last day a ticket became finished. A ticket that went back to In progress and was finished again finishes on the later day.
 
 **On time**:
-A closed ticket whose closing day is on or before its due date.
+A finished ticket whose finishing day is on or before its due date.
 
 **Late**:
-A closed ticket whose closing day is after its due date.
+A finished ticket whose finishing day is after its due date.
 
 **Overdue**:
-An open ticket whose due date has passed.
-_Avoid_: Late (reserved for closed tickets)
+A ticket not finished whose due date has passed.
+_Avoid_: Late (reserved for finished tickets)
+
+**Due today**:
+A ticket not finished whose due date is today.
 
 **On track**:
-An open ticket whose due date is today or later.
+A ticket not finished whose due date is after today.
 
 **No due date**:
 A ticket without a due date; it has no due status beyond this.
@@ -103,11 +120,36 @@ A ticket without a due date; it has no due status beyond this.
 The hours a ticket took: its Spent Time, or its points when Spent Time is empty, one point counting as one hour.
 _Avoid_: Duration (for the reported figure)
 
+**Working day**:
+Monday to Friday, eight hours of work ending at 17:00.
+
+**Remaining work**:
+The hours a ticket still needs: its points, one point counting as one hour, less its Spent Time, never below zero.
+_Avoid_: Effort (the hours a ticket took)
+
+**Plan**:
+The remaining work of your planned tickets that are not finished, laid on working days from today (from the next working day after 17:00), in due-date order with In progress first on the same date, eight hours a day. Tickets without a due date or without points stay out of it.
+_Avoid_: Schedule, sprint
+
+**Latest start day**:
+The day a ticket must start to be finished by its due date, counting back its remaining work from the due date, eight hours a day.
+
+**Late start**:
+A ticket still in Ready on or after its latest start day.
+_Avoid_: Overdue (about the due date, not the start)
+
+**At risk**:
+A ticket not finished whose plan finishes it after its due date.
+_Avoid_: Overdue (its due date has not passed)
+
+**Re-plan**:
+For each ticket at risk, a proposed new due date, the day the plan finishes it, with a comment naming the tickets that share its days. Nothing is written to Taiga until you approve it.
+
 **Bulk close**:
 Three or more tickets closed one after another, each within 60 seconds of the previous one.
 
 **End-of-day reminder**:
-The message, near the end of a working day, listing your open tickets whose due date is today or earlier. "Close them" in answer to it means those tickets.
+The message, near the end of a working day, listing your planned tickets not finished whose due date is today or earlier, with their re-plan to approve. Its re-plan counts from the next working day, as after 17:00. "Close them" in answer to it moves those tickets to Ready for test; moving them to Done takes your explicit request and your confirmation that they were tested.
 _Avoid_: Stale tickets (it is about due dates, not about how long a status has stood)
 
 ### Dashboards
@@ -146,7 +188,7 @@ _Avoid_: Sprint, milestone, epic
 
 **Workload**:
 The open user stories and open tasks assigned to one person, counted apart, with the points of those stories.
-_Avoid_: Effort (the hours a closed ticket took)
+_Avoid_: Effort (the hours a ticket took)
 
 **Lead time**:
 From the day a user story or task is created to the day it is closed.
