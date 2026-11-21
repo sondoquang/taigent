@@ -935,7 +935,8 @@ the user (kind `project`; unlike `report`, which exits 5); exit 4 when `project.
 `taigent tickets --from <YYYY-MM-DD> --to <YYYY-MM-DD> [--project <slug>] [--json]` lists the **Period's tickets**
 (`GLOSSARY.md`) of the user the CLI logs in as: every **Planned ticket** (a user story assigned to them in `Ready`,
 `In progress` or `Ready for test`, whatever its due date) plus the stories that Taiga closed in `Done` between the two
-days, each with its progress group, **Finishing day** and **Due status**. Stories in `New` (not planned yet) or
+days, each with its progress group, **Finishing day** and **Due status**, plus the **Plan** of their **Remaining work**
+on working days, its warnings and the **Re-plan** of the tickets **At risk**. Stories in `New` (not planned yet) or
 `Archived` are not tickets, nor are tasks and issues. Read-only: it needs no manifest and writes nothing. Days are
 calendar days in the machine's local time zone (`TZ`), both included; `--project` keeps one project, otherwise every
 project the user sees. It answers what the Taiga MCP server (taiga-mcp-server@1.9.20) cannot: no MCP tool shows when
@@ -971,14 +972,63 @@ today `Due today`, after today `On track`. Without a due date, any ticket is `No
 since its id differs from project to project. A ticket whose Spent Time holds a number has that effort, source
 `spent` (0 included); otherwise its `total_points` (the sum of every role's points, 1 point = 1 hour), source
 `points`, an estimate; with neither, `effort` and `effortSource` are null and the ticket is listed in
-`notes.missingEffort` (`ref`, project slug). A project without the attribute uses points only.
+`notes.missingEffort` (`ref`, project slug). A project without the attribute uses points only. Each ticket also gives
+the two inputs apart: `points` (its `total_points`, or null) and `spentTime` (the Spent Time number, or null when empty,
+not a number, or the project has no such attribute).
+
+### Plan
+
+**Remaining work** (`remainingWork`, hours) is `max(0, points − spentTime)` (an empty Spent Time counts 0) for a ticket
+not finished (`Ready` or `In progress`) that has points; it is null for a finished ticket or one without points. The
+**Plan** (`plan`) lays the remaining work of the tickets not finished that have both a due date and points on
+**Working days** (Monday to Friday, 8 hours, ending at 17:00; holidays are not modelled):
+
+- `plan.start` is today when now is before 17:00 local time on a working day, else the next working day (after 17:00,
+  and on Saturday or Sunday, the plan starts on the next Monday-to-Friday day).
+- Order: due date ascending; on the same date `In progress` before `Ready`; then ref.
+- Each day is filled forward up to 8 hours, a ticket split across days when it does not fit; the plan goes on past
+  the end of the week until all remaining work is placed. `plan.days` lists each working day from `plan.start` that
+  holds work: `date`, `hours` (the day's total, never above 8) and `entries` (`ref`, project slug, `hours`), in plan
+  order. Hours are counted in hundredths.
+- A ticket's `plannedFinishDay` is the day its last hour lands; with no remaining work it is `plan.start` (and it has
+  no entry). `atRisk` is true when `plannedFinishDay` is after its due date, so an `Overdue` ticket still not finished
+  is always At risk. `sharingTickets` lists the other tickets (`ref`, project slug) with an entry on any of its days, in
+  plan order.
+- `latestStartDay` counts its remaining work back from the due date (from the last working day on or before it), 8
+  hours per working day, ignoring other tickets: a 10-point ticket due Friday 2026-11-20 must start on Thursday
+  2026-11-19.
+
+A ticket out of the plan (finished, or without a due date or points) has `plannedFinishDay` and `latestStartDay`
+null, `atRisk` false and `sharingTickets` empty; one not finished without a due date still has its `remainingWork`.
+
+`warnings` holds lists of tickets (`ref`, project slug), each in the order of `tickets`: `overdue` (not finished, due
+date passed), `noDueDate` and `noPoints` (not finished, so out of the plan; a ticket can be in both), `lateStart` (in
+`Ready` while today is on or after its `latestStartDay`) and `atRisk`.
+
+`replan` has one entry per At risk ticket, in the same order as `warnings.atRisk`: `ref`, `project` (slug), `id`,
+`subject`, `dueDate` (current), `proposedDueDate` (its `plannedFinishDay`), `sharingTickets` and `comment`, a drafted
+comment in English, like the rest of the report, naming the reason and the sharing tickets (`#12` in the same project,
+`alpha#12` in another), e.g. `Due date moved from 2026-11-20 to 2026-11-23: the remaining 5h, planned at 8 hours per
+working day in due-date order, finish on 2026-11-23, after the due date. It shares its days with beta#1, #3.` (an
+Overdue ticket reads `the due date has passed and the remaining 4h, …, finish on …`; with no sharing ticket,
+`No other ticket shares its days.`). Nothing is written: once the user approves, each entry is written with
+`taigent due --project <project> <ref> <proposedDueDate> <comment>` ([Due](#due)).
+
+### Text and JSON
 
 Missing or invalid days, or `--from` after `--to`, are a usage error (exit 2) before Taiga is contacted. The text form
 gives a line of totals (tickets, today, total effort with the number of tickets per source), one line of counts by
 progress group, one of tickets not finished by due status and one of finished tickets by due status (with
-`without a finishing day N` when some have none), then each project with one line per ticket (ref, progress group, due
-status, due date, `finished <local time>` or `not finished`, effort, subject); an effort from points reads
-`5h (estimated from points)`, a missing one `no effort`. `tickets --json` prints a `TicketsReport`:
+`without a finishing day N` when some have none); then the plan, `Plan from 2026-11-19, 8h per working day:` with
+one line per day (`2026-11-19 Thu  8h: alpha#3 4h, beta#1 4h`), or `Plan from <day>: no remaining work to plan`; then
+each project with one line per ticket (ref, progress group, due status, due date, `finished <local time>` or
+`not finished`, effort, for a ticket with remaining work `remaining 5h, start by <day>, planned finish <day>` with
+` (at risk)` when At risk, as far as it has them, then subject); an effort from points reads
+`5h (estimated from points)`, a missing one `no effort`. Then `Warnings:` with one line per non-empty list
+(`Overdue`, `No due date`, `No points`, `Late start`, `At risk`, the last naming each ticket's sharing tickets as
+`alpha#2 (shares its days with beta#1, alpha#3)`), and `Re-plan, written to Taiga only once approved:` with one line
+per entry (`alpha#2 due 2026-11-20 -> 2026-11-23: <comment>`); each section is left out when empty.
+`tickets --json` prints a `TicketsReport`:
 
 ```json
 {
@@ -991,7 +1041,15 @@ status, due date, `finished <local time>` or `not finished`, effort, subject); a
     { "id": 281, "ref": 84, "subject": "Guideline flow", "status": "Ready for test", "progress": "Ready for test",
       "isFinished": true, "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" },
       "assignees": ["son.do", "an.tran"], "dueDate": "2026-11-18", "closedAt": null,
-      "finishedAt": "2026-11-18T09:12:40.118Z", "dueStatus": "Late", "effort": 8, "effortSource": "spent" }
+      "finishedAt": "2026-11-18T09:12:40.118Z", "dueStatus": "Late", "effort": 8, "effortSource": "spent",
+      "points": 5, "spentTime": 8, "remainingWork": null, "latestStartDay": null, "plannedFinishDay": null,
+      "atRisk": false, "sharingTickets": [] },
+    { "id": 290, "ref": 2, "subject": "Export", "status": "Ready", "progress": "Ready", "isFinished": false,
+      "project": { "id": 11, "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub" }, "assignees": ["son.do"],
+      "dueDate": "2026-11-20", "closedAt": null, "finishedAt": null, "dueStatus": "On track", "effort": 5,
+      "effortSource": "points", "points": 5, "spentTime": null, "remainingWork": 5, "latestStartDay": "2026-11-20",
+      "plannedFinishDay": "2026-11-23", "atRisk": true,
+      "sharingTickets": [{ "ref": 1, "project": "vigo-auth" }, { "ref": 3, "project": "vigo-medical-hub" }] }
   ],
   "days": [
     { "date": "2026-11-16", "finished": 0, "effort": 0 },
@@ -1005,6 +1063,30 @@ status, due date, `finished <local time>` or `not finished`, effort, subject); a
     "effort": { "hours": 52, "spent": { "hours": 30, "tickets": 5 }, "points": { "hours": 22, "tickets": 5 } },
     "projects": [{ "slug": "vigo-medical-hub", "name": "Vigo - Medical Hub", "tickets": 8 }]
   },
+  "plan": {
+    "start": "2026-11-19",
+    "days": [
+      { "date": "2026-11-19", "hours": 8, "entries": [{ "ref": 7, "project": "vigo-medical-hub", "hours": 4 }, { "ref": 1, "project": "vigo-auth", "hours": 4 }] },
+      { "date": "2026-11-20", "hours": 8, "entries": [{ "ref": 1, "project": "vigo-auth", "hours": 6 }, { "ref": 2, "project": "vigo-medical-hub", "hours": 2 }] },
+      { "date": "2026-11-23", "hours": 5, "entries": [{ "ref": 2, "project": "vigo-medical-hub", "hours": 3 }, { "ref": 3, "project": "vigo-medical-hub", "hours": 2 }] }
+    ]
+  },
+  "warnings": {
+    "overdue": [{ "ref": 7, "project": "vigo-medical-hub" }],
+    "noDueDate": [{ "ref": 12, "project": "internal-taigent" }],
+    "noPoints": [{ "ref": 12, "project": "internal-taigent" }],
+    "lateStart": [{ "ref": 1, "project": "vigo-auth" }],
+    "atRisk": [{ "ref": 2, "project": "vigo-medical-hub" }, { "ref": 7, "project": "vigo-medical-hub" }]
+  },
+  "replan": [
+    { "ref": 2, "project": "vigo-medical-hub", "id": 290, "subject": "Export", "dueDate": "2026-11-20",
+      "proposedDueDate": "2026-11-23",
+      "sharingTickets": [{ "ref": 1, "project": "vigo-auth" }, { "ref": 3, "project": "vigo-medical-hub" }],
+      "comment": "Due date moved from 2026-11-20 to 2026-11-23: the remaining 5h, planned at 8 hours per working day in due-date order, finish on 2026-11-23, after the due date. It shares its days with vigo-auth#1, #3." },
+    { "ref": 7, "project": "vigo-medical-hub", "id": 288, "subject": "Audit log", "dueDate": "2026-11-18",
+      "proposedDueDate": "2026-11-19", "sharingTickets": [{ "ref": 1, "project": "vigo-auth" }],
+      "comment": "Due date moved from 2026-11-18 to 2026-11-19: the due date has passed and the remaining 4h, planned at 8 hours per working day in due-date order, finish on 2026-11-19. It shares its days with vigo-auth#1." }
+  ],
   "notes": {
     "bulkCloses": [{ "count": 3, "first": "2026-11-18T04:26:30.101Z", "last": "2026-11-18T04:27:41.880Z",
       "tickets": [{ "ref": 84, "project": "vigo-medical-hub" }, { "ref": 31, "project": "vigo-auth" }] }],

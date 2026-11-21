@@ -50,7 +50,8 @@ Commands:
   apply     Apply the manifest to Taiga (requires --yes)
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
   tickets   List your planned tickets (Ready, In progress, Ready for test) and those moved to Done from --from to --to,
-            by progress group, with finishing day and due status (read-only)
+            by progress group, with finishing day and due status, the plan of their remaining work by working day,
+            warnings and the re-plan of tickets at risk (read-only)
   projects  List the Taiga projects you are a member of, with admin rights and whether taiga/<slug>/ exists; with
             --project, that project's issue types, severities and priorities (read-only)
   report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
@@ -645,7 +646,7 @@ async function runPlan(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `tickets`: the user's Period's tickets by progress group, with their finishing day and due status. Read-only. */
+/** `tickets`: the user's Period's tickets by progress group, with their finishing day and due status, and the plan. Read-only. */
 async function runTickets(run: Run): Promise<number> {
   const { options } = run;
   const now = clockNow(run.env);

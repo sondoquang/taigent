@@ -25,7 +25,22 @@ interface TicketJson {
   dueStatus: string | null;
   effort: number | null;
   effortSource: 'spent' | 'points' | null;
+  points: number | null;
+  spentTime: number | null;
+  remainingWork: number | null;
+  latestStartDay: string | null;
+  plannedFinishDay: string | null;
+  atRisk: boolean;
+  sharingTickets: TicketIdJson[];
 }
+
+interface TicketIdJson {
+  ref: number;
+  project: string;
+}
+
+/** How the report names a story: its ref and its project's slug. */
+const id = (story: FakeUserStory, project = 'alpha'): TicketIdJson => ({ ref: story.ref, project });
 
 interface TicketsJson {
   user: { id: number; username: string };
@@ -43,9 +58,12 @@ interface TicketsJson {
     effort: { hours: number; spent: { hours: number; tickets: number }; points: { hours: number; tickets: number } };
     projects: { slug: string; name: string; tickets: number }[];
   };
+  plan: { start: string; days: { date: string; hours: number; entries: (TicketIdJson & { hours: number })[] }[] };
+  warnings: Record<'overdue' | 'noDueDate' | 'noPoints' | 'lateStart' | 'atRisk', TicketIdJson[]>;
+  replan: (TicketIdJson & { id: number; subject: string; dueDate: string; proposedDueDate: string; sharingTickets: TicketIdJson[]; comment: string })[];
   notes: {
-    bulkCloses: { count: number; first: string; last: string; tickets: { ref: number; project: string }[] }[];
-    missingEffort: { ref: number; project: string }[];
+    bulkCloses: { count: number; first: string; last: string; tickets: TicketIdJson[] }[];
+    missingEffort: TicketIdJson[];
   };
 }
 
@@ -130,6 +148,13 @@ test("tickets lists your planned tickets and those done in the period, by progre
     dueStatus: 'Due today',
     effort: 3,
     effortSource: 'points',
+    points: 3,
+    spentTime: null,
+    remainingWork: 3,
+    latestStartDay: '2026-11-19',
+    plannedFinishDay: '2026-11-19',
+    atRisk: false,
+    sharingTickets: [id(tickets.readyOverdue), id(tickets.readyOnTrack, 'beta')],
   });
   assert.equal(report.tickets.find((ticket) => ticket.id === tickets.doneLate.id)!.closedAt, '2026-11-18T10:00:00Z');
   assert.deepEqual(
@@ -224,7 +249,12 @@ test('tickets totals the period: tickets finished per finishing day, the summary
   ]);
   assert.ok(lines.includes('alpha (Alpha): 6'), text.stdout);
   assert.ok(lines.includes('beta (Beta): 3'), text.stdout);
-  assert.ok(lines.includes(`  #${tickets.inProgressDueToday.ref}  In progress  Due today  due 2026-11-19  not finished  3h (estimated from points)  due today`), text.stdout);
+  assert.ok(
+    lines.includes(
+      `  #${tickets.inProgressDueToday.ref}  In progress  Due today  due 2026-11-19  not finished  3h (estimated from points)  remaining 3h, start by 2026-11-19, planned finish 2026-11-19  due today`,
+    ),
+    text.stdout,
+  );
   assert.ok(lines.includes(`  #${tickets.doneLate.ref}  Done  Late  due 2026-11-17  finished 2026-11-18 17:00  8h (estimated from points)  done late`), text.stdout);
 });
 
@@ -255,6 +285,10 @@ test('tickets --project keeps the tickets of that project only', async (t) => {
     report.tickets.map(({ id }) => id),
     [tickets.readyOnTrack.id, tickets.inProgressDueToday.id, tickets.doneLate.id],
   );
+  assert.deepEqual(report.plan, {
+    start: '2026-11-19',
+    days: [{ date: '2026-11-19', hours: 8, entries: [{ ...id(tickets.inProgressDueToday, 'beta'), hours: 3 }, { ...id(tickets.readyOnTrack, 'beta'), hours: 5 }] }],
+  });
   const text = await h.taigent(['tickets', ...RANGE, '--project', 'beta'], { env: ENV });
   assert.match(text.stdout, /^Tickets 2026-11-16 to 2026-11-22 in beta, assigned to taigent-bot, today 2026-11-19: 3, /);
 });
@@ -390,4 +424,190 @@ test('TAIGENT_NOW with an offset sets today in the local time zone', async (t) =
   assert.equal(report.today, '2026-11-20');
   assert.equal(report.generatedAt, '2026-11-19T23:30:00.000Z');
   assert.equal(report.tickets.find((ticket) => ticket.id === story.id)!.dueStatus, 'Due today');
+});
+
+test('tickets gives each ticket not finished its remaining work, points less Spent Time, never below zero; tickets without a due date or points stay out of the plan as warnings', async (t) => {
+  const h = await startHarness(t);
+  const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha', members: [h.fake.user.id] });
+  const spentTime = h.fake.addCustomAttribute({ itemType: 'userstory', project: alpha.id, name: 'Spent Time', type: 'number' });
+  const story = (subject: string, fields: StoryFields, spent?: number) => {
+    const created = addStory(h.fake, alpha.id, subject, fields);
+    if (spent !== undefined) h.fake.editAttributeValues('userstory', created.id, { [spentTime.id]: spent });
+    return created;
+  };
+  const halfDone = story('half done', { status_name: 'In progress', due_date: '2026-11-20', total_points: 8 }, 3);
+  const overSpent = story('over spent', { status_name: 'In progress', due_date: '2026-11-20', total_points: 2 }, 5);
+  const notStarted = story('not started', { status_name: 'Ready', due_date: '2026-11-23', total_points: 4 });
+  const noDueDate = story('no due date', { status_name: 'Ready', total_points: 3 });
+  const noPoints = story('no points', { status_name: 'Ready', due_date: '2026-11-20' }, 2);
+  const neither = story('neither', { status_name: 'In progress' });
+  const finished = story('waiting for QA', { status_name: 'Ready for test', due_date: '2026-11-20', total_points: 5 }, 1);
+
+  const result = await h.taigent(['tickets', ...RANGE, '--json'], { env: ENV });
+
+  assert.equal(result.code, 0, result.stderr);
+  const report = result.json<TicketsJson>();
+  const work = (story: FakeUserStory) => {
+    const { points, spentTime, remainingWork, plannedFinishDay } = report.tickets.find((ticket) => ticket.id === story.id)!;
+    return { points, spentTime, remainingWork, plannedFinishDay };
+  };
+  assert.deepEqual(work(halfDone), { points: 8, spentTime: 3, remainingWork: 5, plannedFinishDay: '2026-11-19' });
+  assert.deepEqual(work(overSpent), { points: 2, spentTime: 5, remainingWork: 0, plannedFinishDay: '2026-11-19' });
+  assert.deepEqual(work(notStarted), { points: 4, spentTime: null, remainingWork: 4, plannedFinishDay: '2026-11-20' });
+  assert.deepEqual(work(noDueDate), { points: 3, spentTime: null, remainingWork: 3, plannedFinishDay: null });
+  assert.deepEqual(work(noPoints), { points: null, spentTime: 2, remainingWork: null, plannedFinishDay: null });
+  assert.deepEqual(work(neither), { points: null, spentTime: null, remainingWork: null, plannedFinishDay: null });
+  assert.deepEqual(work(finished), { points: 5, spentTime: 1, remainingWork: null, plannedFinishDay: null });
+  assert.deepEqual(report.plan, {
+    start: '2026-11-19',
+    days: [
+      { date: '2026-11-19', hours: 8, entries: [{ ...id(halfDone), hours: 5 }, { ...id(notStarted), hours: 3 }] },
+      { date: '2026-11-20', hours: 1, entries: [{ ...id(notStarted), hours: 1 }] },
+    ],
+  });
+  assert.deepEqual(report.warnings.noDueDate, [id(noDueDate), id(neither)]);
+  assert.deepEqual(report.warnings.noPoints, [id(noPoints), id(neither)]);
+});
+
+test('tickets plans by due date, In progress first on the same date, splitting tickets over working days from today, or from the next working day after 17:00 and on weekends', async (t) => {
+  const h = await startHarness(t);
+  const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha', members: [h.fake.user.id] });
+  const story = (subject: string, fields: StoryFields) => addStory(h.fake, alpha.id, subject, fields);
+  const later = story('due later', { status_name: 'Ready', due_date: '2026-11-25', total_points: 8 });
+  const ready = story('ready', { status_name: 'Ready', due_date: '2026-11-24', total_points: 6 });
+  const inProgress = story('in progress', { status_name: 'In progress', due_date: '2026-11-24', total_points: 6 });
+  const planAt = async (now: string) => {
+    const result = await h.taigent(['tickets', ...RANGE, '--json'], { env: { TZ, TAIGENT_NOW: now } });
+    assert.equal(result.code, 0, result.stderr);
+    return result.json<TicketsJson>().plan;
+  };
+
+  // Thursday 16:59: today still counts, and Friday's leftover goes on to Monday.
+  assert.deepEqual(await planAt('2026-11-19T16:59:00+07:00'), {
+    start: '2026-11-19',
+    days: [
+      { date: '2026-11-19', hours: 8, entries: [{ ...id(inProgress), hours: 6 }, { ...id(ready), hours: 2 }] },
+      { date: '2026-11-20', hours: 8, entries: [{ ...id(ready), hours: 4 }, { ...id(later), hours: 4 }] },
+      { date: '2026-11-23', hours: 4, entries: [{ ...id(later), hours: 4 }] },
+    ],
+  });
+  // Thursday 17:00: the plan starts on Friday.
+  assert.deepEqual((await planAt('2026-11-19T17:00:00+07:00')).days.map(({ date, hours }) => [date, hours]), [
+    ['2026-11-20', 8],
+    ['2026-11-23', 8],
+    ['2026-11-24', 4],
+  ]);
+  // Friday evening, Saturday and Sunday: the plan starts on Monday.
+  for (const now of ['2026-11-20T18:00:00+07:00', '2026-11-21T10:00:00+07:00', '2026-11-22T08:00:00+07:00']) {
+    assert.equal((await planAt(now)).start, '2026-11-23', now);
+  }
+});
+
+test('tickets gives each planned ticket its latest start day, counted back from its due date, and warns of a Ready ticket on or after it', async (t) => {
+  const h = await startHarness(t);
+  const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha', members: [h.fake.user.id] });
+  const story = (subject: string, fields: StoryFields) => addStory(h.fake, alpha.id, subject, fields);
+  const tenPoints = story('10 points due Friday', { status_name: 'Ready', due_date: '2026-11-20', total_points: 10 });
+  const dueMonday = story('9 points due Monday', { status_name: 'Ready', due_date: '2026-11-23', total_points: 9 });
+  const dueSunday = story('due Sunday', { status_name: 'Ready', due_date: '2026-11-22', total_points: 4 });
+  const started = story('started', { status_name: 'In progress', due_date: '2026-11-20', total_points: 16 });
+  const overdue = story('overdue', { status_name: 'Ready', due_date: '2026-11-18', total_points: 1 });
+
+  const result = await h.taigent(['tickets', ...RANGE, '--json'], { env: ENV });
+
+  assert.equal(result.code, 0, result.stderr);
+  const report = result.json<TicketsJson>();
+  const latestStart = (story: FakeUserStory) => report.tickets.find((ticket) => ticket.id === story.id)!.latestStartDay;
+  assert.equal(latestStart(tenPoints), '2026-11-19');
+  assert.equal(latestStart(dueMonday), '2026-11-20');
+  assert.equal(latestStart(dueSunday), '2026-11-20');
+  assert.equal(latestStart(started), '2026-11-19');
+  assert.equal(latestStart(overdue), '2026-11-18');
+  assert.deepEqual(report.warnings.lateStart, [id(overdue), id(tenPoints)]);
+  assert.deepEqual(report.warnings.overdue, [id(overdue)]);
+});
+
+test('tickets flags a ticket At risk when the plan finishes it after its due date, with the tickets sharing its days and a re-plan entry; an Overdue ticket too', async (t) => {
+  const h = await startHarness(t);
+  const me = h.fake.user.id;
+  const alpha = h.fake.addProject({ slug: 'alpha', name: 'Alpha', members: [me] });
+  const beta = h.fake.addProject({ slug: 'beta', name: 'Beta', members: [me] });
+  const overdue = addStory(h.fake, alpha.id, 'overdue', { status_name: 'In progress', due_date: '2026-11-18', total_points: 4 });
+  const small = addStory(h.fake, alpha.id, 'small', { status_name: 'Ready', due_date: '2026-11-20', total_points: 5 });
+  const safe = addStory(h.fake, alpha.id, 'safe', { status_name: 'Ready', due_date: '2026-11-27', total_points: 2 });
+  const big = addStory(h.fake, beta.id, 'big', { status_name: 'Ready', due_date: '2026-11-20', total_points: 10 });
+  assert.ok(big.ref < small.ref, 'big is planned before small on their shared due date');
+
+  const result = await h.taigent(['tickets', ...RANGE, '--json'], { env: ENV });
+
+  assert.equal(result.code, 0, result.stderr);
+  const report = result.json<TicketsJson>();
+  assert.deepEqual(report.plan.days, [
+    { date: '2026-11-19', hours: 8, entries: [{ ...id(overdue), hours: 4 }, { ...id(big, 'beta'), hours: 4 }] },
+    { date: '2026-11-20', hours: 8, entries: [{ ...id(big, 'beta'), hours: 6 }, { ...id(small), hours: 2 }] },
+    { date: '2026-11-23', hours: 5, entries: [{ ...id(small), hours: 3 }, { ...id(safe), hours: 2 }] },
+  ]);
+  const risk = (story: FakeUserStory) => {
+    const { plannedFinishDay, atRisk, sharingTickets } = report.tickets.find((ticket) => ticket.id === story.id)!;
+    return { plannedFinishDay, atRisk, sharingTickets };
+  };
+  assert.deepEqual(risk(overdue), { plannedFinishDay: '2026-11-19', atRisk: true, sharingTickets: [id(big, 'beta')] });
+  assert.deepEqual(risk(big), { plannedFinishDay: '2026-11-20', atRisk: false, sharingTickets: [id(overdue), id(small)] });
+  assert.deepEqual(risk(small), { plannedFinishDay: '2026-11-23', atRisk: true, sharingTickets: [id(big, 'beta'), id(safe)] });
+  assert.deepEqual(risk(safe), { plannedFinishDay: '2026-11-23', atRisk: false, sharingTickets: [id(small)] });
+  assert.deepEqual(report.warnings.atRisk, [id(small), id(overdue)]);
+  assert.deepEqual(report.warnings.overdue, [id(overdue)]);
+  assert.deepEqual(report.warnings.lateStart, [id(big, 'beta')]);
+  assert.deepEqual(report.replan, [
+    {
+      ...id(small),
+      id: small.id,
+      subject: 'small',
+      dueDate: '2026-11-20',
+      proposedDueDate: '2026-11-23',
+      sharingTickets: [id(big, 'beta'), id(safe)],
+      comment:
+        'Due date moved from 2026-11-20 to 2026-11-23: the remaining 5h, planned at 8 hours per working day in due-date order, finish on 2026-11-23,' +
+        ` after the due date. It shares its days with beta#${big.ref}, #${safe.ref}.`,
+    },
+    {
+      ...id(overdue),
+      id: overdue.id,
+      subject: 'overdue',
+      dueDate: '2026-11-18',
+      proposedDueDate: '2026-11-19',
+      sharingTickets: [id(big, 'beta')],
+      comment:
+        'Due date moved from 2026-11-18 to 2026-11-19: the due date has passed and the remaining 4h, planned at 8 hours per working day in due-date order,' +
+        ` finish on 2026-11-19. It shares its days with beta#${big.ref}.`,
+    },
+  ]);
+  assert.deepEqual(
+    h.fake.requests.filter((r) => r.method !== 'GET' && r.path !== '/auth'),
+    [],
+    'the re-plan writes nothing',
+  );
+
+  const text = await h.taigent(['tickets', ...RANGE], { env: ENV });
+  assert.equal(text.code, 0, text.stderr);
+  const lines = text.stdout.trimEnd().split('\n');
+  const from = (heading: string, count: number) => lines.slice(lines.indexOf(heading), lines.indexOf(heading) + count);
+  assert.deepEqual(from('Plan from 2026-11-19, 8h per working day:', 4), [
+    'Plan from 2026-11-19, 8h per working day:',
+    `  2026-11-19 Thu  8h: alpha#${overdue.ref} 4h, beta#${big.ref} 4h`,
+    `  2026-11-20 Fri  8h: beta#${big.ref} 6h, alpha#${small.ref} 2h`,
+    `  2026-11-23 Mon  5h: alpha#${small.ref} 3h, alpha#${safe.ref} 2h`,
+  ]);
+  assert.deepEqual(from('Warnings:', 4), [
+    'Warnings:',
+    `  Overdue: alpha#${overdue.ref}`,
+    `  Late start: beta#${big.ref}`,
+    `  At risk: alpha#${small.ref} (shares its days with beta#${big.ref}, alpha#${safe.ref}), alpha#${overdue.ref} (shares its days with beta#${big.ref})`,
+  ]);
+  assert.deepEqual(from('Re-plan, written to Taiga only once approved:', 3), [
+    'Re-plan, written to Taiga only once approved:',
+    `  alpha#${small.ref} due 2026-11-20 -> 2026-11-23: ${report.replan[0]!.comment}`,
+    `  alpha#${overdue.ref} due 2026-11-18 -> 2026-11-19: ${report.replan[1]!.comment}`,
+  ]);
+  assert.ok(lines.includes(`  #${small.ref}  Ready  On track  due 2026-11-20  not finished  5h (estimated from points)  remaining 5h, start by 2026-11-20, planned finish 2026-11-23 (at risk)  small`), text.stdout);
 });
