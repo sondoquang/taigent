@@ -286,6 +286,7 @@ const OPTIONS = {
   json: { type: 'boolean', default: false },
   yes: { type: 'boolean', default: false },
   'dry-run': { type: 'boolean', default: false },
+  eod: { type: 'boolean', default: false },
   help: { type: 'boolean', short: 'h', default: false },
 } as const satisfies ParseArgsOptionsConfig;
 
