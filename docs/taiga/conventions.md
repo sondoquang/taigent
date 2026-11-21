@@ -52,9 +52,10 @@ và project có những giá trị issue nào. Chạy lại `apply` luôn an to�
 | `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 
 Ngoại lệ duy nhất của quy trình trên là sửa **ticket của chính mình** (user story được giao cho mình):
-`taigent status` (đổi status) và `taigent comment` (thêm comment) ghi ngay, không cần `--yes`, vì chính yêu cầu của
-người dùng đã nêu rõ ticket và việc cần làm (skill `taiga-update-ticket`, kể cả khi yêu cầu đến từ Telegram). CLI
-từ chối story không được giao cho người đang đăng nhập.
+`taigent status` (đổi status), `taigent comment` (thêm comment) và `taigent due` (đổi due date, kèm comment nêu lý do)
+ghi ngay, không cần `--yes`, vì chính yêu cầu của người dùng đã nêu rõ ticket và việc cần làm (skill
+`taiga-update-ticket`, kể cả khi yêu cầu đến từ Telegram, ví dụ duyệt một **Re-plan**). CLI từ chối story không được
+giao cho người đang đăng nhập.
 
 ## 2. Tên và slug project
 

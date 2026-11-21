@@ -527,11 +527,13 @@ const EPIC_FIELDS: Record<string, true> = {
   watchers: true,
 };
 
-// Create/edit payload fields documented for user stories and tasks (docs.taiga.io/api.html §18.2, §23.2).
+// Create/edit payload fields documented for user stories and tasks (docs.taiga.io/api.html §18.2, §23.2), plus
+// Taiga 6's due date on stories.
 const USER_STORY_FIELDS: Record<string, true> = {
   assigned_to: true, backlog_order: true, blocked_note: true, client_requirement: true, description: true,
   is_blocked: true, is_closed: true, kanban_order: true, milestone: true, points: true, project: true,
   sprint_order: true, status: true, subject: true, tags: true, team_requirement: true, watchers: true, comment: true,
+  due_date: true, due_date_reason: true,
 };
 
 const TASK_FIELDS: Record<string, true> = {
