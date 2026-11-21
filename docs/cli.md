@@ -386,8 +386,9 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   a sprint, or puts user stories into one (`create`/`add` need `--yes`). See [Sprint](#sprint).
 - `taigent snapshot --project <slug> [--json]`: writes every epic and every open story, task and issue of the
   project, hand-made ones too, to `taiga/<slug>/snapshot.json`; read-only on Taiga. See [Snapshot](#snapshot).
-- `taigent metrics --project <slug> [--cache-dir <dir>] [--json]`: the dashboards' metrics of the project; read-only
-  on Taiga, `--cache-dir` keeps the items' history between runs. See [Metrics](#metrics).
+- `taigent metrics --project <slug> [--cache-dir <dir>] [--json]`: the dashboard metrics of the project, the source of
+  the `taiga-dashboard` skill; read-only on Taiga, `--cache-dir` keeps the items' history between runs. See
+  [Metrics](#metrics).
 - `taigent login [--application <id>]`, `taigent logout`, `taigent whoami [--json]`, `taigent mcp`: see
   [Login and the MCP server](#login-and-the-mcp-server).
 
@@ -901,7 +902,8 @@ when Taiga refuses the login or cannot be reached).
 ## Metrics
 
 `taigent metrics --project <slug> [--cache-dir <dir>] [--json]` computes the metrics of the dashboards (`GLOSSARY.md`,
-section Dashboards) from what Taiga holds now about one project. It only reads: the project (`GET /projects/by_slug`,
+section Dashboards) from what Taiga holds now about one project; its `--json` is what the `taiga-dashboard` skill
+reports, each role's metrics first. It only reads: the project (`GET /projects/by_slug`,
 whose Backlog module flag decides the cadence), the user it logs in as (`GET /users/me`), the sprints
 (`GET /milestones?project=<id>`, not read for a kanban project), the user story, task and issue statuses
 (`GET /userstory-statuses?project=<id>`, `GET /task-statuses?project=<id>`, `GET /issue-statuses?project=<id>`), the
@@ -1463,8 +1465,9 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-status-report` | Model or user | Read-only report by sprint and by epic, or one quick count/lookup, through Taiga MCP read tools only (`listMilestones`, `getMilestone`, `getMilestoneStats`, `listEpics`, `listUserStories`, `getUserStory`, `advancedSearch`); hands questions about your own tickets to `taiga-my-tickets` |
 | `taiga-my-tickets` | Model or user | Read-only report of your tickets in a period (the current week, Monday to Sunday, by default): `taigent tickets --json`, the one shell command it runs, laid out as header, summary, by day, by project, still open, notes, in the user's language |
 | `taiga-update-ticket` | Model or user (`policy.allow_implicit_invocation: true`) | Finds the tickets a request names (`taigent tickets --json`; "close them" = the end-of-day reminder's list), then `taigent status` / `taigent comment` per ticket, at once, and reports each outcome |
+| `taiga-dashboard` | Model or user (`policy.allow_implicit_invocation: true`) | Read-only **Dashboard** of one project for the user's **Role** (Developer, Product Owner or Business Analyst; asked when the request names none, never stored): `taigent metrics --json`, the one shell command it runs, with that role's metrics first, in glossary terms and the user's language |
 
-Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment` (as
+Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment|snapshot|adopt|pull|metrics` (as
 `Bash(...)` and, for Claude Code's Windows PowerShell tool, `PowerShell(...)` rules), Taiga MCP read tools, `gh issue view`
 and `Skill(...)` of another Taigent skill (`prd-to-taiga` reads the PRD issue and runs `taiga-plan-backlog`); every
 skill that pre-approves a plan-gated writing command (`apply`, `bootstrap`, `upload`) is user-only on both agents
@@ -1492,7 +1495,7 @@ taken from the running taigent:
 
 | Writes | What |
 |---|---|
-| `.agents/skills/<skill>/`, `.claude/skills/<skill>/` | The eleven Taigent skills (`taiga-*`, `prd-to-taiga`, `ask-taigent`). A Taigent skill that differs is replaced; one the running taigent does not ship is removed |
+| `.agents/skills/<skill>/`, `.claude/skills/<skill>/` | The Taigent skills (`taiga-*`, `prd-to-taiga`, `ask-taigent`). A Taigent skill that differs is replaced; one the running taigent does not ship is removed |
 | `mcpServers.taiga` of `.mcp.json`, `[mcp_servers.taiga]` of `.codex/config.toml` | The Taiga MCP server, `node node_modules/taigent/bin/taigent.js mcp`: the entries of `taiga-setup`, no secrets |
 | `tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules` | The headless kit, where `run-skill`, the OMP guard and the Codex shell guard look for it ([docs/headless.md](headless.md)) |
 | `devDependencies.taigent` of `package.json` | `github:sondoquang/taigent#v<version>`, the git tag of the running version (moved out of `dependencies`). A missing `package.json` is created |
@@ -1518,8 +1521,8 @@ everywhere else. The package (`files` in `package.json`) ships `bin/`, `dist/`, 
 copies and the docs the shipped skills and kit cite.
 `init` neither logs in nor approves the MCP server. Each user runs `npx taigent login` once, in their own terminal, at
 the project root; the project commits the files `init` wrote and each user approves the project server once.
-`taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets` and `taiga-update-ticket` need only the CLI
-(`taigent tickets`, `status`, `comment`). For chats from Telegram, also add the six `tickets|status|comment` rules of
+`taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets`, `taiga-update-ticket` and `taiga-dashboard`
+need only the CLI (`taigent tickets`, `status`, `comment`, `metrics`). For chats from Telegram, also add the six `tickets|status|comment` rules of
 the README's step 6e to the project's `.claude/settings.json`.
 To run a skill without interaction, run `node_modules/taigent/tools/taiga/run-skill.ps1` (or `run-skill.sh`) from the
 project root: it uses the project's skills and the allowlist `init` installed ([docs/headless.md](headless.md)).

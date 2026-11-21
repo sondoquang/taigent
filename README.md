@@ -18,7 +18,7 @@ npm install
 ```
 
 The first command installs the `taigent` CLI from npm, already built, and creates nothing in your project.
-`taigent init` then adds the eleven Taigent skills to `.agents/skills/`
+`taigent init` then adds the Taigent skills to `.agents/skills/`
 (Codex) and `.claude/skills/` (Claude Code), the `taiga` MCP server to `.mcp.json` and `.codex/config.toml`, the
 headless kit (`tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`, `.codex/hooks/`, `.codex/rules/`), the
 `.gitignore` lines of the BA preview working copies (`taiga/*/preview.md`, `taiga/*/.preview/`), and pins `taigent` in
@@ -71,7 +71,7 @@ server: three `ok` means you are done. Anything else comes with the fix.
 ### 5. Try it
 
 Ask for your tickets with `/taiga-my-tickets` (e.g. `/taiga-my-tickets October`), or close one with "close #84"
-(`taiga-update-ticket`). Not sure which skill fits? Ask `/ask-taigent` (`$ask-taigent` in Codex).
+(`taiga-update-ticket`), or ask for a project's dashboard for your role (`taiga-dashboard`). Not sure which skill fits? Ask `/ask-taigent` (`$ask-taigent` in Codex).
 
 ### 6. Optional: your tickets on Telegram
 

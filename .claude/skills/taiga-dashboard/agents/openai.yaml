@@ -1,0 +1,5 @@
+interface:
+  display_name: "Taiga Dashboard"
+  short_description: "Read-only project metrics for your role"
+policy:
+  allow_implicit_invocation: true
