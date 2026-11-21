@@ -5,7 +5,7 @@
 // baseline to Taiga's values, so the next plan proposes writing the manifest's values: the way to settle a both-edited
 // item, an unknown item or a deliberate overwrite.
 
-import { ManifestChangedError, saveItems, type BacklogItem, type IssueFields, type ItemFields, type StoryFields } from './edit.ts';
+import { ManifestChangedError, saveItems, type BacklogItem, type IssueFields, type ItemFields, type StoryFields } from './backlog-write.ts';
 import { ISSUE_VALUE_FIELDS, type ItemType } from './items.ts';
 import type { AttributeValue, Backlog, EpicSpec, IssueSpec, StorySpec, TaskSpec } from './manifest/backlog.ts';
 import { ManifestError } from './manifest/errors.ts';
@@ -179,7 +179,7 @@ export async function pullItems(layout: ProjectLayout, backlog: Backlog, { plan,
   if (keys.length === 0) return { project: plan.project, keepManifest: request.keepManifest, pulled };
 
   if (!request.keepManifest) {
-    const items = keys.map((key) => ({ original: key, item: pulledItem(located.get(key)!, counterparts.get(key)!, located) }));
+    const items = keys.map((key) => ({ edit: true, item: pulledItem(located.get(key)!, counterparts.get(key)!, located) }));
     const saved = await saveItems(layout.dir, { baseDigest: request.baseDigest, items });
     if (saved.status === 'invalid') throw new ManifestError(saved.issues);
     if (saved.status === 'conflict') throw new ManifestChangedError('backlog.yaml changed while pulling; nothing was written, run pull again');

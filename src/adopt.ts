@@ -13,7 +13,7 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'yaml';
-import { ManifestChangedError, readManifestFile, saveItem, type BacklogItem } from './edit.ts';
+import { ManifestChangedError, readBacklogFile, saveItem, type BacklogItem } from './backlog-write.ts';
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
 import { backlogKeyOf, descriptionOf, issueValueName, keyOf, managedTags, type ManagedValues } from './managed.ts';
 import { checkBacklog, type Backlog } from './manifest/backlog.ts';
@@ -134,7 +134,7 @@ async function backlogItem(type: ItemType, item: TaigaItem, key: string, context
  */
 export async function adoptItem(dir: string, slug: string, client: TaigaClient, request: AdoptRequest): Promise<AdoptResult> {
   const { ref, key } = request;
-  const manifest = await readManifestFile(dir, 'backlog');
+  const manifest = await readBacklogFile(dir);
   const backlog = manifest.text.trim() === '' ? { epics: [], issues: [] } : checkBacklog(parse(manifest.text), manifest.file);
   const used = usedKeysAndRefs(backlog);
   if (used.keys.has(key)) throw new AdoptError(`key ${key} is already in backlog.yaml; choose another key`);

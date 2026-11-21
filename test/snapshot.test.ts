@@ -169,7 +169,7 @@ test('snapshot of a project without manifests creates its directory; an unknown 
   assert.equal(missing.json<{ error: { kind: string } }>().error.kind, 'taiga');
   await assert.rejects(stat(join(h.manifestsDir, 'no-such-project')));
 
-  const again = await h.taigent(['snapshot', '--project', SLUG], { env: { TAIGENT_READ_ONLY: '1' } });
+  const again = await h.taigent(['snapshot', '--project', SLUG]);
   assert.equal(again.code, 0, again.stderr);
   assert.equal((await readSnapshot(h)).stories.length, STORIES);
 });

@@ -304,8 +304,8 @@ for (const shell of SHELLS) {
     }
   });
 
-  // Taigent Desktop runs its bundled copy of the wrapper in the opened repository, and another repository runs the one
-  // in node_modules/taigent: the repository is the current directory, not the folder the script sits in.
+  // Another repository runs the wrapper in node_modules/taigent: the repository is the current directory, not the
+  // folder the script sits in.
   test(`${shell.name}: a copy of the wrapper run in a repository set up by taigent init uses that repository's skills and allowlist`, { skip }, async (t) => {
     const work = await mkdtemp(join(tmpdir(), 'taigent-run-skill-'));
     t.after(() => rm(work, { recursive: true, force: true }));

@@ -1,6 +1,6 @@
 // The backlog manifest and review.yaml of a project as `taigent metrics` reads them: through the same preview as
-// `taigent preview` and Taigent Desktop. Missing or invalid manifests do not fail the command; the metrics that need
-// them become unavailable (business-analyst.ts).
+// `taigent preview`. Missing or invalid manifests do not fail the command; the metrics that need them become
+// unavailable (business-analyst.ts).
 
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';

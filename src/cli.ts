@@ -5,9 +5,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { AdoptError, adoptItem, type AdoptParent } from './adopt.ts';
+import { ManifestChangedError, readBacklogFile } from './backlog-write.ts';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { parseDay } from './days.ts';
-import { ManifestChangedError, readManifestFile } from './edit.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
@@ -140,16 +140,13 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
-  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap/sprint --yes, status, comment) with
-                                   exit 2; plan, preview, validate, metrics and --dry-run still work (Taigent Desktop's headless runs)
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
                                    .env and its single paired user (access.json) in TELEGRAM_STATE_DIR
                                    (default: <CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram)
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in,
-            a write under TAIGENT_READ_ONLY, metrics of an unknown project), 3 plan/--dry-run/skills check has changes,
-            4 manifest invalid (pull: Taiga's values do not fit the manifest), 5 Taiga/network error, 6 plan/apply has
-            blocked items`;
+            metrics of an unknown project), 3 plan/--dry-run/skills check has changes, 4 manifest invalid (pull:
+            Taiga's values do not fit the manifest), 5 Taiga/network error, 6 plan/apply has blocked items`;
 
 const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
@@ -164,9 +161,6 @@ type Command = (typeof COMMANDS)[number];
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
 class UsageError extends Error {}
 
-/** A Taiga write refused under TAIGENT_READ_ONLY. Maps to ExitCode.Usage, kind `read-only`. */
-class ReadOnlyError extends Error {}
-
 /** How the text output names each kind of blocked item. */
 const BLOCKED_LABEL: Record<BlockedItem['kind'], string> = { 'remote-edit': 'remote edit', 'both-edited': 'both edited', unknown: 'unknown' };
 
@@ -179,32 +173,6 @@ class BlockedPlanError extends Error {
     super(`refusing to apply: ${items.join('; ')} must be settled first; run taigent plan to see the baseline, Taiga's and the manifest's values. Nothing was written.`);
     this.blocked = blocked;
   }
-}
-
-/**
- * Commands that write to Taiga with `--yes` (without `--dry-run`), and those that write at once. `sprint` writes with
- * `--yes` too, except `sprint list` (see `writesWithYes`).
- */
-const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap', 'sprint'];
-const IMMEDIATE_WRITES: readonly Command[] = ['status', 'comment'];
-
-/**
- * TAIGENT_READ_ONLY=1 (Taigent Desktop sets it on its headless skill runs, and the agent's shell inherits it): a
- * command that would write to Taiga is refused before it contacts Taiga, whatever the agent was told.
- */
-function refuseReadOnlyWrite({ options, env }: Run): void {
-  if (env.TAIGENT_READ_ONLY !== '1') return;
-  const writes = IMMEDIATE_WRITES.includes(options.command) || (writesWithYes(options) && options.yes && !options.dryRun);
-  if (!writes) return;
-  throw new ReadOnlyError(
-    `${commandName(options)} writes to Taiga, refused because TAIGENT_READ_ONLY is set (a headless run of Taigent Desktop); ` +
-      'plan, preview, validate and --dry-run still work. Push from the app, or run it in a terminal without TAIGENT_READ_ONLY',
-  );
-}
-
-/** Whether the command writes to Taiga once confirmed with `--yes`. */
-function writesWithYes(options: Options): boolean {
-  return CONFIRMED_WRITES.includes(options.command) && !(options.command === 'sprint' && options.sprintAction === 'list');
 }
 
 /** The command as messages name it: `sprint create`, not `sprint`. */
@@ -833,7 +801,7 @@ async function runAdopt(run: Run): Promise<number> {
 async function runPull(run: Run): Promise<number> {
   const { options } = run;
   // backlog.yaml as read before Taiga: pull refuses to write over an edit made while it reads Taiga.
-  const { digest } = await readManifestFile(projectLayout(options.project!, run.env, run.cwd).dir, 'backlog');
+  const { digest } = await readBacklogFile(projectLayout(options.project!, run.env, run.cwd).dir);
   const { layout, backlog, planned } = await readPlan(run);
   const report = await pullItems(layout, backlog, planned, { key: options.key, keepManifest: options.keepManifest, baseDigest: digest });
   const { slug } = report.project;
@@ -1152,9 +1120,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
       process.stdout.write(`${USAGE}\n`);
       return ExitCode.Ok;
     }
-    const run = { options, env, cwd, secrets };
-    refuseReadOnlyWrite(run);
-    return await dispatch(run);
+    return await dispatch({ options, env, cwd, secrets });
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(json ? '' : `${USAGE}\n\n`);
@@ -1176,7 +1142,6 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
       return fail(secrets, ExitCode.Validation, 'pull', error, json, { key: error.key, ...(error.description !== undefined && { description: error.description }) });
     }
     if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
-    if (error instanceof ReadOnlyError) return fail(secrets, ExitCode.Usage, 'read-only', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
     if (error instanceof ProjectNotFoundError) return fail(secrets, ExitCode.Usage, 'project', error, json);
     if (

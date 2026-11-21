@@ -1,4 +1,4 @@
-// A legacy-format story already on Taiga, shared by the story format tests (CLI) and the edit API tests.
+// A legacy-format story already on Taiga, shared by the story format tests (CLI) and the backlog write tests.
 
 import type { FakeUserStory } from './fake-taiga.ts';
 import type { Harness } from './harness.ts';
