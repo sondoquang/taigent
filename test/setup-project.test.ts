@@ -263,9 +263,9 @@ test('init is no longer a command: an unknown command (exit 2) that writes nothi
   assert.deepEqual(await tree(h.cwd), []);
 });
 
-test('setup without --project, or --project with a value, is a usage error (exit 2) that writes nothing', async (t) => {
+test('setup --project with a value is a usage error (exit 2) that writes nothing', async (t) => {
   const h = await startHarness(t);
-  for (const args of [['setup'], ['setup', '--dry-run'], ['setup', '--project', 'demo'], ['setup', '--project=demo'], ['validate', '--setup-project']]) {
+  for (const args of [['setup', '--project', 'demo'], ['setup', '--project=demo'], ['validate', '--setup-project']]) {
     const result = await h.taigent([...args, '--json'], { env: OFFLINE });
 
     assert.equal(result.code, 2, `${args.join(' ')}: ${result.stdout}`);

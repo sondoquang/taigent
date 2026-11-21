@@ -39,6 +39,11 @@ export interface Harness {
   /** TAIGENT_CONFIG_DIR of every run: a stored login (`taigent login`) lives here, never in the developer's. */
   configDir: string;
   /**
+   * HOME and USERPROFILE of every run: an empty temp directory (not under `cwd`), so no run reads or writes the
+   * developer's home, e.g. the client configs of `taigent setup`.
+   */
+  home: string;
+  /**
    * Env passed to the CLI: TAIGA_API_URL (the fake) + the fake user's credentials, and a file credential store in
    * `configDir` so no test reads or writes the OS credential store.
    */
@@ -97,9 +102,11 @@ export async function runTaigent(args: string[], options: { env: Record<string, 
 export async function startHarness(t: TestContext): Promise<Harness> {
   const fake = await startFakeTaiga();
   const cwd = await mkdtemp(join(tmpdir(), 'taigent-test-'));
+  const home = await mkdtemp(join(tmpdir(), 'taigent-home-'));
   t.after(async () => {
     await fake.close();
     await rm(cwd, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
   });
   const manifestsDir = join(cwd, 'taiga');
   const configDir = join(cwd, '.taigent-config');
@@ -109,6 +116,8 @@ export async function startHarness(t: TestContext): Promise<Harness> {
     TAIGA_PASSWORD: fake.user.password,
     TAIGENT_CONFIG_DIR: configDir,
     TAIGENT_CREDENTIAL_STORE: 'file',
+    HOME: home,
+    USERPROFILE: home,
   };
   const statePath = (slug: string) => join(manifestsDir, slug, 'state.json');
 
@@ -117,6 +126,7 @@ export async function startHarness(t: TestContext): Promise<Harness> {
     cwd,
     manifestsDir,
     configDir,
+    home,
     env,
     async writeManifest(slug, file, content) {
       await mkdir(join(manifestsDir, slug), { recursive: true });

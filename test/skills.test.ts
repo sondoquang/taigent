@@ -329,16 +329,19 @@ test('taiga-create-user-story pre-approves only taigent commands, and ask-taigen
   assert.match(router, /`taiga-create-user-story`/);
 });
 
-test('taiga-setup gives the repository MCP server entries, run from node_modules, and the server version is pinned exactly', async () => {
+test('taiga-setup gives the repository MCP server entries, run from node_modules, as its project-scope entries, and the server version is pinned exactly', async () => {
   const skill = await readFile(join(REPO_ROOT, '.agents/skills/taiga-setup/SKILL.md'), 'utf8');
-  const block = (lang: string) => new RegExp(`^\`\`\`${lang}\\r?\\n([\\s\\S]*?)^\`\`\``, 'm').exec(skill)?.[1] ?? '';
+  // The user-scope entries come first (test/setup-user.test.ts checks them), then the project-scope ones.
+  const blocks = (lang: string) => [...skill.matchAll(new RegExp(`^\`\`\`${lang}\\r?\\n([\\s\\S]*?)^\`\`\``, 'gm'))].map((match) => match[1]!);
   const lines = (text: string) => text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
   // This repository runs its own bin/; other projects run the installed package.
   const installed = (text: string) => text.replaceAll('"bin/taigent.js"', '"node_modules/taigent/bin/taigent.js"');
   const pkg = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8'));
 
-  assert.deepEqual(JSON.parse(block('json')), JSON.parse(installed(await readFile(join(REPO_ROOT, '.mcp.json'), 'utf8'))));
-  assert.deepEqual(lines(block('toml')), lines(installed(await readFile(join(REPO_ROOT, '.codex/config.toml'), 'utf8'))));
+  assert.equal(blocks('json').length, 2);
+  assert.equal(blocks('toml').length, 2);
+  assert.deepEqual(JSON.parse(blocks('json')[1]!), JSON.parse(installed(await readFile(join(REPO_ROOT, '.mcp.json'), 'utf8'))));
+  assert.deepEqual(lines(blocks('toml')[1]!), lines(installed(await readFile(join(REPO_ROOT, '.codex/config.toml'), 'utf8'))));
   // The skills' tool notes and the banned-tool list are written against one taiga-mcp-server version.
   assert.match(pkg.dependencies['taiga-mcp-server'], /^\d+\.\d+\.\d+$/);
 });

@@ -2,6 +2,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parseArgs, parseEnv } from 'node:util';
 import { AdoptError, adoptItem, type AdoptParent } from './adopt.ts';
@@ -57,7 +58,7 @@ import {
 import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE, reviewKeys } from './review.ts';
 import { formatSnapshotText, readSnapshot, summarizeSnapshot, writeSnapshot } from './snapshot.ts';
 import { Secrets } from './secrets.ts';
-import { SetupError, setupProject, type SetupStatus } from './setup.ts';
+import { type SetupClient, SetupError, setupProject, type SetupStatus, setupUser } from './setup.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
 import { commentTicket, parseRef, setTicketStatus, TicketError } from './ticket.ts';
@@ -67,6 +68,8 @@ import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, U
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
 Commands:
+  setup     Install the Taigent skills and the taiga MCP server (the global taigent mcp, no secrets) into the user
+            config of every client found in your home directory: Claude Code, Codex, OMP; offline
   setup --project  Install Taigent into the repository at the working directory, from this taigent: the Taigent
             skills, the taiga MCP server entries, the headless kit and the taigent devDependency pinned to this
             version; offline
@@ -158,8 +161,8 @@ type SkillsAction = (typeof SKILLS_ACTIONS)[number];
 const SPRINT_ACTIONS = ['list', 'create', 'add'] as const;
 type SprintAction = (typeof SPRINT_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
-/** Where `setup` installs: `project`, the repository at the working directory (`setup --project`). */
-type SetupScope = 'project';
+/** Where `setup` installs: `user`, the user config of each client found in the home directory (the default); `project`, the repository at the working directory (`setup --project`). */
+type SetupScope = 'user' | 'project';
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
 class UsageError extends Error {}
@@ -356,8 +359,7 @@ function parseOptions(argv: string[]): Options | 'help' {
   let setupScope: SetupScope | undefined;
   if (command === 'setup') {
     if (values.project !== undefined) throw new UsageError('setup --project takes no value: it installs into the repository at the working directory');
-    if (!values['setup-project']) throw new UsageError('setup needs --project: install Taigent into the repository at the working directory');
-    setupScope = 'project';
+    setupScope = values['setup-project'] ? 'project' : 'user';
   }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
@@ -690,19 +692,32 @@ async function runUpload(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+const CLIENT_LABELS: Record<string, string> = { 'claude-code': 'Claude Code', codex: 'Codex', omp: 'OMP' };
+
+/** `client` as one line of setup's text output. */
+function formatSetupClient(client: SetupClient): string {
+  const label = CLIENT_LABELS[client.name] ?? client.name;
+  return client.status === 'configured' ? `${label}: skills in ${client.skills}, MCP server in ${client.mcp}` : `${label}: skipped (${client.reason})`;
+}
+
 /**
- * `setup --project`: install Taigent into the repository at the working directory, from the running taigent. Offline;
- * exit 3 for a dry run with changes.
+ * `setup`: install Taigent from the running taigent into the user config of each client found in the home directory
+ * (`os.homedir()`: HOME, or USERPROFILE on Windows), or with `--project` into the repository at the working directory.
+ * Offline; exit 3 for a dry run with changes.
  */
 async function runSetup(run: Run): Promise<number> {
   const { options, cwd } = run;
-  const report = await setupProject(cwd, { dryRun: options.dryRun });
+  const user = options.setupScope === 'user';
+  const report = user ? await setupUser(homedir(), { dryRun: options.dryRun }) : await setupProject(cwd, { dryRun: options.dryRun });
   const count = (status: SetupStatus) => report.files.filter((file) => file.status === status).length;
   const changes = report.files.some(({ status }) => status !== 'unchanged');
   emit(run, report, () => {
-    const lines = report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`);
+    const lines = (report.clients ?? []).map(formatSetupClient);
+    lines.push(...report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`));
     const counts = `${count('created')} created, ${count('updated')} updated, ${count('removed')} removed, ${count('unchanged')} unchanged`;
-    if (options.dryRun) lines.push(changes ? `Dry run, nothing written. Files that would change: ${counts}.` : `Taigent is up to date (${counts}).`);
+    if (user && report.files.length === 0) lines.push('No client found (Claude Code, Codex, OMP): install one, then run taigent setup again.');
+    else if (options.dryRun) lines.push(changes ? `Dry run, nothing written. Files that would change: ${counts}.` : `Taigent is up to date (${counts}).`);
+    else if (user) lines.push(`Taigent installed: ${counts}.`, 'Next: taigent login in your own terminal (once per machine), then restart your agents: they load skills and MCP servers when they start.');
     else lines.push(`Taigent installed: ${counts}.`, 'Next: npm install, then npx taigent login in your own terminal.');
     return `${lines.join('\n')}\n`;
   });

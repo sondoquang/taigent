@@ -16,21 +16,22 @@ Check the three things the `taiga-*` skills stand on, in order, and put the fix 
 
 ## 1. taigent CLI
 
-Run from the project root: `node --version`, then `npx --no -- taigent --help`. `--no` restricts npx to an installed `taigent`, so it never fetches the unrelated npm package of that name.
+Run `node --version`, then `npx --no -- taigent --help`. npx runs the taigent the project pins (`node_modules`), else the global one (`npm i -g taigent`); `--no` keeps it from downloading one when neither is installed.
 
-Passes when Node is v24 or later and the second command prints taigent's usage. The **taigent root**, holding the docs the skills cite (`docs/cli.md`, `docs/taiga/conventions.md`), is then the project root when its `package.json` `name` is `taigent`, else `node_modules/taigent/`.
+Passes when Node is v24 or later and the second command prints taigent's usage. The **taigent root**, holding the docs the skills cite (`docs/cli.md`, `docs/taiga/conventions.md`), is then the project root when its `package.json` `name` is `taigent`, else `node_modules/taigent/` when the project installs taigent, else the global install (the `taigent` folder in the directory `npm root -g` prints).
 
 Fix, by where the user works:
 
+- **Any machine (the default)**: `npm i -g taigent` (the CLI from npm, already built), then `taigent setup` once (below): the skills and the MCP server for every project.
+- **A project whose team pins taigent**: at the project root `npx taigent setup --project` (below), then `npm install`.
 - **A clone of the taigent repository** (`github.com/sondoquang/taigent`): `npm install` in the clone.
-- **Another project**: `npm i -g taigent` (the CLI from npm, already built), then at the project root `npx --no -- taigent setup --project` (below), then `npm install`.
 
 ## 2. Taiga login
 
-Run from the project root: `npx --no -- taigent whoami`.
+Run `npx taigent whoami`.
 
 - **Prints `User: …`**: passes. Its `Credentials:` line says what taigent uses: the stored login, or `TAIGA_*` variables from the environment or `.env`, which take precedence.
-- **`not logged in to Taiga`**: the user runs, **in their own terminal window** (not through you, not with Claude Code's `!`), from the project root:
+- **`not logged in to Taiga`**: the user runs, **in their own terminal window** (not through you, not with Claude Code's `!`):
 
   ```
   npx taigent login
@@ -49,21 +50,47 @@ Call the Taiga MCP tool `listProjects`. The skills expect the server under the n
 
 - **Projects listed**: passes.
 - **Error from the tool**: fix check 2 first; the server acts as the same login.
-- **No such tool**: in Codex, register the server (below). In Claude Code, run `claude mcp get taiga` and fix by its result:
+- **No such tool**: register the server (below). In Claude Code, run `claude mcp get taiga` first and fix by its result:
 
 | `claude mcp get taiga` | Fix |
 |---|---|
 | `No MCP server named "taiga"` | Register the server, below |
-| `Pending approval` | The user restarts Claude Code and accepts the `taiga` server when asked |
+| `Pending approval` | A project `.mcp.json` server: the user restarts Claude Code and accepts the `taiga` server when asked |
 | `Rejected` (`disabledMcpjsonServers`) | The user runs `claude mcp reset-project-choices`, restarts Claude Code and accepts `taiga` |
-| `Failed to connect` | Run `npx --no -- taigent mcp` in a terminal: its error says what is missing (usually check 1 or 2). Ctrl+C ends it |
+| `Failed to connect` | Run `npx taigent mcp` in a terminal: its error says what is missing (usually check 1 or 2). Ctrl+C ends it |
 | `Connected` | The server was added after this session started: restart Claude Code |
 
-An older entry that starts `npx -y taiga-mcp-server@…` with `TAIGA_*` values is replaced by the one below. When it was added with `claude mcp add -s user`, its password sits in `~/.claude.json`: the user runs `claude mcp remove -s user taiga`.
+An older entry that starts `npx -y taiga-mcp-server@…` with `TAIGA_*` values is replaced by the one below; `taigent setup` replaces a user-scope one itself.
 
-### Registering the server: Claude Code
+### Registering the server: user scope (default)
 
-**Default: `.mcp.json` at the project root, written by `taigent setup --project`** (below), which merges this entry and keeps the file's other servers. It holds no secret, so it can be committed; each user accepts the project server once, when Claude Code asks at startup. To add it by hand instead, show the user this entry; once they agree, merge it into `.mcp.json`, keeping the file's other entries.
+`taigent setup` writes the `taiga` server into the user config of every client it finds in the home directory, next to the Taigent skills, and keeps the file's other servers and keys: `mcpServers.taiga` of `~/.claude.json` (Claude Code, no approval step) and of `~/.omp/agent/mcp.json` (OMP):
+
+```json
+{
+  "mcpServers": {
+    "taiga": {
+      "type": "stdio",
+      "command": "taigent",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+and the `[mcp_servers.taiga]` table of `~/.codex/config.toml` (Codex), where `env_vars` forwards the variables taigent may need when the user sets them (Codex passes a stdio server only a few):
+
+```toml
+[mcp_servers.taiga]
+command = "taigent"
+args = ["mcp"]
+env_vars = ["TAIGA_API_URL", "TAIGA_USERNAME", "TAIGA_PASSWORD", "TAIGA_TOKEN", "TAIGENT_CONFIG_DIR", "TAIGENT_CREDENTIAL_STORE", "XDG_CONFIG_HOME", "DBUS_SESSION_BUS_ADDRESS"]
+required = true
+```
+
+### Registering the server: project scope
+
+`taigent setup --project` writes the same server, run from the project's `node_modules`, into `.mcp.json` (Claude Code; each user accepts the project server once, when Claude Code asks at startup) and `.codex/config.toml` (Codex, read once the project is trusted) at the project root, keeping the files' other entries. They hold no secret, so they are committed. To add one by hand instead, show the user the entry; once they agree, merge it in.
 
 ```json
 {
@@ -76,12 +103,6 @@ An older entry that starts `npx -y taiga-mcp-server@…` with `TAIGA_*` values i
 }
 ```
 
-**Just for this user, no approval step**: `claude mcp add -s local taiga -- node node_modules/taigent/bin/taigent.js mcp`, run by the user from the project root (`-s local` runs it in the project directory; a `-s user` entry would not find `node_modules`). Then `claude mcp get taiga` shows `Connected`.
-
-### Registering the server: Codex
-
-`.codex/config.toml` at the project root, read once the project is trusted; `taigent setup --project` writes this table and leaves the rest of the file as it is. Codex passes a stdio server only a few variables; `env_vars` forwards the ones taigent may need when the user sets them.
-
 ```toml
 [mcp_servers.taiga]
 command = "node"
@@ -92,11 +113,13 @@ required = true
 
 `taigent mcp` runs the `taiga-mcp-server` version pinned in taigent's `package.json` (1.9.20): the skills' tool notes and the banned-tool list of `docs/taiga/conventions.md` §10 are written against it.
 
-## Installing Taigent into another project
+## Installing Taigent
 
-`taigent setup --project` installs everything the skills need from the installed taigent, into the project root: the eleven Taigent skills (every `taiga-*`, `prd-to-taiga` and `ask-taigent`) into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code), the `taiga` entries above in `.mcp.json` and `.codex/config.toml`, the headless kit (`tools/taiga/allowlist.txt`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules`), the `.gitignore` lines of the BA preview working copies (`taiga/*/preview.md`, `taiga/*/.preview/`), and `taigent` in `devDependencies`, pinned to the installed version (its npm version). It keeps other skills, MCP servers, ignore lines and dependencies, never logs in and never runs `npm install`.
+**For the user, in every project: `taigent setup`.** It finds Claude Code (`~/.claude/` or `~/.claude.json`), Codex (`~/.codex/`) and OMP (`~/.omp/`) in the home directory and installs, from the running taigent, the Taigent skills (every `taiga-*`, `prd-to-taiga` and `ask-taigent`) into each one's user skills directory, `~/.claude/skills/` (Claude Code) and `~/.agents/skills/` (Codex; OMP reads it too), and the user-scope `taiga` server above. A client it does not find is skipped, with the reason. Run `npx taigent setup --dry-run` (exit 3 lists the files under `~/` it would create, update or remove; exit 0: nothing to do), show the user that list, and once they agree run `npx taigent setup`. Exit 2 names a client config it cannot merge (not valid JSON/TOML): the user fixes that file, then setup runs again.
 
-When the user asks for it, or a check above needs the skills or an MCP entry: run `npx --no -- taigent setup --project --dry-run` at the project root (exit 3 lists the files it would create, update or remove; exit 0: nothing to do), show the user that list, and once they agree run `npx --no -- taigent setup --project`. Then `npm install` installs the pinned version. Exit 2 names a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge (not valid JSON/TOML): the user fixes that file, then setup runs again. After a taigent upgrade, running `setup --project` again updates the skills and removes the ones taigent no longer ships. The files it wrote are committed with the project.
+**For a project's team: `taigent setup --project`**, at the project root. It installs the Taigent skills into `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code), the project-scope `taiga` entries above in `.mcp.json` and `.codex/config.toml`, the headless kit (`tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules`), the `.gitignore` lines of the local copies (`taiga/*/preview.md`, `taiga/*/.preview/`, `taiga/*/snapshot.json`), and `taigent` in `devDependencies`, pinned to the installed version (its npm version). Run `npx taigent setup --project --dry-run`, show the list, and once the user agrees run `npx taigent setup --project`, then `npm install`. Exit 2 names a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge. The files it wrote are committed with the project.
+
+Both keep other skills, MCP servers, keys and dependencies, never log in and never run `npm install`. After a taigent upgrade, running them again updates the skills and removes the ones taigent no longer ships.
 
 ## Report
 
