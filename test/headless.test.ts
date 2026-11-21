@@ -313,7 +313,8 @@ for (const shell of SHELLS) {
     t.after(() => rm(work, { recursive: true, force: true }));
     const repo = join(work, 'repo');
     await mkdir(repo);
-    const setup = await runTaigent(['setup', '--project'], { env: OFFLINE, cwd: repo });
+    // Its own config directory: setup looks for a stored login, never the developer's.
+    const setup = await runTaigent(['setup', '--project'], { env: { ...OFFLINE, TAIGENT_CONFIG_DIR: join(work, 'config'), TAIGENT_CREDENTIAL_STORE: 'file' }, cwd: repo });
     assert.equal(setup.code, 0, setup.stderr);
     // The repository's own allowlist, distinguishable from taigent's: one rule fewer.
     const repoAllowlist = join(repo, 'tools/taiga/allowlist.txt');

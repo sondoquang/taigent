@@ -204,7 +204,7 @@ test('setup keeps the other servers, keys and skills of each client config, and 
   assert.equal(again.code, 0, again.stderr);
   assert.ok(again.json<SetupReport>().files.every(({ status }) => status === 'unchanged'), again.stdout);
   assert.equal(dryRun.code, 0, dryRun.stderr);
-  assert.deepEqual(dryRun.json(), again.json());
+  assert.deepEqual(dryRun.json<SetupReport>().files, again.json<SetupReport>().files);
 });
 
 test('setup updates a Taigent skill that differs and removes a Taigent skill gone from taigent, in each user skills directory', async (t) => {

@@ -8,10 +8,13 @@
 // With TAIGA_USERNAME and TAIGA_PASSWORD set (environment or .env) the server logs in itself, as before.
 // stdout is the MCP channel: everything this module reports goes to stderr.
 
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import { errorMessage } from './guards.ts';
 import type { Secrets } from './secrets.ts';
 import { TaigaAuthError, type TaigaAuthorizer } from './taiga/client.ts';
@@ -159,4 +162,83 @@ export async function serveMcp(env: Record<string, string>): Promise<void> {
   const server = 'taiga-mcp-server';
   await import(server);
   await stdinClosed;
+}
+
+/** `taigent mcp` did not answer `listProjects` with a result. Setup reports it and exits with ExitCode.Taiga. */
+export class McpCheckError extends Error {}
+
+/** The `taigent` entry of this package, so the check runs the same taigent (and the same Taiga) as the caller. */
+const BIN = fileURLToPath(new URL('../bin/taigent.js', import.meta.url));
+const CHECK_TIMEOUT_MS = 60_000;
+/** taiga-mcp-server 1.9.20: `listProjects` answers an error with this text when the user is in no project. */
+const NO_PROJECTS = 'No projects found.';
+/** taiga-mcp-server 1.9.20: one line per project of `listProjects`. */
+const PROJECT_LINE = /^- .* \(ID: \d+, Slug: .*\)$/gm;
+
+/** The part of an MCP JSON-RPC response the check reads. */
+interface McpResponse {
+  id?: number;
+  result?: { content?: { text?: string }[]; isError?: boolean };
+  error?: { message?: string };
+}
+
+/**
+ * The MCP check of `taigent setup`: starts `taigent mcp` like an agent would (env and working directory of the
+ * caller), speaks MCP (JSON-RPC lines) on its stdin/stdout, calls the read tool `listProjects` and returns how many
+ * projects it listed. Throws McpCheckError when the server exits, times out or answers an error.
+ */
+export async function checkMcp({ env, cwd }: { env: NodeJS.ProcessEnv; cwd: string }): Promise<{ projects: number }> {
+  const child = spawn(process.execPath, [BIN, 'mcp'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => (stderr += chunk));
+  // A server that exited early makes writes fail (EPIPE); `exited` reports it.
+  child.stdin.on('error', () => {});
+  const exited = once(child, 'close') as Promise<[number | null]>;
+  const failure = (message: string) => {
+    const output = stderr.trim().split(/\r?\n/).slice(-5).join(' ');
+    return new McpCheckError(output ? `${message}: ${output}` : message);
+  };
+  // Every wait races the server exiting and the deadline.
+  const ended = Promise.withResolvers<never>();
+  ended.promise.catch(() => {});
+  void exited.then(([code]) => ended.reject(failure(`taigent mcp exited (code ${code}) before answering`)));
+  const deadline = setTimeout(() => ended.reject(failure(`taigent mcp did not answer within ${CHECK_TIMEOUT_MS / 1000} s`)), CHECK_TIMEOUT_MS);
+
+  const pending = new Map<number, (message: McpResponse) => void>();
+  createInterface({ input: child.stdout }).on('line', (line) => {
+    try {
+      const message = JSON.parse(line) as McpResponse;
+      if (typeof message.id === 'number') pending.get(message.id)?.(message);
+    } catch {
+      // Not a JSON-RPC line.
+    }
+  });
+  const send = (message: Record<string, unknown>) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
+  let nextId = 1;
+  const answer = async (method: string, params: unknown): Promise<McpResponse> => {
+    const id = nextId++;
+    const reply = Promise.withResolvers<McpResponse>();
+    pending.set(id, reply.resolve);
+    send({ id, method, params });
+    const response = await Promise.race([reply.promise, ended.promise]);
+    if (response.error) throw failure(`taigent mcp refused ${method}: ${response.error.message ?? JSON.stringify(response.error)}`);
+    return response;
+  };
+
+  try {
+    await answer('initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'taigent-setup', version: '0' } });
+    send({ method: 'notifications/initialized' });
+    const { result } = await answer('tools/call', { name: 'listProjects', arguments: {} });
+    const text = result?.content?.map((content) => content.text ?? '').join('\n') ?? '';
+    if (result?.isError && text.includes(NO_PROJECTS)) return { projects: 0 };
+    if (result?.isError || !result?.content) throw new McpCheckError(`listProjects answered an error: ${text || 'no content'}`);
+    return { projects: text.match(PROJECT_LINE)?.length ?? 0 };
+  } finally {
+    clearTimeout(deadline);
+    // Closing stdin ends the server like an agent ending its session; one that hangs is killed.
+    child.stdin.end();
+    const killer = setTimeout(() => child.kill(), 5_000);
+    await exited;
+    clearTimeout(killer);
+  }
 }

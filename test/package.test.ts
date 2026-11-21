@@ -39,7 +39,8 @@ test('the package holds the CLI build, everything setup --project copies and eve
 
   const empty = await mkdtemp(join(tmpdir(), 'taigent-package-'));
   t.after(() => rm(empty, { recursive: true, force: true }));
-  const setup = await runTaigent(['setup', '--project', '--dry-run', '--json'], { env: OFFLINE, cwd: empty });
+  // Its own config directory: setup looks for a stored login, never the developer's.
+  const setup = await runTaigent(['setup', '--project', '--dry-run', '--json'], { env: { ...OFFLINE, TAIGENT_CONFIG_DIR: join(empty, '.config') }, cwd: empty });
   const copied = setup.json<{ files: { path: string }[] }>().files.map(({ path }) => path).filter((path) => !GENERATED.includes(path));
   assert.ok(copied.some((path) => path.startsWith('.agents/skills/')), setup.stdout);
   for (const path of copied) {

@@ -355,11 +355,12 @@ command prints the same operations, writes nothing and exits 2 when there are ch
 
 - `taigent setup [--dry-run] [--json]`: installs the Taigent skills and the Taiga MCP server `taiga` (the global
   `taigent mcp`, no secrets) into the user config of every client found in the home directory: Claude Code, Codex,
-  OMP. Offline; writes at once (no `--yes`). See [Installing for the user](#installing-for-the-user).
+  OMP. Writes at once (no `--yes`), then logs in when there is no login and checks the login and the MCP server. See
+  [Installing for the user](#installing-for-the-user) and [Setup: login and checks](#setup-login-and-checks).
 - `taigent setup --project [--dry-run] [--json]`: installs Taigent into the repository at the working directory, from
   the running taigent: the Taigent skills, the Taiga MCP server entries, the headless kit and the `taigent`
-  devDependency pinned to its npm version. `--project` takes no value here. Offline; writes at once (no `--yes`). See
-  [Using the skills in another project](#using-the-skills-in-another-project).
+  devDependency pinned to its npm version. `--project` takes no value here. Writes at once (no `--yes`), then logs in
+  and checks like `setup`. See [Using the skills in another project](#using-the-skills-in-another-project).
 - `taigent validate [--project <slug>] [--json]`: checks every manifest present in `taiga/<slug>/` (all project
   directories without `--project`) against the schema and the conventions, and `review.yaml` when present (see
   [Review](#review)). Offline: needs no `TAIGA_*` variable and never contacts Taiga. Exit 0 when valid, 4 otherwise.
@@ -1427,7 +1428,8 @@ password, which is never echoed and never read from the environment. It logs in 
     Taiga has no API for it); its id is not secret. The token never expires and is revoked by `logout`.
 
 The password is not stored anywhere. A new login replaces the previous one. Wrong credentials exit 5; an unknown
-Application id exits 5 and stores nothing.
+Application id exits 5 and stores nothing. `taigent setup` runs the same flow (without `--application`) when there is
+no login and it has a terminal ([Setup: login and checks](#setup-login-and-checks)).
 
 Renewal: on a 401 the stored login takes `<config dir>/login.lock` (shared by every taigent process of the user),
 re-reads the store, and adopts the pair another process stored meanwhile; only when the rejected token is still the
@@ -1516,8 +1518,8 @@ after a global install they work in any directory, a project without `package.js
 
 ```sh
 npm i -g taigent                          # the CLI and the docs the skills cite, already built
-taigent setup                             # the skills and the taiga MCP server, for every client in your home directory
-taigent login                             # once, in your own terminal
+taigent setup                             # in your own terminal: the skills and the taiga MCP server for every client
+                                          # in your home directory, the login when you have none, then both checked
 ```
 
 `taigent setup [--dry-run] [--json]` finds each client in the home directory (`os.homedir()`: `HOME`, on Windows
@@ -1540,15 +1542,58 @@ and keys stay: the JSON files are merged by key and keep their indentation (`~/.
 Code's state; `~/.omp/agent/mcp.json` its `disabledServers`/`enabledServers`), and the Codex table is replaced in place
 or appended. Every file is merged before the first write: one that is not valid JSON or TOML is exit 2 and nothing is
 written. Running it again finds every file `unchanged`. `--dry-run` writes nothing and exits 3 when a file would change.
-`--json` prints `{ "files": [{ "path", "status" }], "clients": [...] }`, the paths shown as `~/...`, with one client
-per known client in a fixed order: `{ "name": "claude-code" | "codex" | "omp", "status": "configured", "skills",
-"mcp" }` (its skills directory and MCP config) or `{ "name", "status": "skipped", "reason" }`. The text form lists
-the clients, then the files that change. Agents load skills and MCP servers when they start: restart them afterwards.
+`--json` prints `{ "files": [{ "path", "status" }], "clients": [...], "login": {...}, "mcp": {...} }`, the paths shown
+as `~/...`, with one client per known client in a fixed order: `{ "name": "claude-code" | "codex" | "omp", "status":
+"configured", "skills", "mcp" }` (its skills directory and MCP config) or `{ "name", "status": "skipped", "reason" }`;
+`login` and `mcp` are the steps that follow the files ([Setup: login and checks](#setup-login-and-checks)). The text
+form lists the clients, then the files that change, then each step. Agents load skills and MCP servers when they
+start: restart them afterwards.
 
 A project that also installs Taigent (`setup --project`) has a second copy of each skill and server. Which one runs
 is each client's rule: Claude Code prefers the personal skill but the project MCP server; Codex shows both skills and
 prefers the project config; OMP prefers its native user `mcp.json` over a project's `.mcp.json` and
 `.codex/config.toml`, and a project's `.claude/skills/` over `~/.agents/skills/`.
+
+### Setup: login and checks
+
+`taigent setup` and `taigent setup --project` write their files first (all or nothing, as above), then bring the
+machine to a working state, in this order:
+
+1. **Login.** The credentials are those of every command ([Credentials and environment](#credentials-and-environment)):
+   `TAIGA_TOKEN` or `TAIGA_USERNAME` + `TAIGA_PASSWORD` (`environment`), else the login of `taigent login`
+   (`stored`: its `login.json` exists), else none (`missing`). With none and a terminal (stdin and stdout), setup runs
+   the [`taigent login`](#login-and-the-mcp-server) flow itself: same prompts, same stored token, the password typed
+   in the terminal and never stored. Without a terminal (an agent, a pipe, CI) it reads no password from anywhere: it
+   says to run `taigent login` in your own terminal, then `taigent setup` again, skips both checks and exits 0, since
+   the files are installed.
+2. **Login check**, as [`whoami`](#login-and-the-mcp-server): `GET /users/me` with those credentials.
+3. **MCP check**: setup starts `taigent mcp` of the running taigent (the same package, environment and working
+   directory), speaks MCP to it on stdin/stdout like an agent (`initialize`, then the read tool `listProjects`) and
+   closes it. A list of projects, or the server's "No projects found." for a user in none, is a result; an error
+   result, an MCP error, the server exiting first or no answer within 60 s is a failure. The pinned
+   `taiga-mcp-server` reads the projects page by page and reports a page it could not read as no projects, so a
+   count of 0 is not proof that Taiga listed them.
+
+A failed step skips the steps after it and is named on stderr (`taigent: setup: the login check failed: …`,
+`… the MCP check failed: …`) and in the report. Taiga refusing the credentials (or a stored login it no longer
+renews), Taiga unreachable and a failed MCP check exit 5; a credential store setup cannot open, `TAIGA_API_URL` naming
+another Taiga than the stored login or credentials inside `TAIGA_API_URL` exit 2, the message saying what to fix. When
+the OS credential store is unusable (e.g. Linux without a desktop session), the message says to set
+`TAIGENT_CREDENTIAL_STORE=file`. Cancelling the login prompts exits 2. `--dry-run` neither logs in nor runs a check:
+both steps are `skipped`, and nothing reaches Taiga.
+
+With `--json`, the report gets:
+
+- `login`: `{ "source": "stored" | "environment" | "missing", "status": "ok", "apiUrl", "user": { "id",
+  "username" } }`, `{ "source", "status": "failed", "error" }`, or `{ "source", "status": "skipped", "reason" }`
+  (no login without a terminal, or a dry run). After setup logged you in, `source` is `stored`; a login it could not
+  complete is `missing` and `failed`;
+- `mcp`: `{ "status": "ok", "projects": <count> }`, `{ "status": "failed", "error" }`, or `{ "status": "skipped",
+  "reason" }`.
+
+The text form prints one line per step (`Login: …`, `MCP server: …`, or `… check failed: …`), then the next step
+when nothing failed (restart your agents; with `--project`, `npm install` first). Setup never approves an MCP server
+for a client and never runs `npm install`.
 
 ### Using the skills in another project
 
@@ -1575,11 +1620,12 @@ Running it again is safe. Other skills, MCP servers, keys, ignore lines and depe
 `package.json` are merged by key and keep their indentation, and `.codex/config.toml` gets its `[mcp_servers.taiga]`
 table (subtables included) replaced in place or appended, every other line untouched. Every file is merged before the
 first write: a file that is not valid JSON or TOML, or defines `mcp_servers.taiga` other than as a table, is exit 2
-and nothing is written (so is running it in taigent's own repository). It is offline (no `TAIGA_*`), never logs in and
-never runs `npm install`. `--dry-run` writes nothing and exits 3 when a file would change. `--json` prints
-`{ "files": [{ "path", "status" }] }`, every file sorted by path, with `status` one of `created`, `updated`,
-`unchanged` and `removed` (a file of a Taigent skill the running taigent does not have); the text form lists the files
-that change.
+and nothing is written (so is running it in taigent's own repository). It never runs `npm install`. `--dry-run` writes
+nothing and exits 3 when a file would change. `--json` prints `{ "files": [{ "path", "status" }], "login": {...},
+"mcp": {...} }`, every file sorted by path, with `status` one of `created`, `updated`, `unchanged` and `removed` (a
+file of a Taigent skill the running taigent does not have); the text form lists the files that change. Then it logs in
+and checks like `setup` ([Setup: login and checks](#setup-login-and-checks)); its MCP check runs the `taigent mcp` of
+the running taigent, since the pinned one is there only after `npm install`.
 
 The pin is the running version as published on npm (`0.1.0` for 0.1.0; see [Releasing](#releasing)). The published package
 holds `dist/`, compiled from `src/` by the `prepack` script (`tsconfig.build.json`), so installing it compiles nothing:
@@ -1589,8 +1635,9 @@ everywhere else. The package (`files` in `package.json`) ships `bin/`, `dist/`, 
 `node_modules/taigent/`) and what `setup --project` installs: the Taigent skills of `.agents/skills/`, `tools/taiga/` (with
 `run-skill`), the Codex hook and rule. `test/package.test.ts` checks the `npm pack` file list against what
 `setup --project` copies and the docs the shipped skills and kit cite.
-`setup --project` neither logs in nor approves the MCP server. Each user runs `npx taigent login` once, in their own terminal, at
-the project root; the project commits the files `setup --project` wrote and each user approves the project server once.
+`setup --project` never approves the MCP server. Each user runs `npx taigent login` once, in their own terminal (whoever
+runs `setup --project` in a terminal without a login is logged in by it), at the project root; the project commits the
+files `setup --project` wrote and each user approves the project server once.
 `taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets`, `taiga-update-ticket` and `taiga-dashboard`
 need only the CLI (`taigent tickets`, `status`, `comment`, `metrics`). For chats from Telegram, also add the six `tickets|status|comment` rules of
 the README's step 6e to the project's `.claude/settings.json`.
@@ -1603,12 +1650,12 @@ skill checks all of it and names each fix.
 
 | Code | Meaning |
 |---|---|
-| 0 | Success; nothing left to change |
+| 0 | Success; nothing left to change (`setup` without a login and without a terminal: files installed, checks skipped) |
 | 1 | Internal error (bug) |
 | 2 | Usage or configuration error: unknown command/flag, a flag on a command that does not take it (e.g. `--epic`, `--story`, `--ref` or `--keep-manifest` elsewhere than `adopt`/`pull`), missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, `adopt` refusals ([Adopt](#adopt): closed or already tagged item, unknown ref, key or ref taken, missing or wrong parent, a story whose Taiga epics do not include `--epic`), `pull --key` naming an item not in `backlog.yaml` or not on Taiga yet, `backlog.yaml` changed while adopting or pulling (kind `usage`), `tickets` or `sprint create` without valid `--from`/`--to`, `--from`/`--to` with another command, `sprint create`/`sprint add` with changes but no `--yes`, `sprint create` on a name taken with other days, `sprint add` with an unknown sprint name or a ref that is no user story of the project, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `setup` on a client config (`~/.claude.json`, `~/.codex/config.toml`, `~/.omp/agent/mcp.json`) it cannot merge, `setup --project` with a value, on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
 | 3 | `plan` or `--dry-run` found changes (`setup --dry-run`, `setup --project --dry-run`: a file would change); `skills check` found differing copies |
 | 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); `pull`: Taiga's values do not fit the manifest (kind `pull`, [Pull](#pull)), no file written; nothing was written to Taiga |
-| 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project (except for `metrics`: exit 2), version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
+| 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project (except for `metrics`: exit 2), version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable; `setup`'s login check or MCP check failed ([Setup: login and checks](#setup-login-and-checks)) |
 | 6 | `plan`/`apply` found blocked items: changed on Taiga since taigent last wrote or adopted them, or recorded in `state.json` but without their `src:<key>` tag on Taiga (`remote-edit`), changed on both sides differently (`both-edited`) or without a baseline and different from the manifest (`unknown`); see [Baseline and remote edits](#baseline-and-remote-edits). `apply --yes` wrote nothing, not even `state.json` |
 
 ## Code map
@@ -1620,7 +1667,7 @@ skill checks all of it and names each fix.
 | Items | `src/items.ts` | `ITEM_TYPES`/`ItemType` (`epic`, `story`, `task`, `issue`): the one item vocabulary outside the client; `ISSUE_VALUE_FIELDS` (`type`, `severity`, `priority`) |
 | Secrets | `src/secrets.ts` | `Secrets` (`add`, `redact`): what no output may show, shared by the CLI (environment, typed password), the client and the stored login (tokens) and the MCP proxy |
 | Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
-| MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set) |
+| MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set), `checkMcp` (setup's MCP check: spawns this package's `bin/taigent.js mcp` and calls `listProjects` over JSON-RPC; `McpCheckError`, exit 5) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
 | Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`, `listStatuses(type, projectId)`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`, and `listProjectTasks` for `metrics`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links (of epics tagged `src:` or adopted by `ref`), issue values (when the backlog has issues) and attribute values `buildPlan` needs |
@@ -1636,7 +1683,7 @@ skill checks all of it and names each fix.
 | Bootstrap | `src/bootstrap.ts`, `src/manifest/project.ts` | `loadProject`; `readBootstrapRemote(manifest, client, statePath)`, pure `planBootstrap(manifest, remote)`, `executeBootstrap(plan, project, client, statePath)` |
 | Upload | `src/upload.ts` | `readUploadRemote(docs, backlog, client, slug)` (reads Taiga, hashes files), pure `planUpload(docs, remote, cwd)`, `executeUpload(plan, client, cwd)`, `UploadTooLargeError` (carries `file`) |
 | Skills | `src/skills.ts` | `compareSkills(root)`, `syncSkills(root)`: the Taigent skills (`taiga-*`, `prd-to-taiga`, `ask-taigent`), `.agents/skills/` → `.claude/skills/`; `compareSkillDirs(source, target)` (file by file, `same` included) and `copySkills(source, target, comparison)` for any two directories |
-| Setup | `src/setup.ts` | `setupUser(home, { dryRun })` and `setupProject(root, { dryRun })` → `SetupReport` (`files: [{ path, status }]`, `clients` for `setupUser`), `SetupError` (exit 2): the offline `setup` and `setup --project` commands (`FilePlan` plans every file before the first write; `USER_CLIENTS` lists each client's marker, skills directory and MCP config), copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed) |
+| Setup | `src/setup.ts` | `setupUser(home, { dryRun })` and `setupProject(root, { dryRun })` → `SetupReport` (`files: [{ path, status }]`, `clients` for `setupUser`), `SetupError` (exit 2): the offline file part of `setup` and `setup --project` (`FilePlan` plans every file before the first write; `USER_CLIENTS` lists each client's marker, skills directory and MCP config), copying from the running package (`src/`'s parent: the repository, or `node_modules/taigent` when installed). `runSetup` in `src/cli.ts` adds the login (`interactiveLogin`, as `taigent login`) and the checks (`whoami`, `checkMcp`) |
 | Tickets | `src/tickets.ts` | `dayRange(from, to)`, `readTickets(client, range, project?)` → `TicketsReport`, `formatTicketsText`: the read-only `tickets` command |
 | Projects | `src/projects.ts` | `readProjects(client, manifestsRoot)` → `ProjectsReport`, `readProjectDetail(client, slug, manifestsRoot)` → `ProjectDetailReport` (issue values and `storyStatuses`), `formatProjectsText`, `formatProjectDetailText`: the read-only `projects` command |
 | Report | `src/report.ts` | `readProjectReport(client, slug)` → `ProjectReport` (sprints, epics, `noEpic`, `outsideSprints`), `formatProjectReportText`: the read-only `report` command; the tables come from `readReportExtras` (sprint stats, epics and their stories, `TAIGA_CONCURRENCY` requests at a time) and the pure `reportTables(source)` → `ReportTables` / `formatReportTablesText`, which `metrics` reuses for `productOwner.report` |
@@ -1670,6 +1717,9 @@ touches the developer's stored login or OS credential store; `test/login.test.ts
 (what `taigent login` runs after its terminal prompts) and drives `taigent mcp` over MCP JSON-RPC on stdin/stdout.
 Every run also gets `HOME` and `USERPROFILE` = `h.home`, an empty temp directory, so no test reads or writes the
 developer's home; `test/setup-user.test.ts` puts client markers (`.claude/`, `.codex/`, `.omp/`) and configs there.
+`test/setup-login.test.ts` covers setup's login and checks with a stored login, `TAIGA_*`, no login (no TTY), a
+refused login, a failed MCP check and `--dry-run`; a test that runs `setup` with `runTaigent` directly (not through the
+harness) sets its own `TAIGENT_CONFIG_DIR`, since setup looks for a stored login.
 
 Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
 

@@ -18,8 +18,8 @@ import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
 import { manifestsRoot, projectLayout, type ProjectLayout } from './manifest/layout.ts';
 import { readState } from './manifest/state.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
-import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
-import { serveMcp, startProxy } from './mcp.ts';
+import { hasStoredLogin, LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
+import { checkMcp, McpCheckError, serveMcp, startProxy } from './mcp.ts';
 import { readBacklogData } from './metrics/backlog.ts';
 import { computeMetrics } from './metrics/compute.ts';
 import { HistoryCacheError } from './metrics/history.ts';
@@ -69,10 +69,11 @@ const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
 Commands:
   setup     Install the Taigent skills and the taiga MCP server (the global taigent mcp, no secrets) into the user
-            config of every client found in your home directory: Claude Code, Codex, OMP; offline
+            config of every client found in your home directory: Claude Code, Codex, OMP; then log in when there is
+            no login (in a terminal; else it says how), check the login and taigent mcp (exit 5 when one fails)
   setup --project  Install Taigent into the repository at the working directory, from this taigent: the Taigent
             skills, the taiga MCP server entries, the headless kit and the taigent devDependency pinned to this
-            version; offline
+            version; then log in and check like setup
   validate  Check manifests (and review.yaml) against the conventions, offline (all projects without --project)
   preview   Show the backlog as apply would write it, with its review (review.yaml), as one Markdown page; offline
   review approve|request-changes|comment|resolve <key> ...   Record the review of backlog item <key> in review.yaml,
@@ -135,7 +136,7 @@ Options:
   --json            Machine-readable output on stdout
   --yes             Confirm writes (bootstrap, apply, upload, sprint create, sprint add)
   --dry-run         List the operations without writing anything (exit 3 when there are changes; setup: the files it
-                    would write); notify: print the message without sending it (exit 0)
+                    would write, no login or check); notify: print the message without sending it (exit 0)
   -h, --help        Show this help
 
 Credentials: TAIGA_USERNAME + TAIGA_PASSWORD or TAIGA_TOKEN when set, else the stored login (taigent login).
@@ -154,7 +155,8 @@ Environment (a variable not set in the environment is read from ./.env):
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in,
             metrics of an unknown project), 3 plan/--dry-run/skills check has changes, 4 manifest invalid (pull:
-            Taiga's values do not fit the manifest), 5 Taiga/network error, 6 plan/apply has blocked items`;
+            Taiga's values do not fit the manifest), 5 Taiga/network error (setup: login or MCP check), 6 plan/apply
+            has blocked items`;
 
 const COMMANDS = ['setup', 'validate', 'preview', 'review', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
@@ -751,28 +753,121 @@ function formatSetupClient(client: SetupClient): string {
   return client.status === 'configured' ? `${label}: skills in ${client.skills}, MCP server in ${client.mcp}` : `${label}: skipped (${client.reason})`;
 }
 
+/** Where setup found the Taiga credentials: TAIGA_* (as resolveAuth), the login of `taigent login`, or none. */
+type LoginSource = 'stored' | 'environment' | 'missing';
+/** One step of setup after the files: done (with its result), failed (exit 5 or 2), or not run and why. */
+type SetupCheck<Result> = ({ status: 'ok' } & Result) | { status: 'failed'; error: string } | { status: 'skipped'; reason: string };
+type SetupLogin = { source: LoginSource } & SetupCheck<{ apiUrl: string; user: { id: number; username: string } }>;
+type SetupMcp = SetupCheck<{ projects: number }>;
+
+const SETUP_LOGIN_HINT = 'run `taigent login` in your own terminal (it asks for your password there, never through an agent), then run taigent setup again';
+
+async function loginSource(env: NodeJS.ProcessEnv): Promise<LoginSource> {
+  if (env.TAIGA_TOKEN || (env.TAIGA_USERNAME && env.TAIGA_PASSWORD)) return 'environment';
+  return (await hasStoredLogin(env)) ? 'stored' : 'missing';
+}
+
+/** A failed setup step: its message and exit code. Other errors are not a check result and propagate. */
+function checkFailure(error: unknown): { error: string; code: ExitCode } {
+  if (error instanceof TaigaAuthError) return { error: hintedAuthError(error).message, code: ExitCode.Taiga };
+  if (error instanceof TaigaError || error instanceof McpCheckError) return { error: error.message, code: ExitCode.Taiga };
+  if (error instanceof LoginError || error instanceof UsageError) return { error: error.message, code: ExitCode.Usage };
+  throw error;
+}
+
+function formatSetupLogin(login: SetupLogin): string {
+  if (login.status === 'ok') {
+    const from = login.source === 'stored' ? 'the stored login' : 'the TAIGA_* variables';
+    return `Login: ${login.user.username} (id ${login.user.id}) on ${login.apiUrl}, from ${from}.`;
+  }
+  if (login.status === 'failed') return `Login check failed: ${login.error}`;
+  return `Login: ${login.reason}.`;
+}
+
+function formatSetupMcp(mcp: SetupMcp): string {
+  if (mcp.status === 'ok') return `MCP server: ok (taigent mcp answered listProjects with ${mcp.projects} project(s)).`;
+  if (mcp.status === 'failed') return `MCP check failed: ${mcp.error}`;
+  return `MCP server: not checked (${mcp.reason}).`;
+}
+
 /**
  * `setup`: install Taigent from the running taigent into the user config of each client found in the home directory
  * (`os.homedir()`: HOME, or USERPROFILE on Windows), or with `--project` into the repository at the working directory.
- * Offline; exit 3 for a dry run with changes.
+ * Then, unless it is a dry run (exit 3 with changes): without TAIGA_* credentials or a stored login, run the
+ * `taigent login` flow in a terminal, else say how to log in (not a failure); check the login like `whoami`, then
+ * `taigent mcp` with `listProjects`. A check that fails exits 5 (Taiga or MCP) or 2 (credential store, variables).
  */
 async function runSetup(run: Run): Promise<number> {
-  const { options, cwd } = run;
+  const { options, cwd, env } = run;
   const user = options.setupScope === 'user';
   const report = user ? await setupUser(homedir(), { dryRun: options.dryRun }) : await setupProject(cwd, { dryRun: options.dryRun });
   const count = (status: SetupStatus) => report.files.filter((file) => file.status === status).length;
   const changes = report.files.some(({ status }) => status !== 'unchanged');
-  emit(run, report, () => {
-    const lines = (report.clients ?? []).map(formatSetupClient);
-    lines.push(...report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`));
-    const counts = `${count('created')} created, ${count('updated')} updated, ${count('removed')} removed, ${count('unchanged')} unchanged`;
-    if (user && report.files.length === 0) lines.push('No client found (Claude Code, Codex, OMP): install one, then run taigent setup again.');
-    else if (options.dryRun) lines.push(changes ? `Dry run, nothing written. Files that would change: ${counts}.` : `Taigent is up to date (${counts}).`);
-    else if (user) lines.push(`Taigent installed: ${counts}.`, 'Next: taigent login in your own terminal (once per machine), then restart your agents: they load skills and MCP servers when they start.');
-    else lines.push(`Taigent installed: ${counts}.`, 'Next: npm install, then npx taigent login in your own terminal.');
-    return `${lines.join('\n')}\n`;
-  });
-  return options.dryRun && changes ? ExitCode.Changes : ExitCode.Ok;
+  const lines = (report.clients ?? []).map(formatSetupClient);
+  lines.push(...report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`));
+  const counts = `${count('created')} created, ${count('updated')} updated, ${count('removed')} removed, ${count('unchanged')} unchanged`;
+  if (user && report.files.length === 0) lines.push('No client found (Claude Code, Codex, OMP): install one, then run taigent setup again.');
+  let source = await loginSource(env);
+
+  if (options.dryRun) {
+    const reason = 'dry run: no login and no check';
+    lines.push(changes ? `Dry run, nothing written, no login or check. Files that would change: ${counts}.` : `Taigent is up to date (${counts}). Dry run: no login or check.`);
+    emit(run, { ...report, login: { source, status: 'skipped', reason }, mcp: { status: 'skipped', reason } }, () => `${lines.join('\n')}\n`);
+    return changes ? ExitCode.Changes : ExitCode.Ok;
+  }
+  if (report.files.length > 0) lines.push(`Taigent installed: ${counts}.`);
+  // Text goes out step by step: the login flow prompts after the file report.
+  const say = (text: string[]) => !options.json && print(run, `${text.join('\n')}\n`);
+  say(lines);
+
+  let login: SetupLogin | undefined;
+  let code: ExitCode = ExitCode.Ok;
+  if (source === 'missing' && isTerminal()) {
+    say(['Not logged in to Taiga: running taigent login.']);
+    try {
+      await interactiveLogin(run);
+      source = 'stored';
+    } catch (error) {
+      if (error instanceof PromptCancelled) throw error;
+      const failure = checkFailure(error);
+      login = { source, status: 'failed', error: failure.error };
+      code = failure.code;
+    }
+  }
+  if (!login && source === 'missing') login = { source, status: 'skipped', reason: `not logged in to Taiga: ${SETUP_LOGIN_HINT}` };
+  if (!login) {
+    try {
+      const { auth, me } = await whoami(run);
+      login = { source, status: 'ok', apiUrl: auth.apiUrl, user: { id: me.id, username: me.username } };
+    } catch (error) {
+      const failure = checkFailure(error);
+      login = { source, status: 'failed', error: failure.error };
+      code = failure.code;
+    }
+  }
+  say([formatSetupLogin(login)]);
+
+  let mcp: SetupMcp;
+  if (login.status === 'ok') {
+    try {
+      mcp = { status: 'ok', ...(await checkMcp({ env, cwd })) };
+    } catch (error) {
+      const failure = checkFailure(error);
+      mcp = { status: 'failed', error: failure.error };
+      code = failure.code;
+    }
+  } else {
+    mcp = { status: 'skipped', reason: login.status === 'failed' ? 'the login check failed' : 'no login' };
+  }
+  say([formatSetupMcp(mcp)]);
+
+  const logIn = login.status === 'skipped' ? ['taigent login in your own terminal', 'taigent setup again'] : [];
+  const next = [...(user ? [] : ['npm install']), ...logIn, 'restart your agents: they load skills and MCP servers when they start'];
+  if (code === ExitCode.Ok) say([`Next: ${next.join(', then ')}.`]);
+  if (options.json) print(run, `${JSON.stringify({ ...report, login, mcp }, null, 2)}\n`);
+  if (login.status === 'failed') printError(run.secrets, `taigent: setup: the login check failed: ${login.error}\n`);
+  if (mcp.status === 'failed') printError(run.secrets, `taigent: setup: the MCP check failed: ${mcp.error}\n`);
+  return code;
 }
 
 /** `skills sync|check`: keep the Claude copies of the Taigent skills identical to their source. Offline. */
@@ -1055,15 +1150,22 @@ function loginApiUrl(raw: string): string {
   return normalizeApiUrl(`${url.origin}${url.pathname === '/' ? '/api/v1' : url.pathname}`);
 }
 
-/**
- * `login`: asks for the password in the user's terminal and stores a token instead (src/login.ts). The URL and the
- * username come from TAIGA_API_URL / TAIGA_USERNAME when set; the password is never read from the environment.
- */
+/** `login`: refused without a terminal (stdin and stdout), else `interactiveLogin`. */
 async function runLogin(run: Run): Promise<number> {
-  const { env, options, secrets } = run;
   if (!isTerminal()) {
     throw new LoginError('taigent login reads your password from a terminal: run `npx taigent login` in your own terminal window, not through an agent or a pipe');
   }
+  await interactiveLogin(run);
+  return ExitCode.Ok;
+}
+
+/**
+ * The `taigent login` flow (also run by `setup` in a terminal): asks for the password in the user's terminal and
+ * stores a token instead (src/login.ts). The URL and the username come from TAIGA_API_URL / TAIGA_USERNAME when set;
+ * the password is never read from the environment.
+ */
+async function interactiveLogin(run: Run): Promise<void> {
+  const { env, options, secrets } = run;
   if (env.TAIGA_API_URL) print(run, `Taiga API URL: ${env.TAIGA_API_URL} (from TAIGA_API_URL)\n`);
   const apiUrl = loginApiUrl(env.TAIGA_API_URL || (await ask('Taiga API URL (e.g. https://taiga.example.com/api/v1): ')));
   if (env.TAIGA_USERNAME) print(run, `Username: ${env.TAIGA_USERNAME} (from TAIGA_USERNAME)\n`);
@@ -1087,7 +1189,12 @@ async function runLogin(run: Run): Promise<number> {
       ? `an application token of Application ${stored.record.application}`
       : 'a refresh token (log in again when taigent has not been used for its lifetime, 8 days by default)';
   print(run, `Logged in to ${apiUrl} as ${username}.\nStored ${what} in ${stored.storeLabel}; your password was not stored.\n`);
-  return ExitCode.Ok;
+}
+
+/** Which Taiga user the credentials of this run act as, checked with `GET /users/me` (`whoami`, setup's login check). */
+async function whoami(run: Run): Promise<{ auth: Auth; me: { id: number; username: string } }> {
+  const auth = await resolveAuth(run);
+  return { auth, me: await (await connectTaiga(run, auth)).getMe() };
 }
 
 /** `logout`: deletes the stored login; an application token is deleted on Taiga too. */
@@ -1106,10 +1213,9 @@ async function runLogout(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `whoami`: which Taiga user the credentials of this run act as, checked with `GET /users/me`. */
+/** `whoami`: which Taiga user the credentials of this run act as, and where the credentials come from. */
 async function runWhoami(run: Run): Promise<number> {
-  const auth = await resolveAuth(run);
-  const me = await (await connectTaiga(run, auth)).getMe();
+  const { auth, me } = await whoami(run);
   const [credentials, described] =
     auth.source === 'login'
       ? [{ source: 'login', method: auth.session.record.method, store: auth.session.storeLabel }, `stored login (${auth.session.record.method}, in ${auth.session.storeLabel})`]
@@ -1194,6 +1300,12 @@ function dispatch(run: Run): Promise<number> {
   }
 }
 
+/** `error` naming what to fix: the variable or the stored login Taiga rejected. */
+function hintedAuthError(error: TaigaAuthError): TaigaAuthError {
+  const hint = { token: 'check TAIGA_TOKEN', password: 'check TAIGA_USERNAME and TAIGA_PASSWORD', login: LOGIN_HINT }[error.credential];
+  return new TaigaAuthError(error.credential, `${error.message} (${hint})`, error.status);
+}
+
 function fail(secrets: Secrets, code: ExitCode, kind: string, error: Error, json: boolean, extra: Record<string, unknown> = {}): number {
   printError(secrets, `taigent: ${error.message}\n`);
   if (json) process.stdout.write(secrets.redact(`${JSON.stringify({ error: { kind, message: error.message, ...extra } }, null, 2)}\n`));
@@ -1253,9 +1365,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     }
     if (error instanceof TelegramError) return fail(secrets, ExitCode.Taiga, 'telegram', error, json);
     if (error instanceof TaigaAuthError) {
-      const hint = { token: 'check TAIGA_TOKEN', password: 'check TAIGA_USERNAME and TAIGA_PASSWORD', login: LOGIN_HINT }[error.credential];
-      const hinted = new TaigaAuthError(error.credential, `${error.message} (${hint})`, error.status);
-      return fail(secrets, ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
+      return fail(secrets, ExitCode.Taiga, 'taiga', hintedAuthError(error), json, { status: error.status ?? null });
     }
     if (error instanceof TaigaError) return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
     printError(secrets, `taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);

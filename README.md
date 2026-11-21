@@ -19,7 +19,10 @@ The first command installs the `taigent` CLI from npm, already built. `taigent s
 and OMP in your home directory and adds, for each one, the Taigent skills to its user skills folder
 (`~/.claude/skills/`, `~/.agents/skills/`) and the `taiga` MCP server (`taigent mcp`, no password) to its user config
 (`~/.claude.json`, `~/.codex/config.toml`, `~/.omp/agent/mcp.json`), so every project you open has them. It keeps
-your other skills, servers and settings, and lists every file it wrote (`--dry-run` shows them first).
+your other skills, servers and settings, and lists every file it wrote (`--dry-run` shows them first). Run it in
+**your own terminal**: when you have no Taiga login yet, it then logs you in (step 2's questions), and it checks the
+login and the MCP server (`Login: …`, `MCP server: ok …`). Run by an agent, it never asks for a password: it says to
+run `taigent login` yourself.
 
 **For a whole team instead**, install Taigent into the project, from its root folder:
 
@@ -35,7 +38,8 @@ to `.mcp.json` and `.codex/config.toml`, the headless kit (`tools/taiga/allowlis
 
 ### 2. Log in to Taiga
 
-Open **your own terminal**: not inside Claude Code or Codex, and not with Claude Code's `!`. Then run:
+Skip this when `taigent setup` already logged you in. Otherwise open **your own terminal**: not inside Claude Code or
+Codex, and not with Claude Code's `!`. Then run:
 
 ```sh
 npx taigent login

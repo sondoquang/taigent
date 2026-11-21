@@ -85,8 +85,8 @@ Which command belongs to which step; syntax, flags and output in `docs/cli.md`.
 | `taigent status --project <slug> <ref> <status>` | Move your ticket to that status, at once | update-ticket |
 | `taigent comment --project <slug> <ref> <text>` | Comment on your ticket, at once | update-ticket |
 | `taigent notify week\|day\|eod [--dry-run]` | Your tickets of the week, of the day, or due by today and still open, to your Telegram chat | a scheduled task (Task Scheduler, cron) |
-| `taigent setup [--dry-run]` | Install or update the skills and the `taiga` MCP server in the user config of each client found (Claude Code, Codex, OMP); offline | taiga-setup, you |
-| `taigent setup --project [--dry-run]` | Install or update Taigent in a project: skills, MCP entries, headless kit, pinned devDependency; offline | taiga-setup, you |
+| `taigent setup [--dry-run]` | Install or update the skills and the `taiga` MCP server in the user config of each client found (Claude Code, Codex, OMP), then check the login and the MCP server (logs in only in the user's own terminal) | taiga-setup, you |
+| `taigent setup --project [--dry-run]` | Install or update Taigent in a project: skills, MCP entries, headless kit, pinned devDependency; then the same checks | taiga-setup, you |
 | `taigent skills sync\|check` | Skill maintenance, below | you |
 
 ## Maintaining the skills

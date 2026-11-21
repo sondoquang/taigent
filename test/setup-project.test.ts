@@ -88,7 +88,7 @@ test('setup --project run again finds every file unchanged and exits 0', async (
   assert.equal(again.code, 0, again.stderr);
   assert.ok(again.json<SetupReport>().files.every(({ status }) => status === 'unchanged'), again.stdout);
   assert.equal(dryRun.code, 0, dryRun.stderr);
-  assert.deepEqual(dryRun.json(), again.json());
+  assert.deepEqual(dryRun.json<SetupReport>().files, again.json<SetupReport>().files);
 });
 
 test('setup --project keeps other skills, MCP servers, settings and dependencies, and its merged JSON and TOML stay valid', async (t) => {
