@@ -482,9 +482,11 @@ export interface TaigaHistoryEntry {
   description: boolean;
 }
 
-/** What `taigent status` and `taigent comment` change on a story: its status (by id), and/or a comment. */
+/** What `taigent status`, `taigent comment` and `taigent due` change on a story: its status (by id), due date and/or a comment. */
 export interface StoryEdit {
   status?: number;
+  /** YYYY-MM-DD (`due_date`). */
+  dueDate?: string;
   /** Taiga records it as a comment in the story's history. */
   comment?: string;
 }
@@ -1002,9 +1004,10 @@ export class TaigaClient {
     };
   }
 
-  /** Changes a story's status and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
-  async editStory(id: number, edit: StoryEdit, version: number): Promise<void> {
-    await this.#patch(`/${TAIGA_ITEM.story.collection}/${id}`, { ...edit }, version);
+  /** Changes a story's status and/or due date and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
+  async editStory(id: number, { status, dueDate, comment }: StoryEdit, version: number): Promise<void> {
+    const body = { ...(status === undefined ? {} : { status }), ...(dueDate === undefined ? {} : { due_date: dueDate }), ...(comment === undefined ? {} : { comment }) };
+    await this.#patch(`/${TAIGA_ITEM.story.collection}/${id}`, body, version);
   }
 
   async listProjectTemplates(): Promise<TaigaProjectTemplate[]> {

@@ -124,8 +124,9 @@ has them already):
 {
   "permissions": {
     "allow": [
-      "Bash(npx taigent tickets *)", "Bash(npx taigent status *)", "Bash(npx taigent comment *)",
-      "PowerShell(npx taigent tickets *)", "PowerShell(npx taigent status *)", "PowerShell(npx taigent comment *)"
+      "Bash(npx taigent tickets *)", "Bash(npx taigent status *)", "Bash(npx taigent comment *)", "Bash(npx taigent due *)",
+      "PowerShell(npx taigent tickets *)", "PowerShell(npx taigent status *)", "PowerShell(npx taigent comment *)",
+      "PowerShell(npx taigent due *)"
     ]
   }
 }

@@ -125,3 +125,106 @@ test('status and comment need --project, a ref and what to write (exit 2 before 
   }
   assert.deepEqual(h.fake.requests, []);
 });
+
+interface DueJson {
+  ticket: { id: number; ref: number; subject: string; project: { id: number; slug: string; name: string } };
+  from: string | null;
+  to: string;
+  changed: boolean;
+  comment: string | null;
+}
+
+test('due sets the due date of your ticket and adds the words after the day as a comment, in one PATCH', async (t) => {
+  const h = await startHarness(t);
+  const { mine } = seed(h.fake);
+  mine.due_date = '2026-11-20';
+
+  const result = await h.taigent(['due', '--project', 'alpha', `#${mine.ref}`, '2026-11-24', 'Dời', 'hạn:', 'chung', 'ngày', 'với', '#7', '--json']);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(result.json<DueJson>(), {
+    ticket: { id: mine.id, ref: mine.ref, subject: 'Login form', project: { id: mine.project, slug: 'alpha', name: 'Alpha' } },
+    from: '2026-11-20',
+    to: '2026-11-24',
+    changed: true,
+    comment: 'Dời hạn: chung ngày với #7',
+  });
+  assert.equal(patches(h.fake).length, 1);
+  assert.equal(mine.due_date, '2026-11-24');
+  assert.deepEqual(h.fake.state.comments, [{ itemType: 'userstory', item: mine.id, user: h.fake.user.id, comment: 'Dời hạn: chung ngày với #7' }]);
+  assert.equal(mine.status_name, 'In progress');
+});
+
+test('due without a comment prints the change, and sets a first due date on a ticket that had none', async (t) => {
+  const h = await startHarness(t);
+  const { mine } = seed(h.fake);
+
+  const result = await h.taigent(['due', '--project', 'alpha', String(mine.ref), '2026-11-24']);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, `#${mine.ref} Login form (alpha): due date none → 2026-11-24\n`);
+  assert.equal(mine.due_date, '2026-11-24');
+  assert.deepEqual(h.fake.state.comments, []);
+});
+
+test('due writes nothing when the ticket already has that due date, except the comment when one is given', async (t) => {
+  const h = await startHarness(t);
+  const { mine } = seed(h.fake);
+  mine.due_date = '2026-11-24';
+
+  const same = await h.taigent(['due', '--project', 'alpha', String(mine.ref), '2026-11-24', '--json']);
+  assert.equal(same.code, 0, same.stderr);
+  const json = same.json<DueJson>();
+  assert.deepEqual([json.from, json.to, json.changed, json.comment], ['2026-11-24', '2026-11-24', false, null]);
+  const text = await h.taigent(['due', '--project', 'alpha', String(mine.ref), '2026-11-24']);
+  assert.equal(text.stdout, `#${mine.ref} Login form (alpha) is already due 2026-11-24: nothing changed\n`);
+  assert.deepEqual(patches(h.fake), []);
+
+  const commented = await h.taigent(['due', '--project', 'alpha', String(mine.ref), '2026-11-24', 'vẫn', 'kịp', '--json']);
+  assert.equal(commented.code, 0, commented.stderr);
+  assert.equal(commented.json<DueJson>().changed, false);
+  assert.equal(commented.json<DueJson>().comment, 'vẫn kịp');
+  assert.equal(patches(h.fake).length, 1);
+  assert.equal('due_date' in (patches(h.fake)[0]!.body as object), false, 'the due date is not sent again');
+  assert.deepEqual(h.fake.state.comments, [{ itemType: 'userstory', item: mine.id, user: h.fake.user.id, comment: 'vẫn kịp' }]);
+});
+
+test('due refuses a story that is not yours, an unknown ref or an invalid day (exit 2, nothing written)', async (t) => {
+  const h = await startHarness(t);
+  const { mine, theirs } = seed(h.fake);
+
+  const notMine = await h.taigent(['due', '--project', 'alpha', String(theirs.ref), '2026-11-24']);
+  const unknownRef = await h.taigent(['due', '--project', 'alpha', '999', '2026-11-24', '--json']);
+  assert.equal(notMine.code, 2);
+  assert.match(notMine.stderr, new RegExp(`#${theirs.ref} is not a ticket of taigent-bot in alpha`));
+  assert.equal(unknownRef.code, 2);
+  assert.equal(unknownRef.json<{ error: { kind: string } }>().error.kind, 'usage');
+  assert.match(unknownRef.stderr, /#999 is not a ticket of taigent-bot in alpha/);
+  assert.equal(theirs.due_date, null);
+
+  const before = h.fake.requests.length;
+  for (const day of ['2026-02-30', '24-11-2026', 'tomorrow']) {
+    const invalid = await h.taigent(['due', '--project', 'alpha', String(mine.ref), day]);
+    assert.equal(invalid.code, 2, day);
+    assert.match(invalid.stderr, new RegExp(`due needs the new due date as YYYY-MM-DD after the ref, got "${day}"`));
+  }
+  for (const args of [['due', '84', '2026-11-24'], ['due', '--project', 'alpha'], ['due', '--project', 'alpha', 'abc', '2026-11-24'], ['due', '--project', 'alpha', '84']]) {
+    assert.equal((await h.taigent(args)).code, 2, args.join(' '));
+  }
+  assert.equal(h.fake.requests.length, before, 'invalid input never reaches Taiga');
+  assert.deepEqual(patches(h.fake), []);
+  assert.equal(mine.due_date, null);
+});
+
+test('due reports a conflict naming the ticket when someone changed it meanwhile (exit 5)', async (t) => {
+  const h = await startHarness(t);
+  const { mine } = seed(h.fake);
+  h.fake.onRequest({ method: 'PATCH', path: `/userstories/${mine.id}`, run: () => h.fake.editItem(mine, { due_date: '2026-11-30' }) });
+
+  const result = await h.taigent(['due', '--project', 'alpha', String(mine.ref), '2026-11-24', '--json']);
+
+  assert.equal(result.code, 5);
+  assert.equal(result.json<{ error: { kind: string; key: string } }>().error.kind, 'conflict');
+  assert.equal(result.json<{ error: { kind: string; key: string } }>().error.key, `#${mine.ref}`);
+  assert.equal(mine.due_date, '2026-11-30');
+});

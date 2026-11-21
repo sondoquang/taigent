@@ -284,8 +284,8 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   write to Taiga (a failed run resumes where it stopped). It stops at the first error, naming the operation and
   key. Without `--yes` it prints the plan, writes nothing (not even `state.json`) and exits 2 when there are
   changes.
-- `taigent tickets`, `taigent status`, `taigent comment`, `taigent notify`: see [Tickets](#tickets),
-  [Status and comment](#status-and-comment) and [Notify](#notify).
+- `taigent tickets`, `taigent status`, `taigent comment`, `taigent due`, `taigent notify`: see [Tickets](#tickets),
+  [Status and comment](#status-and-comment), [Due](#due) and [Notify](#notify).
 - `taigent projects [--project <slug>] [--json]`: the Taiga projects you are a member of, or the issue values of one
   project; read-only. See [Projects](#projects).
 - `taigent report --project <slug> [--json]`: the project's progress by sprint and by epic, and its stories in no
@@ -348,7 +348,7 @@ in the legacy format (rule `story-format`) and an issue value the project does n
 
 With `TAIGENT_READ_ONLY=1` (environment or `.env`), every command that would write to Taiga refuses before it
 contacts Taiga, with exit 2 and `error.kind` `read-only` under `--json`: `apply --yes`, `upload --yes` and
-`bootstrap --yes` (without `--dry-run`), `status` and `comment`. `validate`, `preview`, `plan`, every `--dry-run`, the
+`bootstrap --yes` (without `--dry-run`), `status`, `comment` and `due`. `validate`, `preview`, `plan`, every `--dry-run`, the
 writing commands without `--yes` (they print the plan and exit 2 as usual) and the read-only commands (`metrics`
 among them) still work.
 Taigent Desktop sets it on its headless skill runs, so the agent's shell and every `npx taigent` it runs inherit it:
@@ -1038,6 +1038,28 @@ changed`, or `Commented on #84 Login form (vigo-auth)`. `status --json` prints
 `{ "ticket": { "id", "ref", "subject", "project": { "id", "slug", "name" } }, "from", "to", "isClosed", "changed" }`
 (`isClosed`: whether `to` is a closed status); `comment --json` prints `{ "ticket", "comment" }`.
 
+## Due
+
+`taigent due --project <slug> <ref> <YYYY-MM-DD> [comment…] [--json]` sets the due date of the user's ticket `#<ref>`
+of one project to that day and, when words follow the day, adds them as one comment (the reason, e.g. a **Re-plan**'s
+drafted comment, `GLOSSARY.md`). Like `status` and `comment` it writes at once, without `--yes`, on one of the user's
+own tickets named on the command line (the skill `taiga-update-ticket` runs it once per approved re-plan entry). The
+ref is `84` or `#84`; the day must be a calendar day as `YYYY-MM-DD` (anything else: exit 2 before Taiga is
+contacted). The comment's words are joined with spaces; words after `--` are taken as they are, as for `comment`.
+
+It finds the ticket like `status` and `comment` (someone else's story or an unknown ref: exit 2, nothing written),
+then sends one `PATCH /userstories/<id>` with `{ due_date, comment?, version }`. When the ticket already has that due
+date, the due date is not sent: with a comment it sends `{ comment, version }` only, without one it writes nothing and
+exits 0, so approving the same re-plan twice is harmless. A story changed on Taiga since it was read is a `conflict`
+(exit 5) with `key: "#<ref>"`. Refused under `TAIGENT_READ_ONLY` ([Read-only runs](#read-only-runs)).
+
+Text output: `#84 Login form (vigo-auth): due date 2026-11-20 → 2026-11-24` (`none` when it had no due date;
+`, with a comment` appended when one was added), `#84 Login form (vigo-auth) is already due 2026-11-24: nothing
+changed`, or `… is already due 2026-11-24: commented only`. `--json` prints
+`{ "ticket": { "id", "ref", "subject", "project": { "id", "slug", "name" } }, "from", "to", "changed", "comment" }`:
+`from` the previous due date (`YYYY-MM-DD`, or `null`), `to` the new one, `changed` false when the due date was already
+`to` (not written), `comment` the comment added or `null`.
+
 ## Notify
 
 `taigent notify week|day|eod [--project <slug>] [--dry-run] [--json]` builds a message about the user's tickets from
@@ -1077,7 +1099,7 @@ use the same bot:
   claude.ai or Console login, and on Team/Enterprise plans an admin's approval). The model answers with
   `taiga-update-ticket`. [`telegram-reply.md`](telegram-reply.md) has it call the plugin's `reply` tool with
   `format: "markdownv2"` and bold the key facts, falling back to plain text when Telegram refuses the markup.
-  `.claude/settings.json` pre-allows `npx taigent tickets|status|comment` (as `Bash(...)` and `PowerShell(...)`),
+  `.claude/settings.json` pre-allows `npx taigent tickets|status|comment|due` (as `Bash(...)` and `PowerShell(...)`),
   because a skill's `allowed-tools` cover only the turn that invoked it and a follow-up chat message would otherwise
   stop at a permission prompt; other prompts reach Telegram as buttons (the plugin relays them).
 
@@ -1167,12 +1189,12 @@ offline and need no `TAIGA_*` variable. `skills check --json` prints
 | `taiga-my-tickets` | Model or user | Read-only report of your tickets in a period (the current week, Monday to Sunday, by default): `taigent tickets --json`, the one shell command it runs, laid out as header, summary, by day, by project, still open, notes, in the user's language |
 | `taiga-update-ticket` | Model or user (`policy.allow_implicit_invocation: true`) | Finds the tickets a request names (`taigent tickets --json`; "close them" = the end-of-day reminder's list), then `taigent status` / `taigent comment` per ticket, at once, and reports each outcome |
 
-Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment` (as
+Their `allowed-tools` pre-approve only `npx taigent validate|preview|plan|apply|bootstrap|upload|tickets|status|comment|due` (as
 `Bash(...)` and, for Claude Code's Windows PowerShell tool, `PowerShell(...)` rules), Taiga MCP read tools, `gh issue view`
 and `Skill(...)` of another Taigent skill (`prd-to-taiga` reads the PRD issue and runs `taiga-plan-backlog`); every
 skill that pre-approves a plan-gated writing command (`apply`, `bootstrap`, `upload`) is user-only on both agents
 (`test/skills.test.ts` enforces both rules). They grant, not restrict: the gate before `--yes` is the skill's explicit
-confirmation step. `status` and `comment` edit one of the user's own tickets that the request names, so
+confirmation step. `status`, `comment` and `due` edit one of the user's own tickets that the request names, so
 `taiga-update-ticket` runs on its own.
 Codex's skill docs do not document `allowed-tools`; there, approvals come from `.codex/config.toml`, the sandbox, the
 execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell hook `.codex/hooks/taigent-shell-guard.mjs`
@@ -1220,7 +1242,7 @@ while it is private. The package (`files` in `package.json`) ships `bin/`, `dist
 `init` neither logs in nor approves the MCP server. Each user runs `npx taigent login` once, in their own terminal, at
 the project root; the project commits the files `init` wrote and each user approves the project server once.
 `taiga-status-report` needs only the Taiga MCP server; `taiga-my-tickets` and `taiga-update-ticket` need only the CLI
-(`taigent tickets`, `status`, `comment`). For chats from Telegram, also add the six `tickets|status|comment` rules of
+(`taigent tickets`, `status`, `comment`, `due`). For chats from Telegram, also add the eight `tickets|status|comment|due` rules of
 the README's step 6e to the project's `.claude/settings.json`.
 To run a skill without interaction, run `node_modules/taigent/tools/taiga/run-skill.ps1` (or `run-skill.sh`) from the
 project root: it uses the project's skills and the allowlist `init` installed ([docs/headless.md](headless.md)); Taigent
@@ -1234,7 +1256,7 @@ skill checks all of it and names each fix.
 |---|---|
 | 0 | Success; nothing left to change |
 | 1 | Internal error (bug) |
-| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment` on a ref that is not one of your tickets or with an unknown status, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
+| 2 | Usage or configuration error: unknown command/flag, missing env var, not logged in, `TAIGA_API_URL` naming another Taiga than the stored login, `login` without a terminal or cancelled, unreadable credential store, unreadable `.env`, credentials in `TAIGA_API_URL`, `apply`/`bootstrap`/`upload` with changes but no `--yes`, a write to Taiga under `TAIGENT_READ_ONLY=1` ([Read-only runs](#read-only-runs)), `tickets` without valid `--from`/`--to`, `--from`/`--to` with another command, `--out` with another command than `preview`, `skills` outside a repository root, `status`/`comment`/`due` on a ref that is not one of your tickets, `status` with an unknown status, `due` without a valid `YYYY-MM-DD` day, `notify` without a bot token or a single chat, `init` on a `.mcp.json`, `.codex/config.toml` or `package.json` it cannot merge, or in taigent's own repository, `metrics` of a project that is not on Taiga or not visible to the user |
 | 3 | `plan` or `--dry-run` found changes (`init --dry-run`: a file would change); `skills check` found differing copies |
 | 4 | Manifest (or `review.yaml`) invalid or missing (including a new story without `use_case`/`scenarios`, or an issue type, severity or priority the project does not define, found by `plan`/`apply` after reading Taiga); nothing was written to Taiga |
 | 5 | Taiga or network error: HTTP error, unreachable host, login refused, stored login expired or revoked, unknown Application, unknown project (except for `metrics`: exit 2), version conflict, custom attribute name not defined on the project; bootstrap refusals (not admin, unknown role/template, slug mismatch); the Telegram Bot API refusing a `notify` message or unreachable |
@@ -1250,7 +1272,7 @@ skill checks all of it and names each fix.
 | Login | `src/login.ts`, `src/prompt.ts` | `storeLogin`, `removeLogin`, `StoredSession` (a `TaigaAuthorizer`: the stored token, renewed under `login.lock`), `configDir`, the credential stores (`@napi-rs/keyring`, or a 0600 file); terminal-only prompts |
 | MCP | `src/mcp.ts` | `startProxy` (the 127.0.0.1 proxy in front of Taiga for `taiga-mcp-server`), `serveMcp` (loads the server in-process with its `TAIGA_*` set) |
 | Operations | `src/operations.ts` | the shape every plan/execute command shares: `Action` → `RESULT`, `summarize(actions, operations)` → `{ changes, summary }`, `tally` for reports, `FILL_ACTIONS` (bootstrap, upload) |
-| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`, `listStatuses(type, projectId)`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `editStory` for `status` and `comment`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`, and `listProjectTasks` for `metrics`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
+| Taiga client | `src/taiga/client.ts` | `TaigaClient` (all HTTP, `x-disable-pagination`, PATCH with `version`; item methods keyed by `ItemType`: `listItems`/`createItem`/`updateItem`, `getAttributeValues`/`updateAttributeValues`, `listAttachments`/`uploadAttachment`, `listStatuses(type, projectId)`; `listIssueValues(field, projectId)` for an issue's type, severity and priority; `listAssignedStories` for `tickets`, `editStory` (status, due date, comment) for `status`, `comment` and `due`; `listMemberProjects(userId)` for `projects`; `listStories`, `listMilestones`, `getMilestoneStats` for `report`, and `listProjectTasks` for `metrics`; `login`/`refresh` token pairs, `createApplicationToken`/`deleteApplicationTokens`; a `TaigaAuthorizer` option for the stored login), the only place that maps item types and issue value fields to Taiga's endpoint and field names (`TAIGA_ITEM`, `TAIGA_ISSUE_VALUES`), `TaigaError`, `TaigaAuthError` (`credential`: `token`, `password` or `login`), `TaigaConflictError` (OCC refusal; `key` set by the command that planned the write) |
 | Remote reader | `src/remote.ts` | `readBacklogRemote(backlog, client, slug)`: reads the project, its items, epic links, issue values (when the backlog has issues) and attribute values `buildPlan` needs |
 | Planner | `src/planner.ts` | pure `buildPlan(backlog, remote)` → operations + orphans, or `LegacyStoryCreateError` naming the stories it would create in the legacy format (the CLI reports them as `story-format` issues of `backlog.yaml`), or `UnknownIssueValueError` naming the issue values the project does not define (reported as `issue-value` issues), `describePlanOperation`, `srcTag(key)` |
 | Story template | `src/story-template.ts` | pure `storyDescription(story)`: the description apply writes for a story, shared by the planner, `preview` and Taigent Desktop's story form (bundled into its renderer, so the module imports nothing from Node) |
@@ -1269,7 +1291,7 @@ skill checks all of it and names each fix.
 | Days | `src/days.ts` | calendar days in local time: `parseDay`, `localDay`, `localMinute`, `addDays`, `daysBetween`, `mondayOf`, shared by `tickets`, `notify`, the manifests and `metrics` |
 | Concurrency | `src/taiga/concurrency.ts` | `mapLimited(items, limit, read)` and `TAIGA_CONCURRENCY` (8): one read of Taiga per sprint, epic or item, a few at a time, none started after one fails (`report`, `metrics`) |
 | Project settings | `src/project-settings.ts` | `readProjectSettings(manifestsRoot, slug)` → `ProjectSettingsFile` (form fields, `digest`, validate issues), `saveProjectSettings(manifestsRoot, settings, { slug?, baseDigest })` → `saved` / `conflict` / `invalid`: the project.yaml form of Taigent Desktop (in-place yaml Document edit, digest check, validate loader, atomic write) |
-| Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
+| Ticket edits | `src/ticket.ts` | `setTicketStatus`, `commentTicket`, `setTicketDueDate` (the user's own story by ref, OCC), `parseRef`, `TicketError` (exit 2) |
 | Notify | `src/notify.ts` | `notifyRange`, `notifyMessage(kind, report)`, `resolveTelegram(env)` (token and chat, from the environment or the Telegram plugin's state directory), `sendTelegram`, `NotifyConfigError` (exit 2), `TelegramError` (exit 5) |
 
 Every plan/execute command has the same three steps: a reader (`read*Remote`, all I/O), a pure planner, an executor.
@@ -1321,8 +1343,8 @@ Fake API used by the tests (`FakeTaiga` in `test/support/fake-taiga.ts`):
   `editAttributeValues("userstory", storyId, { [attributeId]: hours })`. Every project gets the default template's
   story statuses (`state.storyStatuses`: `New`, `Ready`, `In progress`, `Ready for test`, `Done` and `Archived`
   closed), served by `GET /userstory-statuses?project=`; a story PATCH with `status` sets its `status_name`,
-  `is_closed` and `finish_date` (set on closing, cleared on reopening), and a `comment` lands in `state.comments`
-  (`{ itemType, item, user, comment }`). `test/notify.test.ts` runs its own Bot API stand-in through
+  `is_closed` and `finish_date` (set on closing, cleared on reopening), it accepts `due_date`, and a `comment` lands in
+  `state.comments` (`{ itemType, item, user, comment }`). `test/notify.test.ts` runs its own Bot API stand-in through
   `TAIGENT_TELEGRAM_API_URL`; the harness drops the developer's `TELEGRAM_*` and `CLAUDE_CONFIG_DIR`.
 - Edits like a Taiga user (bump `version`, recorded for OCC): `editItem(item, changes)`, `editWikiPage(page, changes)`,
   `editAttributeValues(itemType, itemId, values)`.

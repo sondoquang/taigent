@@ -91,11 +91,11 @@ codex exec --sandbox workspace-write --dangerously-bypass-hook-trust --json
 It holds:
 
 - `Bash(npx taigent <command> *)` and `PowerShell(npx taigent <command> *)` for `validate`, `plan`, `apply`,
-  `bootstrap`, `upload`, `tickets`, `status`, `comment`, `preview`, `projects`, `report`: writes to Taiga go through
+  `bootstrap`, `upload`, `tickets`, `status`, `comment`, `due`, `preview`, `projects`, `report`: writes to Taiga go through
   the CLI only.
   `apply`/`bootstrap`/`upload` still need `--yes`, which the skills add only after the user's explicit confirmation,
   so a headless run of `taiga-apply-backlog` stops at the plan unless its arguments carry that confirmation.
-  `status`/`comment` edit one of the user's own tickets named in the skill arguments (`taiga-update-ticket`); under
+  `status`/`comment`/`due` edit one of the user's own tickets named in the skill arguments (`taiga-update-ticket`); under
   Codex the shell guard below refuses a comment holding `( ) ? *` or the other shell characters it blocks.
   `projects` only reads (the user's projects, or one project's issue types, severities and priorities); so does
   `report` (one project's progress by sprint and by epic).
@@ -138,7 +138,7 @@ first; elsewhere with `/bin/sh`.
 
 The prompt is not the guard: the allowlist still allows `npx taigent apply *`. The app starts every run with
 `TAIGENT_READ_ONLY=1` in its environment; the agent and the shell it runs commands in inherit it, and under it the CLI
-refuses `apply --yes`, `upload --yes`, `bootstrap --yes`, `status` and `comment` with exit 2 before contacting Taiga,
+refuses `apply --yes`, `upload --yes`, `bootstrap --yes`, `status`, `comment` and `due` with exit 2 before contacting Taiga,
 while `plan`, `validate`, `preview` and `--dry-run` still work (`docs/cli.md` §Read-only runs, tested in
 `test/read-only.test.ts`). Writes to Taiga then go through the app's own confirmation (**Đẩy lên Taiga**). Claude Code
 and OMP pass their environment to their shell commands (OMP 18.16.0 on Windows: `npx taigent apply --yes` run by the

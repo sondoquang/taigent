@@ -201,10 +201,10 @@ async function readSkill(skill: string): Promise<{ frontmatter: SkillFrontmatter
 }
 
 /**
- * `taigent` commands a skill may pre-approve. The plan-gated writing ones make a skill explicit-only; `status` and
- * `comment` edit one of the user's own tickets, named in the request itself, so their skill may run implicitly.
+ * `taigent` commands a skill may pre-approve. The plan-gated writing ones make a skill explicit-only; `status`,
+ * `comment` and `due` edit one of the user's own tickets, named in the request itself, so their skill may run implicitly.
  */
-const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment'];
+const TAIGENT_COMMANDS = ['validate', 'preview', 'plan', 'apply', 'bootstrap', 'upload', 'tickets', 'status', 'comment', 'due'];
 const WRITING_COMMANDS = ['apply', 'bootstrap', 'upload'];
 const SHELL_RULE = new RegExp(`^(Bash|PowerShell)\\(npx taigent (${TAIGENT_COMMANDS.join('|')}) \\*\\)$`);
 /** Pre-approvals beside taigent commands and MCP read tools: reading a GitHub issue, and using another Taigent skill. */
