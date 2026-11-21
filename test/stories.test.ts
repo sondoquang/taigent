@@ -165,7 +165,7 @@ test('a link that already exists on Taiga is checked with GET first and not post
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
   assert.equal(plan.code, 0, plan.stderr);
-  assert.deepEqual(plan.json<Plan>().summary, { create: 0, update: 0, link: 0, skip: 2 });
+  assert.deepEqual(plan.json<Plan>().summary, { create: 0, update: 0, adopt: 0, link: 0, skip: 2 });
 
   await applyTree(h, manifest);
   assert.ok(h.fake.requests.some((r) => r.method === 'GET' && r.path === `/epics/${epic.id}/related_userstories`));
@@ -211,7 +211,7 @@ test('changed subject, description and tags are updated with the current version
   const patch = h.fake.requests.find((r) => r.method === 'PATCH' && r.path === `/userstories/${login.id}`);
   assert.ok(isRecord(patch?.body));
   assert.equal(patch.body.version, versionBefore, 'the PATCH carries the version read from Taiga');
-  assert.deepEqual(result.json<ApplyReport>().summary, { created: 0, updated: 2, linked: 0, unchanged: 3 });
+  assert.deepEqual(result.json<ApplyReport>().summary, { created: 0, updated: 2, adopted: 0, linked: 0, unchanged: 3 });
   assert.equal((await h.readState('demo'))!.items['AUTH-LOGIN']!.version, login.version);
   assert.equal(h.fake.state.userStories.length, 2, 'updates never create items');
 });
@@ -302,7 +302,7 @@ test('re-applying the full tree, even without the state file, creates no duplica
 
   const second = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
   assert.equal(second.code, 0, second.stderr);
-  assert.deepEqual(second.json<ApplyReport>().summary, { created: 0, updated: 0, linked: 0, unchanged: 5 });
+  assert.deepEqual(second.json<ApplyReport>().summary, { created: 0, updated: 0, adopted: 0, linked: 0, unchanged: 5 });
   await h.deleteState('demo');
   await applyTree(h);
 

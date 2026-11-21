@@ -13,20 +13,33 @@
 
 Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng để đọc, tra cứu, báo cáo và comment.
 
+**Taiga là nguồn sự thật; manifest là bản nháp** của những gì chưa apply
+([ADR 0006](../adr/0006-adopt-existing-taiga-projects.md)). Ai đó sửa item trên Taiga thì giá trị trên Taiga thắng:
+`taigent pull` ghi lại vào `backlog.yaml`, không bao giờ âm thầm ghi đè Taiga.
+
 1. **Plan (chỉ ghi file).** Agent đọc spec/PRD rồi viết hoặc cập nhật manifest trong `taiga/<slug>/`
    (`project.yaml`, `backlog.yaml`, `docs.yaml`).
    - Sửa manifest hiện có, giữ nguyên `key` cũ. Không viết lại từ đầu.
-   - Có thể đọc Taiga để tránh tạo trùng việc đã có: `taigent plan --project <slug> --json` (chỉ đọc) cho các item
-     đã có tag `src:`, và tool MCP đọc cho việc người khác tạo tay.
+   - Đọc Taiga để tránh tạo trùng việc đã có: `taigent snapshot --project <slug>` ghi toàn bộ epic và story, task,
+     issue đang mở (cả item tạo tay) vào `taiga/<slug>/snapshot.json` (không commit), và
+     `taigent plan --project <slug> --json` (chỉ đọc) cho các item đã có tag `src:`. Item tạo tay mà spec đụng tới
+     chỉ vào manifest qua `taigent adopt`, sau khi người dùng xác nhận **từng item** (§5).
    - Kết thúc bằng `taigent validate --project <slug>`. Phải ra exit 0.
 2. **Review.** Business Analyst / Product Owner duyệt backlog trước khi apply:
-   - **Taigent Desktop** (`docs/desktop.md`) hoặc `taigent preview --project <slug>` (offline, in một trang Markdown
-     đúng những gì `apply` sẽ ghi, kèm trạng thái review). Mỗi item được đánh dấu **approved** (đồng ý) hoặc
-     **changes** (cần sửa) và có thể kèm comment. Tất cả nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest
-     (định dạng: `docs/cli.md` mục Review).
-   - Agent đọc `review.yaml`, xử lý từng comment chưa resolved bằng cách sửa manifest, rồi đặt `resolved: true` và
-     `reply` (trả lời ngắn bằng tiếng Việt) cho comment đó. Agent **không bao giờ** đổi verdict; verdict chỉ do người
-     review đặt. Item sửa sau khi đã approved thì verdict thành **stale** (digest khác) và cần duyệt lại.
+   - Người review tự gọi skill `taiga-review-backlog` (chỉ chạy khi người dùng gọi): skill chạy
+     `taigent preview --project <slug>` (offline, in một trang Markdown đúng những gì `apply` sẽ ghi, kèm trạng thái
+     review), rồi chỉ ghi verdict **approved** (đồng ý) hoặc **changes** (cần sửa) và comment cho những item mà người
+     review nói rõ, bằng `taigent review approve|request-changes|comment --project <slug> <key> [-- <text>]`, và kết
+     thúc bằng `taigent validate`. Tất cả nằm trong `taiga/<slug>/review.yaml`, commit cùng manifest (định dạng và lệnh:
+     `docs/cli.md` mục Review). `review.yaml` không ghi tên người review hay role.
+   - Agent (`taiga-plan-backlog`) xử lý từng comment chưa resolved bằng cách sửa manifest, rồi chạy
+     `taigent review resolve --project <slug> <key> <comment-id> -- <reply>` (trả lời ngắn bằng tiếng Việt). Không
+     ai sửa `review.yaml` bằng tay: `taigent review` là cách duy nhất ghi file. Agent **không bao giờ** đặt hay đổi
+     verdict; verdict chỉ do người review quyết định (GLOSSARY: Verdict). Item sửa sau khi đã có verdict thì verdict
+     thành **stale** (digest khác) và item quay về Awaiting review.
+   - Mục review của key không còn trong `backlog.yaml` (item bị xoá, hoặc đổi key trước khi apply) được giữ nguyên
+     trong file và bị bỏ qua: `validate` không báo lỗi, `preview` liệt kê nó ở `summary.unknownReviewKeys` (kèm cảnh
+     báo). Đổi key trước khi apply nghĩa là bỏ review của item: người review duyệt lại item dưới key mới.
    - BA cũng có thể sửa thẳng bản preview: `taigent preview --project <slug> --out taiga/<slug>/preview.md`, kèm một
      bản giữ nguyên ở `taiga/<slug>/.preview/base.md` (ghi cùng lúc). Skill `taiga-apply-backlog` so hai bản bằng
      `git diff --no-index`, ghi từng chỗ BA sửa vào `backlog.yaml` (manifest vẫn là nguồn sự thật), chạy `validate`
@@ -39,15 +52,31 @@ Thao tác **ghi** lên Taiga chỉ đi qua CLI `taigent`. MCP Taiga chỉ dùng 
    ý tường minh.
 
 `plan` và `apply` từ chối manifest sai quy ước với exit 4 và không ghi gì lên Taiga. Riêng rule `story-format` cho
-story sắp được tạo (§6.2) và rule `issue-value` (§6.4) được kiểm sau khi đọc Taiga, vì chỉ Taiga biết story nào là mới
-và project có những giá trị issue nào. Chạy lại `apply` luôn an toàn: item đã có thì bỏ qua (khớp theo tag
-`src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
+story sắp được tạo (§6.2), rule `issue-value` (§6.4) và rule `item-ref` (§5) được kiểm sau khi đọc Taiga, vì chỉ
+Taiga biết story nào là mới, project có những giá trị issue nào và mỗi `ref` là item nào. Chạy lại `apply` luôn an
+toàn: item đã có thì bỏ qua (khớp theo tag `src:<key>`), và CLI không bao giờ xoá gì trên Taiga.
+Item bị sửa trên Taiga sau lần apply trước (remote edit), bị sửa khác nhau ở cả hai bên (both edited, `both-edited`),
+hoặc chưa có baseline trong `state.json` mà khác manifest (unknown) thì bị chặn: `plan` liệt kê chúng kèm giá trị từng
+bên và thoát exit 6, `apply --yes` thoát exit 6 và không ghi gì (`docs/cli.md` §Baseline and remote edits). Item
+đang được adopt theo `ref` được so ba bên với baseline mà `taigent adopt` ghi vào map `adopted` của `state.json`: Taiga
+bị sửa sau lần adopt thì item bị chặn như trên. Item có `ref` viết tay mà không có mục `adopted` thì không bị chặn.
+Item `state.json` đã ghi (key → id) mà trên Taiga mất tag `src:<key>` bị chặn `remote-edit` ở field `tags` (không
+bao giờ tạo bản trùng); gỡ bằng cách gắn lại tag `src:<key>` trên Taiga, hoặc ghi `ref: <n>` của item vào
+`backlog.yaml` để apply adopt lại (`pull` từ chối item này). Agent không chạy `apply --yes` khi còn item bị chặn; mỗi
+item được gỡ bằng `taigent pull` (lấy giá trị Taiga vào manifest), hoặc gộp với người dùng rồi `pull --keep-manifest`
+(both edited), hoặc `--keep-manifest` khi người dùng chủ ý giữ manifest sau khi đã xem item (không bao giờ mặc định).
+`pull` story user story format phải parse lại được, không thì dừng (exit 4, kind `pull`); story legacy có
+`acceptance_criteria` cũng vậy; story legacy không có `acceptance_criteria` lẫn `spec` (dạng adopt ghi) thì nhận
+nguyên mô tả Taiga vào `description`. Khi parse lỗi, agent viết lại item theo **đúng format của nó**: user story
+format cho story user story format; story legacy thì cùng người dùng tách lại `acceptance_criteria`, không bao giờ
+chuyển legacy sang user story format. Lần `plan` đầu sau khi nâng cấp hiện các item apply trước đây mà khác Taiga là
+`unknown`.
 
 `taigent validate` kiểm cả `review.yaml` (khi có):
 
 | Rule | Quy tắc |
 |---|---|
-| `key-reference` | Mỗi key trong `items` của `review.yaml` có trong `backlog.yaml`. Xoá item thì xoá mục review của nó; đổi key item thì chuyển comment sang key mới và bỏ verdict (item cần duyệt lại). Taigent Desktop tự làm việc này khi form đổi key hoặc xoá item. |
+| `key-format` | Mỗi key trong `items` của `review.yaml` đúng định dạng key (chữ hoa/số, nhóm cách nhau bằng `-`). Key không còn trong `backlog.yaml` không phải lỗi: mục đó bị bỏ qua (bước 2 ở trên). |
 | `review-verdict` | `verdict` là `approved` hoặc `changes`, và đi kèm `digest` của item lúc duyệt. |
 | `review-comment-unique` | `id` của comment là duy nhất trong một item (`c1`, `c2`, …). |
 
@@ -76,6 +105,12 @@ Lưu ý: Taiga coi `slug` là read-only khi tạo project và tự sinh nó từ
 `taigent bootstrap` kiểm slug thực tế sau khi tạo và báo lỗi nếu nó khác manifest. Slug trùng với project private
 mà bạn không thấy (không là thành viên) thì bootstrap từ chối trước khi tạo gì (nếu không Taiga sẽ tạo project thứ
 hai với slug `<slug>-1`). Đổi tên project về sau **không** đổi slug.
+
+**Project có sẵn** (Hand-made, tạo trên Taiga trước khi dùng taigent, tên/slug không theo quy ước): khai báo
+`existing: true` trong `project.yaml`. Khi đó `project-name` và `project-slug` không áp dụng: `name` chỉ cần không rỗng,
+`slug` là slug thật của project trên Taiga (chữ thường, số, `-`, `_`); `project-dir` vẫn áp dụng. `taigent bootstrap`
+không bao giờ tạo project có `existing: true`: không tìm thấy slug trên Taiga thì dừng (exit 5, không ghi gì); tìm
+thấy thì chỉ bổ sung module, tag, custom attribute, thành viên và wiki còn thiếu.
 
 ## 3. Template và module
 
@@ -148,12 +183,29 @@ releases:
 | `key-format` | Mỗi epic, story, task, issue có `key`: chữ hoa, số, gạch ngang giữa các nhóm (`^[A-Z0-9]+(-[A-Z0-9]+)*$`), ví dụ `AUTH`, `AUTH-LOGIN`, `AUTH-LOGIN-API`. |
 | `key-unique` | Key duy nhất trong cả project (epic, story, task, issue dùng chung một không gian key). |
 | `key-reference` | Mọi chỗ tham chiếu key (ví dụ `target` của attachment trong `docs.yaml`) phải trỏ tới key có trong `backlog.yaml`. Attachment chỉ gắn vào epic, story hoặc task, không gắn vào issue. |
-| `key-locked` | Item đã có trên Taiga (key có trong `state.json`) không đổi key: đổi key = item mới + item cũ thành mồ côi. Form của Taigent Desktop kiểm rule này khi lưu. |
+| `ref-unique` | `ref` (nếu có) là số nguyên dương và mỗi ref chỉ thuộc một backlog item: một item trên Taiga không bao giờ gắn với hai backlog item. |
+| `item-ref` | Kiểm sau khi đọc Taiga (`plan`/`apply`, exit 4): item mang tag `src:<key>` phải có đúng ref trong manifest; nếu chưa có item nào mang tag đó thì ref phải là một item **cùng loại**, **chưa có tag `src:`** trong project. |
 
-- Key **không đổi** sau khi đã apply (rule `key-locked`).
+- Key **không đổi** sau khi đã apply (key có trong `state.json`): đổi key = item mới + item cũ thành mồ côi.
 - Gợi ý đặt key: epic là tên mảng (`AUTH`), story là `<EPIC>-<việc>` (`AUTH-LOGIN`), task là
   `<STORY>-<bước>` (`AUTH-LOGIN-API`), issue là `<tiền tố>-<việc>` với tiền tố theo `type`: `Question` → `ASK`,
   `Enhancement` → `ENH`, type khác (kể cả `Bug`) → `BUG`. Ví dụ `BUG-LONG-PASSWORD`.
+- **Adopt hand-made item.** Item tạo tay trên Taiga (chưa có tag `src:`) chỉ vào manifest qua
+  `taigent adopt --project <slug> --ref <n> --key <KEY>`, sau khi người dùng xác nhận từng item. Lệnh chỉ đọc Taiga
+  và chỉ ghi file local: trong `backlog.yaml` một backlog item mới có `ref: <n>`, chép nguyên văn subject, mô tả, các
+  tag có prefix hợp lệ (§4; tag khác vẫn nằm trên Taiga), và `type`/`severity`/`priority` theo tên với issue; không
+  chép custom attribute; trong `state.json` (map `adopted`) các giá trị đã chép, làm baseline. Epic và issue nằm ở
+  đầu `backlog.yaml`. Story cần thêm `--epic <KEY>`: nếu story đã nối với một hay nhiều epic trên Taiga thì `--epic`
+  phải là một trong số đó (khớp theo tag `src:` hoặc `ref`), không thì adopt epic đó trước; story chưa nối epic nào
+  thì `plan` đề xuất thêm `link`, nên adopt cũng nối nó vào epic `--epic`. Story giữ legacy format (§6.2). Task cần
+  thêm `--story <KEY>`: story trong manifest, và phải đúng là backlog item mà task đang nằm trong trên Taiga. Lệnh từ
+  chối (exit 2) item đã đóng, item đã có tag `src:`, key hoặc ref đã có trong manifest, story/task thiếu cha trong
+  manifest, story có epic trên Taiga không phải `--epic`, task có story trên Taiga không phải backlog item (adopt story
+  đó trước), và `backlog.yaml` bị sửa trong lúc adopt. Sau đó `plan` đề xuất action `adopt` (thêm tag `src:<key>`,
+  cùng các update nội dung nếu có), so ba bên với baseline của adopt, và `apply` ghi tag đó rồi chuyển mục `adopted`
+  sang `items`. `ref` giữ lại trong manifest sau apply, làm phép kiểm (rule `item-ref`).
+- Story và task tạo tay nằm dưới một epic hoặc story của manifest (kể cả epic, story đã adopt) được `plan` liệt kê
+  riêng trong `handMadeChildren`, không phải `staleLinks`. Taigent không động vào nội dung và liên kết của chúng.
 - Item bỏ khỏi manifest không bị xoá trên Taiga. `plan` báo nó là mồ côi để người quyết định.
 - Chuyển task sang story khác (hoặc story sang epic khác) trong manifest: `apply` gắn task vào story mới
   (`user_story`), và gắn story vào epic mới. Liên kết cũ với epic cũ **không bị gỡ**; `plan` báo nó trong
@@ -163,6 +215,10 @@ releases:
 
 Manifest không có field status, assignee, sprint hay points. Các field đó thuộc về người làm và `apply` không
 ghi đè chúng.
+
+> **Sprint:** người làm có thể tạo và xếp sprint bằng CLI, chỉ qua `taigent sprint create` (tạo milestone) và
+> `taigent sprint add` (đưa user story có sẵn vào sprint), cả hai cần `--yes`; xem [docs/cli.md](../cli.md#sprint).
+> Manifest và `apply` vẫn không bao giờ ghi sprint.
 
 Mục này là nguồn chuẩn duy nhất cho user story của Taigent. Chuẩn là format **Mike Cohn** (Use case "As a / I
 want to / so that") kết hợp tiêu chí chấp nhận **Gherkin** (Scenario / Given / When / Then). Đọc mục này là đủ
@@ -255,8 +311,9 @@ Mỗi scenario là một checkbox để QA viết test case và tick khi đã ki
 
 ### 6.2 Legacy format (chỉ cho story đã có trên Taiga)
 
-Story đã có trên Taiga (có tag `src:<key>`) được giữ legacy format: `description` là câu `Là <vai trò>, tôi muốn
-<mục tiêu>, để <lợi ích>.` (kèm ngữ cảnh) và `acceptance_criteria` là danh sách câu kiểm được. `apply` ghép:
+Legacy format chỉ dành cho story đã có trên Taiga: story có tag `src:<key>`, hoặc story được adopt (có `ref`, §5).
+`description` là câu `Là <vai trò>, tôi muốn <mục tiêu>, để <lợi ích>.` (kèm ngữ cảnh) và `acceptance_criteria` là
+danh sách câu kiểm được. `apply` ghép:
 
 ```markdown
 Là người dùng, tôi muốn đăng nhập bằng email, để truy cập dữ liệu của mình.
@@ -269,9 +326,15 @@ Là người dùng, tôi muốn đăng nhập bằng email, để truy cập d�
 Spec: docs/specs/auth.md
 ```
 
+**Story tạo tay được adopt.** `taigent adopt` ghi story viết tự do trên Taiga thành story legacy format: toàn bộ mô tả
+nằm nguyên văn trong `description`, không tách `acceptance_criteria` và không có `spec`. Story legacy không có
+`acceptance_criteria` và không có `spec` được ghép ra **đúng** `description`, từng byte (giữ CRLF, khoảng trắng cuối
+dòng, dòng trống cuối). Vì vậy adopt rồi `plan` ngay thì không có update nội dung nào, chỉ có tag `src:<key>`.
+
 Không dùng legacy format cho story mới: `plan` và `apply` thoát exit 4 (rule `story-format`) khi một story sắp được
-tạo không có `use_case`/`scenarios`. Story cũ chỉ được chuyển sang user story format khi người dùng yêu cầu; khi đó
-`apply` cập nhật `description` của nó như một thay đổi bình thường.
+tạo không có `use_case`/`scenarios`. Story được adopt không bị rule này chặn, vì action của nó là `adopt`, không phải
+`create`. Story cũ chỉ được chuyển sang user story format khi người dùng yêu cầu; khi đó `apply` cập nhật
+`description` của nó như một thay đổi bình thường.
 
 ### 6.3 Task, epic và custom attributes
 
@@ -391,7 +454,14 @@ Slug chuẩn:
   trang wiki.
 - `description` của attachment ghi ngắn gọn nội dung và nguồn (ví dụ `Luồng đăng nhập, bản 2026-10`).
 
-## 10. Tool MCP bị cấm
+## 10. Lệnh được phép và tool MCP bị cấm
+
+Lệnh `taigent` skill được dùng (allowlist của skill và wrapper headless): `validate`, `preview`, `plan`, `snapshot`
+(chỉ đọc Taiga, chỉ ghi `snapshot.json`), `adopt` và `pull` (chỉ đọc Taiga, chỉ ghi file local), `metrics` (chỉ đọc,
+skill `taiga-dashboard`), `tickets`, `status`, `comment`, `due`, `review resolve` (offline, chỉ ghi `review.yaml`: trả lời
+comment review, skill `taiga-plan-backlog`), và các lệnh ghi `apply`, `bootstrap`, `upload` chỉ với `--yes` sau khi
+người dùng đồng ý (§1). `review approve|request-changes|comment` không có trong allowlist headless: chỉ trong skill
+`taiga-review-backlog` mà người review tự gọi.
 
 Các tool sau của `taiga-mcp-server@1.9.20` đang hỏng hoặc nguy hiểm. Agent **không được gọi** chúng; skill và wrapper
 headless không đưa chúng vào allowlist.

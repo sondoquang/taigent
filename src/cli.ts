@@ -2,36 +2,63 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
-import { parseArgs, parseEnv } from 'node:util';
+import { parseArgs, type ParseArgsOptionsConfig, parseEnv } from 'node:util';
+import { AdoptError, adoptItem, type AdoptParent } from './adopt.ts';
+import { ManifestChangedError, readBacklogFile } from './backlog-write.ts';
 import { describeBootstrapOperation, executeBootstrap, planBootstrap, readBootstrapRemote } from './bootstrap.ts';
 import { parseDay } from './days.ts';
 import { ExitCode } from './exit-codes.ts';
 import { describeAppliedOperation, executePlan } from './executor.ts';
 import { errorMessage } from './guards.ts';
-import { legacyStoryCreatesError, unknownIssueValuesError } from './manifest/backlog.ts';
-import { PROJECT_SLUG_PATTERN } from './manifest/conventions.ts';
+import { legacyStoryCreatesError, unknownIssueValuesError, type Backlog } from './manifest/backlog.ts';
+import { KEY_PATTERN, PROJECT_SLUG_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
-import { manifestsRoot, projectLayout } from './manifest/layout.ts';
+import { manifestsRoot, projectLayout, type ProjectLayout } from './manifest/layout.ts';
+import { readState } from './manifest/state.ts';
 import { listProjectSlugs, loadManifests, type LoadedProject } from './manifest/manifests.ts';
-import { initRepository, InitError, type InitStatus } from './init.ts';
-import { LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
-import { serveMcp, startProxy } from './mcp.ts';
+import { hasStoredLogin, LOGIN_HINT, LoginError, normalizeApiUrl, removeLogin, StoredSession, storeLogin } from './login.ts';
+import { checkMcp, McpCheckError, McpStartError, serveMcp, startProxy } from './mcp.ts';
 import { readBacklogData } from './metrics/backlog.ts';
 import { computeMetrics } from './metrics/compute.ts';
 import { HistoryCacheError } from './metrics/history.ts';
 import { readReleases } from './metrics/releases.ts';
-import { ProjectNotFoundError, readSnapshot } from './metrics/snapshot.ts';
+import { ProjectNotFoundError, readSnapshot as readMetricsSnapshot } from './metrics/snapshot.ts';
 import { formatMetricsText } from './metrics/text.ts';
 import type { Action, PlanSummary, Result } from './operations.ts';
-import { buildPlan, describePlanOperation, LegacyStoryCreateError, UnknownIssueValueError, type Plan } from './planner.ts';
+import {
+  buildPlan,
+  describePlanOperation,
+  LegacyStoryCreateError,
+  RefMismatchError,
+  UnknownIssueValueError,
+  type BlockedItem,
+  type Plan,
+  type PlannedBacklog,
+  type RemoteState,
+} from './planner.ts';
+import { PullError, pullItems, PullKeyError } from './pull.ts';
 import { NOTIFY_KINDS, NotifyConfigError, type NotifyKind, notifyMessage, notifyRange, resolveTelegram, sendTelegram, TelegramError } from './notify.ts';
 import { ask, askHidden, isTerminal, PromptCancelled } from './prompt.ts';
 import { formatProjectDetailText, formatProjectsText, readProjectDetail, readProjects } from './projects.ts';
 import { formatProjectReportText, readProjectReport } from './report.ts';
 import { readBacklogRemote } from './remote.ts';
-import { buildPreview, loadReview, renderPreviewMarkdown, REVIEW_FILE, reviewKeys } from './review.ts';
+import {
+  describeSprintAddOperation,
+  describeSprintCreateOperation,
+  executeSprintAdd,
+  executeSprintCreate,
+  formatSprintListText,
+  planSprintAdd,
+  planSprintCreate,
+  readSprints,
+  SprintError,
+} from './sprint.ts';
+import { buildPreview, loadReview, recordReview, renderPreviewMarkdown, REVIEW_FILE, ReviewError, type ReviewAction } from './review.ts';
+import { formatSnapshotText, readSnapshot, summarizeSnapshot, writeSnapshot } from './snapshot.ts';
 import { Secrets } from './secrets.ts';
+import { checkInstall, type InstallCheck, mcpCheckTarget, type SetupClient, SetupError, setupProject, type SetupReport, type SetupStatus, setupUser, USER_CLIENTS } from './setup.ts';
 import { compareSkills, SKILLS_SOURCE, SKILLS_TARGET, SkillsSourceMissingError, syncSkills } from './skills.ts';
 import { TaigaAuthError, type TaigaAuthorizer, TaigaClient, TaigaConflictError, TaigaError } from './taiga/client.ts';
 import { commentTicket, parseRef, setTicketDueDate, setTicketStatus, TicketError } from './ticket.ts';
@@ -41,13 +68,30 @@ import { describeUploadOperation, executeUpload, planUpload, readUploadRemote, U
 const USAGE = `Usage: taigent <command> [--project <slug>] [options]
 
 Commands:
-  init      Install Taigent into the repository at the working directory, from this taigent: the Taigent skills,
-            the taiga MCP server entries, the headless kit and the pinned taigent devDependency; offline
+  setup     Install the Taigent skills (stamped with this version) and the taiga MCP server (the global taigent mcp,
+            no secrets) into the user config of every client found in your home directory: Claude Code, Codex, OMP;
+            then log in when there is no login (in a terminal; else it says how), check the login and the taiga server
+            entry it wrote (exit 5 when one fails, 2 when the entry's taigent is not on PATH); report skills older
+            than this taigent and skills or servers installed both for you and in the working directory, with the
+            copy each client uses (never removes one)
+  setup --project  Install Taigent into the repository at the working directory, from this taigent: the Taigent
+            skills, the taiga MCP server entries, the headless kit and the taigent devDependency pinned to this
+            version; then log in, check and report like setup (no MCP check before npm install)
   validate  Check manifests (and review.yaml) against the conventions, offline (all projects without --project)
   preview   Show the backlog as apply would write it, with its review (review.yaml), as one Markdown page; offline
+  review approve|request-changes|comment|resolve <key> ...   Record the review of backlog item <key> in review.yaml,
+            offline: \`approve <key>\` and \`request-changes <key> [-- <comment>]\` set the verdict on the item's
+            current digest; \`comment <key> -- <text>\` adds a review comment, verdict unchanged;
+            \`resolve <key> <comment-id> -- <reply>\` marks that comment resolved with your reply
   bootstrap Create or complete the Taiga project declared in project.yaml (requires --yes)
   plan      Show what apply would change on Taiga (exit 3 when there are changes)
   apply     Apply the manifest to Taiga (requires --yes)
+  adopt     Write the hand-made epic, user story, task or issue #--ref of --project into backlog.yaml as backlog
+            item --key, verbatim: a story under the manifest epic --epic, a task under the manifest story --story
+            (plan then proposes adopting it: apply adds its src:<key> tag); reads Taiga, writes the manifest only
+  pull      Write Taiga's values of backlog item --key, or of every item plan blocks, into backlog.yaml and make
+            them its baseline in state.json (--keep-manifest: the baseline only, so apply writes the manifest's
+            values); reads Taiga, writes local files only
   upload    Upsert the wiki pages and attachments declared in docs.yaml (requires --yes)
   tickets   List your planned tickets (Ready, In progress, Ready for test) and those moved to Done from --from to --to,
             by progress group, with finishing day and due status, the plan of their remaining work by working day,
@@ -56,11 +100,18 @@ Commands:
             --project, that project's issue types, severities and priorities (read-only)
   report    Progress of --project by sprint (stories, tasks and points done, blocked stories) and by epic, and its
             stories in no sprint (read-only)
+  snapshot  Read every epic and every open story, task and issue of --project, hand-made ones too, with their full
+            descriptions, into <manifests>/<slug>/snapshot.json (git-ignored; read-only on Taiga)
   metrics   Dashboard metrics of --project for every Role, from what Taiga holds now and the history of each item:
             per period (sprint, or week on a kanban project) throughput, lead time, cycle time, workload, blocked and
             overdue work; release burndown with the releases of project.yaml (read-only)
             Business Analyst: stories by status, and from backlog.yaml and review.yaml complete acceptance
             criteria, requirements coverage, items awaiting review or pending clarification
+  sprint list    Every sprint (milestone) of --project with the refs and subjects of its user stories (read-only)
+  sprint create  Create sprint --name from --from to --to in --project (requires --yes; unchanged when a sprint has
+            that name and those days, an error when it has that name and other days)
+  sprint add <ref>...  Put the user stories #<ref> of --project into sprint --name (requires --yes; unchanged when
+            already in it)
   status <ref> <status>   Move your ticket #<ref> of --project to that status, e.g. \`status 84 Done\` (writes at once)
   comment <ref> <text>    Add a comment to your ticket #<ref> of --project (writes at once)
   due <ref> <YYYY-MM-DD> [comment]  Set the due date of your ticket #<ref> of --project, with an optional comment giving
@@ -80,17 +131,23 @@ Commands:
 
 Options:
   --project <slug>  Taiga project slug; manifests are read from <manifests>/<slug>/ (optional for tickets, notify and projects)
-  --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone)
+  --from, --to      tickets: first and last day (YYYY-MM-DD, inclusive, local time zone); sprint create: the
+                    sprint's first and last day
   --eod             tickets: plan from the next working day, as the end-of-day reminder does
+  --name <name>     sprint create, sprint add: the sprint's name
+  --ref <n>, --key <KEY>  adopt: the Taiga ref of the hand-made item and the key of the new backlog item; pull: --key
+                    only, the backlog item to pull (default: every blocked item)
+  --epic <KEY>, --story <KEY>  adopt: the manifest parent of a user story (an epic) or of a task (a story)
+  --keep-manifest   pull: leave backlog.yaml as it is and only set the baseline to Taiga's values
   --out <file>      preview: write the page (or the JSON) to this file instead of stdout
   --cache-dir <dir> metrics: keep the history of each item in this directory and read it again only for items
                     changed since (default: read every history, write nothing)
   --application <id>  login: store an application token of this Application (created by the instance admin)
                     instead of a refresh token
   --json            Machine-readable output on stdout
-  --yes             Confirm writes (bootstrap, apply, upload)
-  --dry-run         List the operations without writing anything (exit 3 when there are changes; init: the files it
-                    would write); notify: print the message without sending it (exit 0)
+  --yes             Confirm writes (bootstrap, apply, upload, sprint create, sprint add)
+  --dry-run         List the operations without writing anything (exit 3 when there are changes; setup: the files it
+                    would write, no login or check); notify: print the message without sending it (exit 0)
   -h, --help        Show this help
 
 Credentials: TAIGA_USERNAME + TAIGA_PASSWORD or TAIGA_TOKEN when set, else the stored login (taigent login).
@@ -103,8 +160,6 @@ Environment (a variable not set in the environment is read from ./.env):
   TAIGENT_CREDENTIAL_STORE         Where login keeps its token: keyring (default) or file (plain JSON in the config
                                    directory, for machines without an OS credential store)
   TAIGENT_CONFIG_DIR               Config directory of the stored login (default: per-user, e.g. %APPDATA%\\taigent)
-  TAIGENT_READ_ONLY                1: refuse every write to Taiga (apply/upload/bootstrap --yes, status, comment, due) with
-                                   exit 2; plan, preview, validate, metrics and --dry-run still work (Taigent Desktop's headless runs)
   TAIGENT_NOW                      tickets, notify: the instant used as now (ISO 8601 with offset, e.g.
                                    2026-11-19T10:00:00+07:00); default: the system clock
   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  notify: the bot and your chat; default: the Claude Code Telegram plugin's
@@ -112,39 +167,44 @@ Environment (a variable not set in the environment is read from ./.env):
                                    (default: <CLAUDE_CONFIG_DIR or ~/.claude>/channels/telegram)
 
 Exit codes: 0 ok/no changes, 1 internal error, 2 usage/config error (incl. changes without --yes, not logged in,
-            a write under TAIGENT_READ_ONLY, metrics of an unknown project), 3 plan/--dry-run/skills check has changes,
-            4 manifest invalid, 5 Taiga/network error`;
+            metrics of an unknown project, review of an unknown key or comment), 3 plan/--dry-run/skills check has
+            changes, 4 manifest invalid (pull: Taiga's values do not fit the manifest), 5 Taiga/network error (setup:
+            login or MCP check), 6 plan/apply has blocked items`;
 
-const COMMANDS = ['init', 'validate', 'preview', 'bootstrap', 'plan', 'apply', 'upload', 'tickets', 'projects', 'report', 'metrics', 'status', 'comment', 'due', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
+const COMMANDS = ['setup', 'validate', 'preview', 'review', 'bootstrap', 'plan', 'apply', 'adopt', 'pull', 'upload', 'tickets', 'projects', 'report', 'snapshot', 'metrics', 'sprint', 'status', 'comment', 'due', 'notify', 'skills', 'login', 'logout', 'whoami', 'mcp'] as const;
 /** Commands that work without --project. */
-const PROJECTLESS: readonly Command[] = ['init', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
+const PROJECTLESS: readonly Command[] = ['setup', 'validate', 'skills', 'tickets', 'projects', 'notify', 'login', 'logout', 'whoami', 'mcp'];
 
 const SKILLS_ACTIONS = ['sync', 'check'] as const;
 type SkillsAction = (typeof SKILLS_ACTIONS)[number];
+const SPRINT_ACTIONS = ['list', 'create', 'add'] as const;
+type SprintAction = (typeof SPRINT_ACTIONS)[number];
+const REVIEW_ACTIONS = ['approve', 'request-changes', 'comment', 'resolve'] as const;
+type ReviewActionName = (typeof REVIEW_ACTIONS)[number];
 type Command = (typeof COMMANDS)[number];
+/** Where `setup` installs: `user`, the user config of each client found in the home directory (the default); `project`, the repository at the working directory (`setup --project`). */
+type SetupScope = 'user' | 'project';
 
 /** Bad usage or configuration. Maps to ExitCode.Usage. */
 class UsageError extends Error {}
 
-/** A Taiga write refused under TAIGENT_READ_ONLY. Maps to ExitCode.Usage, kind `read-only`. */
-class ReadOnlyError extends Error {}
+/** How the text output names each kind of blocked item. */
+const BLOCKED_LABEL: Record<BlockedItem['kind'], string> = { 'remote-edit': 'remote edit', 'both-edited': 'both edited', unknown: 'unknown' };
 
-/** Commands that write to Taiga with `--yes` (without `--dry-run`), and those that write at once. */
-const CONFIRMED_WRITES: readonly Command[] = ['apply', 'upload', 'bootstrap'];
-const IMMEDIATE_WRITES: readonly Command[] = ['status', 'comment', 'due'];
+/** `apply --yes` refused because the plan blocks items. Maps to ExitCode.Blocked, kind `blocked`. */
+class BlockedPlanError extends Error {
+  readonly blocked: readonly BlockedItem[];
 
-/**
- * TAIGENT_READ_ONLY=1 (Taigent Desktop sets it on its headless skill runs, and the agent's shell inherits it): a
- * command that would write to Taiga is refused before it contacts Taiga, whatever the agent was told.
- */
-function refuseReadOnlyWrite({ options, env }: Run): void {
-  if (env.TAIGENT_READ_ONLY !== '1') return;
-  const writes = IMMEDIATE_WRITES.includes(options.command) || (CONFIRMED_WRITES.includes(options.command) && options.yes && !options.dryRun);
-  if (!writes) return;
-  throw new ReadOnlyError(
-    `${options.command} writes to Taiga, refused because TAIGENT_READ_ONLY is set (a headless run of Taigent Desktop); ` +
-      'plan, preview, validate and --dry-run still work. Push from the app, or run it in a terminal without TAIGENT_READ_ONLY',
-  );
+  constructor(blocked: readonly BlockedItem[]) {
+    const items = blocked.map((item) => `${item.key} (${BLOCKED_LABEL[item.kind]}: ${Object.keys(item.fields).join(', ')})`);
+    super(`refusing to apply: ${items.join('; ')} must be settled first; run taigent plan to see the baseline, Taiga's and the manifest's values. Nothing was written.`);
+    this.blocked = blocked;
+  }
+}
+
+/** The command as messages name it: `sprint create`, not `sprint`. */
+function commandName(options: Options): string {
+  return options.command === 'sprint' ? `sprint ${options.sprintAction}` : options.command;
 }
 
 interface Options {
@@ -156,7 +216,11 @@ interface Options {
   to?: string;
   /** `skills` subcommand. */
   skillsAction?: SkillsAction;
-  /** `status`, `comment`, `due`: the ticket's ref. */
+  /** `sprint` subcommand, the sprint's name (`--name`, create/add) and the stories' refs (add). */
+  sprintAction?: SprintAction;
+  name?: string;
+  refs?: number[];
+  /** `status`, `comment`, `due`: the ticket's ref; `adopt`: the hand-made item's ref (`--ref`). */
   ref?: number;
   /** `status`: the status name (its words joined by spaces); `comment`, `due`: the comment text. */
   text?: string;
@@ -164,6 +228,12 @@ interface Options {
   dueDate?: string;
   /** `tickets --eod`: plan from the next working day, as the end-of-day reminder does. */
   eod: boolean;
+  /** `adopt`: key of the new backlog item (`--key`); `pull`: the backlog item to pull, absent for every blocked one. */
+  key?: string;
+  /** `adopt`: the manifest parent of the new backlog item (`--epic` for a story, `--story` for a task). */
+  parent?: AdoptParent;
+  /** `pull`: set the baseline only (`--keep-manifest`). */
+  keepManifest: boolean;
   /** `notify`: which message. */
   notifyKind?: NotifyKind;
   /** `login`: Application id for an application token. */
@@ -172,6 +242,10 @@ interface Options {
   out?: string;
   /** `metrics`: directory of the history cache. */
   cacheDir?: string;
+  /** `review`: what to record. */
+  review?: ReviewAction;
+  /** `setup`: where it installs. */
+  setupScope?: SetupScope;
   json: boolean;
   yes: boolean;
   dryRun: boolean;
@@ -194,26 +268,44 @@ function printError(secrets: Secrets, text: string): void {
   process.stderr.write(secrets.redact(text));
 }
 
+/** The options of every command, for `parseArgs`. */
+const OPTIONS = {
+  project: { type: 'string' },
+  from: { type: 'string' },
+  to: { type: 'string' },
+  name: { type: 'string' },
+  application: { type: 'string' },
+  out: { type: 'string' },
+  ref: { type: 'string' },
+  key: { type: 'string' },
+  epic: { type: 'string' },
+  story: { type: 'string' },
+  'keep-manifest': { type: 'boolean', default: false },
+  'cache-dir': { type: 'string' },
+  'setup-project': { type: 'boolean', default: false },
+  json: { type: 'boolean', default: false },
+  yes: { type: 'boolean', default: false },
+  'dry-run': { type: 'boolean', default: false },
+  help: { type: 'boolean', short: 'h', default: false },
+} as const satisfies ParseArgsOptionsConfig;
+
+/** Options that take a value (`--name value`), so the value is not read as the command. */
+const VALUE_OPTIONS = Object.entries(OPTIONS).flatMap(([name, { type }]) => (type === 'string' ? [`--${name}`] : []));
+
+/**
+ * `argv` with `setup`'s value-less `--project` renamed to the flag `--setup-project` (`--project <slug>` everywhere
+ * else); `--project` itself is not skipped as an option with a value, so `setup --project demo` leaves `demo` unexpected.
+ */
+function setupFlags(argv: string[]): string[] {
+  if (argv.includes('--setup-project')) throw new UsageError("Unknown option '--setup-project'");
+  const command = argv.find((arg, index) => !arg.startsWith('-') && !(index > 0 && VALUE_OPTIONS.includes(argv[index - 1]!) && argv[index - 1] !== '--project'));
+  return command === 'setup' ? argv.map((arg) => (arg === '--project' ? '--setup-project' : arg)) : argv;
+}
+
 function parseOptions(argv: string[]): Options | 'help' {
   let parsed;
   try {
-    parsed = parseArgs({
-      args: argv,
-      allowPositionals: true,
-      options: {
-        project: { type: 'string' },
-        from: { type: 'string' },
-        to: { type: 'string' },
-        application: { type: 'string' },
-        out: { type: 'string' },
-        'cache-dir': { type: 'string' },
-        json: { type: 'boolean', default: false },
-        yes: { type: 'boolean', default: false },
-        'dry-run': { type: 'boolean', default: false },
-        eod: { type: 'boolean', default: false },
-        help: { type: 'boolean', short: 'h', default: false },
-      },
-    });
+    parsed = parseArgs({ args: setupFlags(argv), allowPositionals: true, options: OPTIONS });
   } catch (error) {
     throw new UsageError(errorMessage(error));
   }
@@ -227,6 +319,29 @@ function parseOptions(argv: string[]): Options | 'help' {
     const action = extra.shift();
     if (!SKILLS_ACTIONS.includes(action as SkillsAction)) throw new UsageError(`skills needs one of: ${SKILLS_ACTIONS.join(', ')}`);
     skillsAction = action as SkillsAction;
+  }
+  let sprintAction: SprintAction | undefined;
+  let refs: number[] | undefined;
+  if (command === 'sprint') {
+    const action = extra.shift();
+    if (!SPRINT_ACTIONS.includes(action as SprintAction)) throw new UsageError(`sprint needs one of: ${SPRINT_ACTIONS.join(', ')}`);
+    sprintAction = action as SprintAction;
+    if (sprintAction === 'list') {
+      if (values.name !== undefined) throw new UsageError('--name applies only to sprint create and sprint add');
+    } else {
+      if (values.name === undefined || values.name.trim() === '') throw new UsageError(`sprint ${sprintAction} needs --name <name>, the sprint's name`);
+    }
+    if (sprintAction === 'add') {
+      const args = extra.splice(0);
+      if (args.length === 0) throw new UsageError('sprint add needs the refs of the user stories to add (e.g. 84 or #84)');
+      refs = args.map((arg) => {
+        const parsed = parseRef(arg);
+        if (parsed === undefined) throw new UsageError(`sprint add needs user story refs (e.g. 84 or #84), got "${arg}"`);
+        return parsed;
+      });
+    }
+  } else if (values.name !== undefined) {
+    throw new UsageError('--name applies only to sprint create and sprint add');
   }
   let ref: number | undefined;
   let text: string | undefined;
@@ -247,11 +362,65 @@ function parseOptions(argv: string[]): Options | 'help' {
     if (rest === '' && command !== 'due') throw new UsageError(`${command} needs ${what} after the ref`);
     text = rest === '' ? undefined : rest;
   }
+  let review: ReviewAction | undefined;
+  if (command === 'review') {
+    const action = extra.shift() as ReviewActionName;
+    if (!REVIEW_ACTIONS.includes(action)) throw new UsageError(`review needs one of: ${REVIEW_ACTIONS.join(', ')}`);
+    // The words after the key (and the comment id), as for `comment`; text with dashes goes after `--`.
+    const [keyArg, ...rest] = extra.splice(0);
+    if (keyArg === undefined || !KEY_PATTERN.test(keyArg)) {
+      throw new UsageError(`review ${action} needs a backlog item key matching ${KEY_PATTERN} (e.g. AUTH-LOGIN)${keyArg === undefined ? '' : `, got "${keyArg}"`}`);
+    }
+    if (action === 'approve') {
+      if (rest.length > 0) throw new UsageError(`unexpected argument "${rest[0]}": review approve takes no text; use review comment`);
+      review = { action, key: keyArg };
+    } else if (action === 'resolve') {
+      const [id, ...words] = rest;
+      const reply = words.join(' ').trim();
+      if (id === undefined || reply === '') throw new UsageError('review resolve needs the comment id (e.g. c1), then -- <reply>');
+      review = { action, key: keyArg, id, reply };
+    } else {
+      const words = rest.join(' ').trim();
+      if (action === 'comment') {
+        if (words === '') throw new UsageError('review comment needs -- <text> after the key');
+        review = { action, key: keyArg, text: words };
+      } else {
+        review = { action, key: keyArg, ...(words !== '' && { text: words }) };
+      }
+    }
+  }
+  let key: string | undefined;
+  let parent: AdoptParent | undefined;
+  if (command === 'adopt') {
+    ref = values.ref === undefined ? undefined : parseRef(values.ref);
+    if (ref === undefined) throw new UsageError(`adopt needs --ref <n>, the Taiga ref of the hand-made item (e.g. 84 or #84)${values.ref === undefined ? '' : `, got "${values.ref}"`}`);
+    key = values.key;
+    if (key === undefined || !KEY_PATTERN.test(key)) {
+      throw new UsageError(`adopt needs --key <KEY> for the new backlog item, matching ${KEY_PATTERN} (e.g. AUTH-LOGIN)${key === undefined ? '' : `, got "${key}"`}`);
+    }
+    if (values.epic !== undefined && values.story !== undefined) throw new UsageError('adopt takes one parent: --epic for a user story, --story for a task');
+    if (values.epic !== undefined) parent = { type: 'epic', key: values.epic };
+    if (values.story !== undefined) parent = { type: 'story', key: values.story };
+    if (parent && !KEY_PATTERN.test(parent.key)) throw new UsageError(`--${parent.type} must be a backlog item key matching ${KEY_PATTERN}, got "${parent.key}"`);
+  } else if (command === 'pull') {
+    key = values.key;
+    if (key !== undefined && !KEY_PATTERN.test(key)) throw new UsageError(`pull --key needs a backlog item key matching ${KEY_PATTERN}, got "${key}"`);
+    if (values.ref !== undefined) throw new UsageError('--ref applies only to adopt');
+    if (values.epic !== undefined || values.story !== undefined) throw new UsageError('--epic and --story apply only to adopt');
+  } else if (values.ref !== undefined || values.key !== undefined || values.epic !== undefined || values.story !== undefined) {
+    throw new UsageError('--ref, --epic and --story apply only to adopt, --key to adopt and pull');
+  }
+  if (values['keep-manifest'] && command !== 'pull') throw new UsageError('--keep-manifest applies only to pull');
   let notifyKind: NotifyKind | undefined;
   if (command === 'notify') {
     const kind = extra.shift();
     if (!NOTIFY_KINDS.includes(kind as NotifyKind)) throw new UsageError(`notify needs one of: ${NOTIFY_KINDS.join(', ')}`);
     notifyKind = kind as NotifyKind;
+  }
+  let setupScope: SetupScope | undefined;
+  if (command === 'setup') {
+    if (values.project !== undefined) throw new UsageError('setup --project takes no value: it installs into the repository at the working directory');
+    setupScope = values['setup-project'] ? 'project' : 'user';
   }
   if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
   if (values.project === undefined) {
@@ -266,7 +435,7 @@ function parseOptions(argv: string[]): Options | 'help' {
   if (values['cache-dir'] !== undefined && command !== 'metrics') throw new UsageError('--cache-dir applies only to metrics');
   if (values['cache-dir'] === '') throw new UsageError('--cache-dir needs a directory');
   if (values.eod && command !== 'tickets') throw new UsageError('--eod applies only to tickets');
-  if (command === 'tickets') {
+  if (command === 'tickets' || (command === 'sprint' && sprintAction === 'create')) {
     for (const name of ['from', 'to'] as const) {
       const value = values[name];
       if (value === undefined) throw new UsageError(`${command} needs --${name} <YYYY-MM-DD>`);
@@ -274,7 +443,7 @@ function parseOptions(argv: string[]): Options | 'help' {
     }
     if (parseDay(values.from!)! > parseDay(values.to!)!) throw new UsageError(`--from ${values.from} is after --to ${values.to}`);
   } else if (values.from !== undefined || values.to !== undefined) {
-    throw new UsageError('--from and --to apply only to tickets');
+    throw new UsageError('--from and --to apply only to tickets and sprint create');
   }
   return {
     command: command as Command,
@@ -282,13 +451,21 @@ function parseOptions(argv: string[]): Options | 'help' {
     from: values.from,
     to: values.to,
     skillsAction,
+    sprintAction,
+    name: values.name?.trim(),
+    refs,
     ref,
     text,
     dueDate,
+    key,
+    parent,
+    keepManifest: values['keep-manifest'],
     notifyKind,
     application: values.application,
     out: values.out,
     cacheDir: values['cache-dir'],
+    review,
+    setupScope,
     json: values.json,
     yes: values.yes,
     dryRun: values['dry-run'],
@@ -391,20 +568,21 @@ function retryUnitMs(env: NodeJS.ProcessEnv): number | undefined {
   return value;
 }
 
-const MARKER: Record<Action, string> = { create: '  + ', update: '  ~ ', link: '  + ', skip: '    skip ' };
+const MARKER: Record<Action, string> = { create: '  + ', update: '  ~ ', adopt: '  ~ ', link: '  + ', skip: '    skip ' };
 
 /** Text form of a plan: a title, one line per operation, `extra` lines (e.g. orphans), then the counts. */
 function formatPlanText<A extends Action, O extends { action: A }>(
   title: string,
   plan: PlanSummary<A> & { operations: O[] },
   describe: (op: O) => string,
-  texts: { empty: string; matches: string; extra?: string[] },
+  texts: { empty: string; matches: string; extra?: string[]; blocked?: number },
 ): string {
   const lines = [title, ...plan.operations.map((op) => `${MARKER[op.action]}${describe(op)}`)];
   if (plan.operations.length === 0) lines.push(`  (${texts.empty})`);
   lines.push(...(texts.extra ?? []));
   const counts = Object.entries<number>(plan.summary).map(([action, n]) => `${n} ${action === 'skip' ? 'unchanged' : `to ${action}`}`);
-  lines.push(plan.changes ? `${counts.join(', ')}.` : `No changes. Taiga matches ${texts.matches}.`);
+  if (texts.blocked) counts.push(`${texts.blocked} blocked`);
+  lines.push(plan.changes || texts.blocked ? `${counts.join(', ')}.` : `No changes. Taiga matches ${texts.matches}.`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -419,9 +597,22 @@ function formatReportText<O extends { result: Result }>(
   return `${lines.join('\n')}\n`;
 }
 
-/** The parts of a backlog plan that are reported but never acted on: orphans and stale epic links. */
+/**
+ * The parts of a backlog plan that are reported but never acted on: blocked items (with each version of the fields
+ * at stake), orphans, stale epic links and hand-made children.
+ */
 function formatLeftovers(plan: Plan): string[] {
   const lines: string[] = [];
+  if (plan.blocked.length > 0) {
+    lines.push('Blocked (changed on Taiga since taigent last wrote it, or never recorded; apply refuses until each is settled in backlog.yaml):');
+    for (const item of plan.blocked) {
+      lines.push(`  ! ${BLOCKED_LABEL[item.kind]} ${item.type} ${item.key}  (#${item.ref}, id ${item.id}): ${Object.keys(item.fields).join(', ')}`);
+      for (const [field, versions] of Object.entries(item.fields)) {
+        const baseline = 'baseline' in versions ? `baseline ${JSON.stringify(versions.baseline)}, ` : '';
+        lines.push(`      ${field}: ${baseline}Taiga ${JSON.stringify(versions.taiga)}, manifest ${JSON.stringify(versions.manifest)}`);
+      }
+    }
+  }
   if (plan.orphans.length > 0) {
     lines.push('Orphans (tagged src: on Taiga but not in the manifest; never deleted):');
     lines.push(...plan.orphans.map((orphan) => `  ! orphan ${orphan.type} ${orphan.key}  (#${orphan.ref}, id ${orphan.id})  "${orphan.subject}"`));
@@ -432,6 +623,14 @@ function formatLeftovers(plan: Plan): string[] {
       ...plan.staleLinks.map(
         (link) =>
           `  ! stale link story ${link.key}  (#${link.ref}, id ${link.id}) -> epic ${link.epic}  (#${link.epicRef}, id ${link.epicId}): never removed; unlink it on Taiga if obsolete`,
+      ),
+    );
+  }
+  if (plan.handMadeChildren.length > 0) {
+    lines.push('Hand-made children (on Taiga under a backlog item, not in the manifest; left untouched):');
+    lines.push(
+      ...plan.handMadeChildren.map(
+        (child) => `  - hand-made ${child.type} #${child.ref} (id ${child.id})  "${child.subject}"  in ${child.type === 'task' ? 'story' : 'epic'} ${child.parent}`,
       ),
     );
   }
@@ -455,12 +654,12 @@ function reviewGate(run: Run, plan: { changes: boolean }, text: () => string): n
   emit(run, plan, text);
   if (!plan.changes) return ExitCode.Ok;
   if (review) return ExitCode.Changes;
-  throw new UsageError(`refusing to ${options.command} without --yes; review the operations above, then re-run with --yes`);
+  throw new UsageError(`refusing to ${commandName(options)} without --yes; review the operations above, then re-run with --yes`);
 }
 
 /**
- * Validates one project's manifests, or every project under the manifests root, and their review.yaml (whose keys are
- * checked against a valid backlog). Offline: no env needed.
+ * Validates one project's manifests, or every project under the manifests root, and their review.yaml (its keys only
+ * for their format: an entry for an item the backlog no longer declares is ignored). Offline: no env needed.
  */
 async function runValidate(run: Run): Promise<number> {
   const { options, env, cwd } = run;
@@ -483,10 +682,8 @@ async function runValidate(run: Run): Promise<number> {
     }
     const reviewPath = join(dir, REVIEW_FILE);
     if (!existsSync(reviewPath)) continue;
-    // Review keys are only checked against a valid backlog; an invalid one already reports its issues.
-    const backlog = project?.manifests.backlog;
     try {
-      await loadReview(reviewPath, backlog ? reviewKeys(backlog) : undefined);
+      await loadReview(reviewPath);
       project?.files.push(reviewPath);
     } catch (error) {
       if (!(error instanceof ManifestError)) throw error;
@@ -519,6 +716,21 @@ async function runPreview(run: Run): Promise<number> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, output);
   emit(run, { out: relative(cwd, path) }, () => `Preview written to ${relative(cwd, path)}\n`);
+  return ExitCode.Ok;
+}
+
+/** `review`: record a verdict, a review comment or a resolved comment in review.yaml. Offline: no env needed. */
+async function runReview(run: Run): Promise<number> {
+  const { options, env, cwd } = run;
+  const slug = options.project!;
+  const result = await recordReview(projectLayout(slug, env, cwd).dir, slug, options.review!);
+  emit(run, result, () => {
+    const { verdict, comments } = result.review;
+    const lines = [`${result.key}: ${verdict === undefined ? 'no verdict' : verdict === 'approved' ? 'approved' : 'changes requested'}`];
+    if (result.comment) lines.push(`  comment ${result.comment.id}: ${result.comment.resolved ? `resolved, reply: ${result.comment.reply}` : result.comment.text}`);
+    lines.push(`  ${comments.filter((comment) => !comment.resolved).length} open comment(s). Written to ${REVIEW_FILE}; run taigent validate --project ${slug}.`);
+    return `${lines.join('\n')}\n`;
+  });
   return ExitCode.Ok;
 }
 
@@ -568,23 +780,166 @@ async function runUpload(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/**
- * `init`: install Taigent into the repository at the working directory, from the running taigent. Offline; exit 3 for
- * a dry run with changes.
- */
-async function runInit(run: Run): Promise<number> {
-  const { options, cwd } = run;
-  const report = await initRepository(cwd, { dryRun: options.dryRun });
-  const count = (status: InitStatus) => report.files.filter((file) => file.status === status).length;
+const clientLabel = (name: string) => USER_CLIENTS.find((client) => client.name === name)?.label ?? name;
+
+/** `client` as one line of setup's text output. */
+function formatSetupClient(client: SetupClient): string {
+  const label = clientLabel(client.name);
+  return client.status === 'configured' ? `${label}: skills in ${client.skills}, MCP server in ${client.mcp}` : `${label}: skipped (${client.reason})`;
+}
+
+/** The text of setup's files: the clients (`taigent setup`), each changed file, then the counts (`dryRun`: of what it would do). */
+function formatSetupFiles(report: SetupReport, dryRun: boolean): string[] {
+  const count = (status: SetupStatus) => report.files.filter((file) => file.status === status).length;
   const changes = report.files.some(({ status }) => status !== 'unchanged');
-  emit(run, report, () => {
-    const lines = report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`);
-    const counts = `${count('created')} created, ${count('updated')} updated, ${count('removed')} removed, ${count('unchanged')} unchanged`;
-    if (options.dryRun) lines.push(changes ? `Dry run, nothing written. Files that would change: ${counts}.` : `Taigent is up to date (${counts}).`);
-    else lines.push(`Taigent installed: ${counts}.`, 'Next: npm install, then npx taigent login in your own terminal.');
-    return `${lines.join('\n')}\n`;
-  });
-  return options.dryRun && changes ? ExitCode.Changes : ExitCode.Ok;
+  const counts = `${count('created')} created, ${count('updated')} updated, ${count('removed')} removed, ${count('unchanged')} unchanged`;
+  const lines = (report.clients ?? []).map(formatSetupClient);
+  lines.push(...report.files.filter(({ status }) => status !== 'unchanged').map(({ path, status }) => `${path}: ${status}`));
+  if (report.clients && report.files.length === 0) lines.push(`No client found (${USER_CLIENTS.map(({ label }) => label).join(', ')}): install one, then run taigent setup again.`);
+  if (dryRun) lines.push(changes ? `Dry run, nothing written, no login or check. Files that would change: ${counts}.` : `Taigent is up to date (${counts}). Dry run: no login or check.`);
+  else if (report.files.length > 0) lines.push(`Taigent installed: ${counts}.`);
+  return lines;
+}
+
+/** Where setup found the Taiga credentials: TAIGA_* (as resolveAuth), the login of `taigent login`, or none. */
+type LoginSource = 'stored' | 'environment' | 'missing';
+/** One step of setup after the files: done (with its result), failed (exit 5 or 2), or not run and why. */
+type SetupCheck<Result> = ({ status: 'ok' } & Result) | { status: 'failed'; error: string } | { status: 'skipped'; reason: string };
+type SetupLogin = { source: LoginSource } & SetupCheck<{ apiUrl: string; user: { id: number; username: string } }>;
+type SetupMcp = SetupCheck<{ projects: number }>;
+
+const SETUP_LOGIN_HINT = 'run `taigent login` in your own terminal (it asks for your password there, never through an agent), then run taigent setup again';
+
+async function loginSource(env: NodeJS.ProcessEnv): Promise<LoginSource> {
+  if (env.TAIGA_TOKEN || (env.TAIGA_USERNAME && env.TAIGA_PASSWORD)) return 'environment';
+  return (await hasStoredLogin(env)) ? 'stored' : 'missing';
+}
+
+/** A failed setup step: its message and exit code. Other errors are not a check result and propagate. */
+function checkFailure(error: unknown): { error: string; code: ExitCode } {
+  if (error instanceof TaigaAuthError) return { error: hintedAuthError(error).message, code: ExitCode.Taiga };
+  if (error instanceof TaigaError || error instanceof McpCheckError) return { error: error.message, code: ExitCode.Taiga };
+  if (error instanceof LoginError || error instanceof UsageError || error instanceof McpStartError) return { error: error.message, code: ExitCode.Usage };
+  throw error;
+}
+
+/**
+ * Setup's login step: without credentials, the `taigent login` flow in a terminal, else the hint to log in (not a
+ * failure); then the check of the credentials, as `whoami`. `say` prints the text that goes before the prompts.
+ */
+async function setupLogin(run: Run, say: (lines: string[]) => void): Promise<{ login: SetupLogin; code: ExitCode }> {
+  let source = await loginSource(run.env);
+  if (source === 'missing') {
+    if (!isTerminal()) return { login: { source, status: 'skipped', reason: `not logged in to Taiga: ${SETUP_LOGIN_HINT}` }, code: ExitCode.Ok };
+    say(['Not logged in to Taiga: running taigent login.']);
+    try {
+      await interactiveLogin(run);
+      source = 'stored';
+    } catch (error) {
+      if (error instanceof PromptCancelled) throw error;
+      const failure = checkFailure(error);
+      return { login: { source, status: 'failed', error: failure.error }, code: failure.code };
+    }
+  }
+  try {
+    const { auth, me } = await whoami(run);
+    return { login: { source, status: 'ok', apiUrl: auth.apiUrl, user: { id: me.id, username: me.username } }, code: ExitCode.Ok };
+  } catch (error) {
+    const failure = checkFailure(error);
+    return { login: { source, status: 'failed', error: failure.error }, code: failure.code };
+  }
+}
+
+/**
+ * Setup's MCP check, after a login check that passed: starts the `taiga` server entry setup wrote, as a client would
+ * (`mcpCheckTarget`), and calls `listProjects`. A command that cannot start fails with its fix (exit 2: nothing reached
+ * Taiga); a project whose `node_modules/taigent` is not installed yet is not checked.
+ */
+async function setupMcpCheck(run: Run, login: SetupLogin): Promise<{ mcp: SetupMcp; code: ExitCode }> {
+  if (login.status !== 'ok') return { mcp: { status: 'skipped', reason: login.status === 'failed' ? 'the login check failed' : 'no login' }, code: ExitCode.Ok };
+  const target = await mcpCheckTarget(run.options.setupScope ?? 'user', run.cwd);
+  if ('skipped' in target) return { mcp: { status: 'skipped', reason: target.skipped }, code: ExitCode.Ok };
+  try {
+    return { mcp: { status: 'ok', ...(await checkMcp({ ...target.launch, cwd: target.cwd, env: run.env })) }, code: ExitCode.Ok };
+  } catch (error) {
+    const failure = checkFailure(error instanceof McpStartError ? new McpStartError(`${error.message}; ${target.fix}`) : error);
+    return { mcp: { status: 'failed', error: failure.error }, code: failure.code };
+  }
+}
+
+function formatSetupLogin(login: SetupLogin): string {
+  if (login.status === 'ok') {
+    const from = login.source === 'stored' ? 'the stored login' : 'the TAIGA_* variables';
+    return `Login: ${login.user.username} (id ${login.user.id}) on ${login.apiUrl}, from ${from}.`;
+  }
+  if (login.status === 'failed') return `Login check failed: ${login.error}`;
+  return `Login: ${login.reason}.`;
+}
+
+function formatSetupMcp(mcp: SetupMcp): string {
+  if (mcp.status === 'ok') return `MCP server: ok (taigent mcp answered listProjects with ${mcp.projects} project(s)).`;
+  if (mcp.status === 'failed') return `MCP check failed: ${mcp.error}`;
+  return `MCP server: not checked (${mcp.reason}).`;
+}
+
+/** The lines of what setup found installed: one per skills directory with skills older than taigent, then the duplicates grouped per client, kind and place. */
+function formatInstallCheck({ taigentVersion, outdatedSkills, duplicates }: InstallCheck): string[] {
+  const lines: string[] = [];
+  for (const [dir, skills] of Map.groupBy(outdatedSkills, ({ path }) => path.slice(0, path.lastIndexOf('/')))) {
+    const fix = skills[0]!.scope === 'user' ? 'run taigent setup' : 'run taigent setup --project here';
+    const list = skills.map(({ path, version }) => `${path.slice(dir.length + 1)} (${version ?? 'no version'})`).join(', ');
+    lines.push(`Older than taigent ${taigentVersion} in ${dir}: ${list}; ${fix} to update them.`);
+  }
+  if (duplicates.length === 0) return lines;
+  lines.push('Installed both for you and in this project (nothing was removed; taiga-setup says how to keep one):');
+  const place = (path: string, kind: string) => (kind === 'skill' ? path.slice(0, path.lastIndexOf('/')) : path);
+  const groups = Map.groupBy(duplicates, (d) => [d.client, d.kind, place(d.user, d.kind), place(d.project, d.kind), d.winner, d.rule].join('\0'));
+  const outcome = { user: 'the user copy wins', project: 'the project copy wins', both: 'both are used' };
+  for (const group of groups.values()) {
+    const { client, kind, user, project, winner, rule } = group[0]!;
+    const what = kind === 'skill' ? `skills ${group.map(({ name }) => name).join(', ')}` : 'MCP server taiga';
+    lines.push(`  ${clientLabel(client)}: ${what} in ${place(user, kind)} and ${place(project, kind)}: ${outcome[winner]} (${rule}).`);
+  }
+  return lines;
+}
+
+/**
+ * `setup`: install Taigent from the running taigent into the user config of each client found in the home directory
+ * (`os.homedir()`: HOME, or USERPROFILE on Windows), or with `--project` into the repository at the working directory.
+ * Then, unless it is a dry run (exit 3 with changes): the login step (`setupLogin`) and the MCP check
+ * (`setupMcpCheck`); a check that fails exits 5 (Taiga or MCP) or 2 (credential store, variables, a server command
+ * that cannot start). Last (in a dry run too), `checkInstall` for both scopes: skills older than this taigent, and
+ * duplicates.
+ */
+async function runSetup(run: Run): Promise<number> {
+  const { options, cwd, env } = run;
+  const user = options.setupScope === 'user';
+  const report = user ? await setupUser(homedir(), { dryRun: options.dryRun }) : await setupProject(cwd, { dryRun: options.dryRun });
+  const installed = await checkInstall(homedir(), cwd);
+  const lines = formatSetupFiles(report, options.dryRun);
+
+  if (options.dryRun) {
+    const reason = 'dry run: no login and no check';
+    const login = { source: await loginSource(env), status: 'skipped', reason };
+    emit(run, { ...report, login, mcp: { status: 'skipped', reason }, ...installed }, () => `${[...lines, ...formatInstallCheck(installed)].join('\n')}\n`);
+    return report.files.some(({ status }) => status !== 'unchanged') ? ExitCode.Changes : ExitCode.Ok;
+  }
+  // Text goes out step by step: the login flow prompts after the file report.
+  const say = (text: string[]) => !options.json && print(run, `${text.join('\n')}\n`);
+  say(lines);
+  const { login, code: loginCode } = await setupLogin(run, say);
+  say([formatSetupLogin(login)]);
+  const { mcp, code: mcpCode } = await setupMcpCheck(run, login);
+  say([formatSetupMcp(mcp), ...formatInstallCheck(installed)]);
+
+  const code = loginCode === ExitCode.Ok ? mcpCode : loginCode;
+  const logIn = login.status === 'skipped' ? ['taigent login in your own terminal', 'taigent setup again'] : [];
+  const next = [...(user ? [] : ['npm install']), ...logIn, 'restart your agents: they load skills and MCP servers when they start'];
+  if (code === ExitCode.Ok) say([`Next: ${next.join(', then ')}.`]);
+  if (options.json) print(run, `${JSON.stringify({ ...report, login, mcp, ...installed }, null, 2)}\n`);
+  if (login.status === 'failed') printError(run.secrets, `taigent: setup: the login check failed: ${login.error}\n`);
+  if (mcp.status === 'failed') printError(run.secrets, `taigent: setup: the MCP check failed: ${mcp.error}\n`);
+  return code;
 }
 
 /** `skills sync|check`: keep the Claude copies of the Taigent skills identical to their source. Offline. */
@@ -621,33 +976,104 @@ async function runSkills(run: Run): Promise<number> {
   }
 }
 
-/** `plan` and `apply`: compare backlog.yaml with Taiga, then (apply --yes) run the plan. */
-async function runPlan(run: Run): Promise<number> {
+/**
+ * Reads backlog.yaml, Taiga and state.json and builds the plan, for `plan`/`apply` and `pull`. Errors only known once
+ * Taiga is read become manifest issues of backlog.yaml.
+ */
+async function readPlan(run: Run): Promise<{ layout: ProjectLayout; backlog: Backlog; client: TaigaClient; remote: RemoteState; planned: PlannedBacklog }> {
   const slug = run.options.project!;
   const layout = projectLayout(slug, run.env, run.cwd);
   const backlog = (await loadManifests(layout.dir, slug, { require: ['backlog'] })).manifests.backlog!;
   const client = await connectTaiga(run);
   const remote = await readBacklogRemote(backlog, client, slug);
-  let plan: Plan;
+  const state = await readState(layout.state, remote.project);
   try {
-    plan = buildPlan(backlog, remote);
+    return { layout, backlog, client, remote, planned: buildPlan(backlog, remote, state) };
   } catch (error) {
+    if (error instanceof RefMismatchError) {
+      throw new ManifestError(error.mismatches.map(({ path, message }) => ({ file: layout.backlog, path, rule: 'item-ref', message })));
+    }
     if (error instanceof LegacyStoryCreateError) throw legacyStoryCreatesError(layout.backlog, error.stories);
     if (error instanceof UnknownIssueValueError) throw unknownIssueValuesError(layout.backlog, error.values);
     throw error;
   }
+}
 
-  const gate = reviewGate(run, plan, () =>
+/**
+ * `plan` and `apply`: compare backlog.yaml with Taiga and the baselines of state.json, then (apply --yes) run the
+ * plan. Any blocked item makes them exit 6; `apply --yes` then refuses before writing anything.
+ */
+async function runPlan(run: Run): Promise<number> {
+  const { options } = run;
+  const { layout, client, remote, planned } = await readPlan(run);
+  const { plan } = planned;
+  const text = () =>
     formatPlanText(`Plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describePlanOperation, {
       empty: 'manifest has no items',
       matches: 'the manifest',
       extra: formatLeftovers(plan),
-    }),
-  );
+      blocked: plan.blocked.length,
+    });
+
+  if (plan.blocked.length > 0) {
+    if (options.command === 'apply' && options.yes && !options.dryRun) throw new BlockedPlanError(plan.blocked);
+    emit(run, plan, text);
+    return ExitCode.Blocked;
+  }
+  const gate = reviewGate(run, plan, text);
   if (gate !== undefined) return gate;
 
-  const report = await executePlan(plan, client, layout.state, remote.customAttributes);
+  const report = await executePlan(planned, client, layout.state, remote.customAttributes);
   emit(run, report, () => formatReportText(`Applied to project ${report.project.slug} (id ${report.project.id}):`, report, describeAppliedOperation));
+  return ExitCode.Ok;
+}
+
+/**
+ * `adopt`: writes the hand-made item `--ref` of the project into backlog.yaml as backlog item `--key`. Reads Taiga,
+ * writes the manifest only; plan then proposes the `adopt` action. The project directory is validated first.
+ */
+async function runAdopt(run: Run): Promise<number> {
+  const { options } = run;
+  const slug = options.project!;
+  const layout = projectLayout(slug, run.env, run.cwd);
+  try {
+    await loadManifests(layout.dir, slug);
+  } catch (error) {
+    // A project directory without any manifest yet is fine: adopt writes the first backlog.yaml.
+    if (!(error instanceof ManifestError) || !error.issues.every((issue) => issue.rule === 'file-exists')) throw error;
+  }
+  const adopted = await adoptItem(layout.dir, slug, await connectTaiga(run), { ref: options.ref!, key: options.key!, ...(options.parent && { parent: options.parent }) });
+  emit(
+    run,
+    adopted,
+    () =>
+      `Adopted ${adopted.type} #${adopted.ref} (id ${adopted.id}) as ${adopted.key} at ${adopted.path} of ${relative(run.cwd, layout.backlog)}.\n` +
+      `Run taigent plan --project ${slug}: it proposes adopting it, and apply adds its src:${adopted.key.toLowerCase()} tag.\n`,
+  );
+  return ExitCode.Ok;
+}
+
+/**
+ * `pull`: writes Taiga's values of `--key`, or of every blocked item, into backlog.yaml and sets their baseline in
+ * state.json (`--keep-manifest`: the baseline only). Reads Taiga, writes local files only.
+ */
+async function runPull(run: Run): Promise<number> {
+  const { options } = run;
+  // backlog.yaml as read before Taiga: pull refuses to write over an edit made while it reads Taiga.
+  const { digest } = await readBacklogFile(projectLayout(options.project!, run.env, run.cwd).dir);
+  const { layout, backlog, planned } = await readPlan(run);
+  const report = await pullItems(layout, backlog, planned, { key: options.key, keepManifest: options.keepManifest, baseDigest: digest });
+  const { slug } = report.project;
+  emit(run, report, () => {
+    if (report.pulled.length === 0) return `Nothing to pull: no item of project ${slug} is blocked.\n`;
+    const lines = report.pulled.map(
+      (item) => `  ${item.type} ${item.key} #${item.ref}${item.kind ? ` (${BLOCKED_LABEL[item.kind]})` : ''}: ${item.fields.join(', ') || 'no difference'}`,
+    );
+    const into = report.keepManifest
+      ? `backlog.yaml left as it is; the next apply writes its values. Baselines set to Taiga's values in ${relative(run.cwd, layout.state)}:`
+      : `into ${relative(run.cwd, layout.backlog)}, baselines set in ${relative(run.cwd, layout.state)}:`;
+    return `Pulled from project ${slug} (id ${report.project.id}) ${into}\n${lines.join('\n')}\nRun taigent plan --project ${slug} to check.\n`;
+  });
   return ExitCode.Ok;
 }
 
@@ -684,6 +1110,17 @@ async function runReport(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
+/** `snapshot`: the backlog on Taiga, written to snapshot.json. Read-only on Taiga. */
+async function runSnapshot(run: Run): Promise<number> {
+  const { options, env, cwd } = run;
+  const snapshot = await readSnapshot(await connectTaiga(run), options.project!);
+  const { snapshot: path } = projectLayout(options.project!, env, cwd);
+  await writeSnapshot(path, snapshot);
+  const summary = summarizeSnapshot(snapshot, relative(cwd, path));
+  emit(run, summary, () => formatSnapshotText(options.project!, summary));
+  return ExitCode.Ok;
+}
+
 /**
  * `metrics`: the dashboards' metrics of the project, from one read of Taiga (with each item's history, kept in
  * --cache-dir when given) and its manifests. Read-only on Taiga.
@@ -694,10 +1131,47 @@ async function runMetrics(run: Run): Promise<number> {
   const { dir } = projectLayout(slug, env, cwd);
   const releases = await readReleases(dir, slug);
   const cacheDir = options.cacheDir === undefined ? undefined : resolve(cwd, options.cacheDir);
-  const snapshot = await readSnapshot(await connectTaiga(run), slug, cacheDir);
+  const snapshot = await readMetricsSnapshot(await connectTaiga(run), slug, cacheDir);
   const backlog = await readBacklogData(dir, slug);
   const report = computeMetrics(snapshot, { releases, backlog }, new Date());
   emit(run, report, () => formatMetricsText(report));
+  return ExitCode.Ok;
+}
+
+/**
+ * `sprint list|create|add`: list the sprints with their stories, or create a sprint / put stories
+ * into one through the review gate (`--yes` writes, `--dry-run` only plans), like bootstrap and upload.
+ */
+async function runSprint(run: Run): Promise<number> {
+  const { options } = run;
+  const slug = options.project!;
+  const client = await connectTaiga(run);
+  if (options.sprintAction === 'list') {
+    const list = await readSprints(client, slug);
+    emit(run, list, () => formatSprintListText(list));
+    return ExitCode.Ok;
+  }
+  if (options.sprintAction === 'create') {
+    const plan = await planSprintCreate(client, slug, { name: options.name!, start: options.from!, finish: options.to! });
+    const gate = reviewGate(run, plan, () =>
+      formatPlanText(`Sprint plan for project ${plan.project.slug} (id ${plan.project.id}):`, plan, describeSprintCreateOperation, {
+        empty: 'nothing to create',
+        matches: 'the sprint',
+      }),
+    );
+    if (gate !== undefined) return gate;
+    const report = await executeSprintCreate(plan, client);
+    emit(run, report, () => formatReportText(`Sprint of project ${report.project.slug} (id ${report.project.id}):`, report, describeSprintCreateOperation));
+    return ExitCode.Ok;
+  }
+  const plan = await planSprintAdd(client, slug, options.name!, options.refs!);
+  const title = `into sprint "${plan.sprint.name}" (id ${plan.sprint.id}) of project ${plan.project.slug}`;
+  const gate = reviewGate(run, plan, () =>
+    formatPlanText(`Plan: put user stories ${title}:`, plan, describeSprintAddOperation, { empty: 'no stories', matches: 'the request: every story is in the sprint' }),
+  );
+  if (gate !== undefined) return gate;
+  const report = await executeSprintAdd(plan, client);
+  emit(run, report, () => formatReportText(`Put user stories ${title}:`, report, describeSprintAddOperation));
   return ExitCode.Ok;
 }
 
@@ -764,15 +1238,22 @@ function loginApiUrl(raw: string): string {
   return normalizeApiUrl(`${url.origin}${url.pathname === '/' ? '/api/v1' : url.pathname}`);
 }
 
-/**
- * `login`: asks for the password in the user's terminal and stores a token instead (src/login.ts). The URL and the
- * username come from TAIGA_API_URL / TAIGA_USERNAME when set; the password is never read from the environment.
- */
+/** `login`: refused without a terminal (stdin and stdout), else `interactiveLogin`. */
 async function runLogin(run: Run): Promise<number> {
-  const { env, options, secrets } = run;
   if (!isTerminal()) {
     throw new LoginError('taigent login reads your password from a terminal: run `npx taigent login` in your own terminal window, not through an agent or a pipe');
   }
+  await interactiveLogin(run);
+  return ExitCode.Ok;
+}
+
+/**
+ * The `taigent login` flow (also run by `setup` in a terminal): asks for the password in the user's terminal and
+ * stores a token instead (src/login.ts). The URL and the username come from TAIGA_API_URL / TAIGA_USERNAME when set;
+ * the password is never read from the environment.
+ */
+async function interactiveLogin(run: Run): Promise<void> {
+  const { env, options, secrets } = run;
   if (env.TAIGA_API_URL) print(run, `Taiga API URL: ${env.TAIGA_API_URL} (from TAIGA_API_URL)\n`);
   const apiUrl = loginApiUrl(env.TAIGA_API_URL || (await ask('Taiga API URL (e.g. https://taiga.example.com/api/v1): ')));
   if (env.TAIGA_USERNAME) print(run, `Username: ${env.TAIGA_USERNAME} (from TAIGA_USERNAME)\n`);
@@ -796,7 +1277,12 @@ async function runLogin(run: Run): Promise<number> {
       ? `an application token of Application ${stored.record.application}`
       : 'a refresh token (log in again when taigent has not been used for its lifetime, 8 days by default)';
   print(run, `Logged in to ${apiUrl} as ${username}.\nStored ${what} in ${stored.storeLabel}; your password was not stored.\n`);
-  return ExitCode.Ok;
+}
+
+/** Which Taiga user the credentials of this run act as, checked with `GET /users/me` (`whoami`, setup's login check). */
+async function whoami(run: Run): Promise<{ auth: Auth; me: { id: number; username: string } }> {
+  const auth = await resolveAuth(run);
+  return { auth, me: await (await connectTaiga(run, auth)).getMe() };
 }
 
 /** `logout`: deletes the stored login; an application token is deleted on Taiga too. */
@@ -815,10 +1301,9 @@ async function runLogout(run: Run): Promise<number> {
   return ExitCode.Ok;
 }
 
-/** `whoami`: which Taiga user the credentials of this run act as, checked with `GET /users/me`. */
+/** `whoami`: which Taiga user the credentials of this run act as, and where the credentials come from. */
 async function runWhoami(run: Run): Promise<number> {
-  const auth = await resolveAuth(run);
-  const me = await (await connectTaiga(run, auth)).getMe();
+  const { auth, me } = await whoami(run);
   const [credentials, described] =
     auth.source === 'login'
       ? [{ source: 'login', method: auth.session.record.method, store: auth.session.storeLabel }, `stored login (${auth.session.record.method}, in ${auth.session.storeLabel})`]
@@ -853,12 +1338,14 @@ async function runMcp(run: Run): Promise<number> {
 
 function dispatch(run: Run): Promise<number> {
   switch (run.options.command) {
-    case 'init':
-      return runInit(run);
+    case 'setup':
+      return runSetup(run);
     case 'validate':
       return runValidate(run);
     case 'preview':
       return runPreview(run);
+    case 'review':
+      return runReview(run);
     case 'bootstrap':
       return runBootstrap(run);
     case 'upload':
@@ -871,8 +1358,12 @@ function dispatch(run: Run): Promise<number> {
       return runProjects(run);
     case 'report':
       return runReport(run);
+    case 'snapshot':
+      return runSnapshot(run);
     case 'metrics':
       return runMetrics(run);
+    case 'sprint':
+      return runSprint(run);
     case 'status':
       return runStatus(run);
     case 'comment':
@@ -884,6 +1375,10 @@ function dispatch(run: Run): Promise<number> {
     case 'plan':
     case 'apply':
       return runPlan(run);
+    case 'pull':
+      return runPull(run);
+    case 'adopt':
+      return runAdopt(run);
     case 'login':
       return runLogin(run);
     case 'logout':
@@ -893,6 +1388,12 @@ function dispatch(run: Run): Promise<number> {
     case 'mcp':
       return runMcp(run);
   }
+}
+
+/** `error` naming what to fix: the variable or the stored login Taiga rejected. */
+function hintedAuthError(error: TaigaAuthError): TaigaAuthError {
+  const hint = { token: 'check TAIGA_TOKEN', password: 'check TAIGA_USERNAME and TAIGA_PASSWORD', login: LOGIN_HINT }[error.credential];
+  return new TaigaAuthError(error.credential, `${error.message} (${hint})`, error.status);
 }
 
 function fail(secrets: Secrets, code: ExitCode, kind: string, error: Error, json: boolean, extra: Record<string, unknown> = {}): number {
@@ -915,9 +1416,7 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
       process.stdout.write(`${USAGE}\n`);
       return ExitCode.Ok;
     }
-    const run = { options, env, cwd, secrets };
-    refuseReadOnlyWrite(run);
-    return await dispatch(run);
+    return await dispatch({ options, env, cwd, secrets });
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(json ? '' : `${USAGE}\n\n`);
@@ -934,18 +1433,29 @@ export async function main(argv: string[], processEnv: NodeJS.ProcessEnv = proce
     if (error instanceof UploadTooLargeError) {
       return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null, file: error.file });
     }
+    if (error instanceof BlockedPlanError) return fail(secrets, ExitCode.Blocked, 'blocked', error, json, { blocked: error.blocked });
+    if (error instanceof PullError) {
+      return fail(secrets, ExitCode.Validation, 'pull', error, json, { key: error.key, ...(error.description !== undefined && { description: error.description }) });
+    }
     if (error instanceof LoginError) return fail(secrets, ExitCode.Usage, 'login', error, json);
-    if (error instanceof ReadOnlyError) return fail(secrets, ExitCode.Usage, 'read-only', error, json);
     if (error instanceof PromptCancelled) return fail(secrets, ExitCode.Usage, 'usage', new UsageError('login cancelled'), json);
     if (error instanceof ProjectNotFoundError) return fail(secrets, ExitCode.Usage, 'project', error, json);
-    if (error instanceof TicketError || error instanceof NotifyConfigError || error instanceof InitError || error instanceof HistoryCacheError) {
+    if (
+      error instanceof TicketError ||
+      error instanceof SprintError ||
+      error instanceof NotifyConfigError ||
+      error instanceof SetupError ||
+      error instanceof HistoryCacheError ||
+      error instanceof AdoptError ||
+      error instanceof PullKeyError ||
+      error instanceof ReviewError ||
+      error instanceof ManifestChangedError
+    ) {
       return fail(secrets, ExitCode.Usage, 'usage', error, json);
     }
     if (error instanceof TelegramError) return fail(secrets, ExitCode.Taiga, 'telegram', error, json);
     if (error instanceof TaigaAuthError) {
-      const hint = { token: 'check TAIGA_TOKEN', password: 'check TAIGA_USERNAME and TAIGA_PASSWORD', login: LOGIN_HINT }[error.credential];
-      const hinted = new TaigaAuthError(error.credential, `${error.message} (${hint})`, error.status);
-      return fail(secrets, ExitCode.Taiga, 'taiga', hinted, json, { status: error.status ?? null });
+      return fail(secrets, ExitCode.Taiga, 'taiga', hintedAuthError(error), json, { status: error.status ?? null });
     }
     if (error instanceof TaigaError) return fail(secrets, ExitCode.Taiga, 'taiga', error, json, { status: error.status ?? null });
     printError(secrets, `taigent: internal error: ${error instanceof Error ? error.stack : String(error)}\n`);

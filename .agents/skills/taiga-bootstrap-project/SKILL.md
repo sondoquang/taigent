@@ -11,7 +11,7 @@ Create a Taiga project, or complete an existing one, from `taiga/<slug>/project.
 
 ## 0. Check the setup
 
-Run every command from the **project root**, the directory holding `package.json` and the manifests root `taiga/` (created by this skill when absent). Its `package.json` has `taigent` as `name` (the taigent repository) or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The **taigent root**, holding the docs cited below, is the project root when `name` is `taigent`, else `node_modules/taigent/`.
+Run every command from the **project root**, the directory holding the manifests root `taiga/` (created by this skill when absent). `npx taigent` runs the taigent the project pins, else the global one (`npm i -g taigent`); when npx cannot run taigent at all, stop and run the `taiga-setup` skill. The **taigent root**, holding the docs cited below, is the project root when its `package.json` has `taigent` as `name` (the taigent repository), else `node_modules/taigent/` when the project installs taigent, else the global install (the `taigent` folder in the directory `npm root -g` prints).
 
 Taiga MCP tool names below are those of the `taiga` server; your agent prefixes them (Claude Code: `mcp__taiga__listProjects`).
 
@@ -24,6 +24,7 @@ Read `docs/cli.md` section "Bootstrap" (the `project.yaml` schema; fields it doe
 - **`taiga/<slug>/project.yaml` exists**: read it and check it against what the user asked for. Edit only the lines that must change.
 - **No manifest yet**: gather from the user what you cannot derive (the name, a one-line description, the template, members and their roles), then write `taiga/<slug>/project.yaml` per those conventions.
 - To see whether the project already exists, use `listProjects` (and `getProject` for details); without these tools, rely on the dry run of step 2. An existing slug is completed, not duplicated; bootstrap needs the user to be its admin.
+- **Hand-made project** (made in Taiga before taigent, name not `<A> - <B>` or slug not derived from it): copy its exact name and slug from Taiga and add `existing: true`. The name and slug rules then do not apply, and bootstrap refuses (exit 5, nothing written) when no visible project has that slug instead of creating one. Never rename the project to satisfy the conventions.
 
 Then run `npx taigent validate --project <slug>`. Exit 4 prints each problem as `file: path: message [rule]`; fix every one and run it again. Done when it exits 0.
 

@@ -6,15 +6,11 @@ allowed-tools: Bash(npx taigent tickets *) PowerShell(npx taigent tickets *)
 
 # My tickets
 
-Report the **Period's tickets** (`GLOSSARY.md`) of the user the `taigent` CLI logs in as: every **Planned ticket** (`Ready`, `In progress`, `Ready for test`) plus the ones closed in `Done` during the period, each with its progress group, **Due status** and **Effort**, then the **Plan** of their **Remaining work** by **Working day**, its warnings and the **Re-plan** of the tickets **At risk**. A **Ticket** is a user story; tasks and issues are not tickets. The read-only `npx taigent tickets` computes everything; this skill only lays its JSON out (`docs/cli.md` §Tickets holds the contract, in the taigent root: the project root when its `package.json` has `taigent` as `name`, else `node_modules/taigent/`).
+Report the **Period's tickets** (`GLOSSARY.md`) of the user the `taigent` CLI logs in as: every **Planned ticket** (`Ready`, `In progress`, `Ready for test`) plus the ones closed in `Done` during the period, each with its progress group, **Due status** and **Effort**, then the **Plan** of their **Remaining work** by **Working day**, its warnings and the **Re-plan** of the tickets **At risk**. A **Ticket** is a user story; tasks and issues are not tickets. The read-only `npx taigent tickets` computes everything; this skill only lays its JSON out (`docs/cli.md` §Tickets holds the contract, in the taigent root that `taiga-setup` names).
 
-## 1. Check the setup
+It works from any directory: `npx taigent` runs the taigent the project pins, else the global one (`npm i -g taigent`), and uses the user's stored login (`taigent login`), or `TAIGA_*` variables, on its own.
 
-The project root's `package.json` has `taigent` as `name` or as a dependency; otherwise stop and run the `taiga-setup` skill, since `npx taigent` would fetch an unrelated package from the npm registry. The CLI uses the user's stored login (`taigent login`), or `TAIGA_*` variables, on its own.
-
-Done when `package.json` names `taigent`.
-
-## 2. Pick the period
+## 1. Pick the period
 
 Turn the period into a first and a last day, `YYYY-MM-DD`, in the machine's local time zone:
 
@@ -24,17 +20,17 @@ Turn the period into a first and a last day, `YYYY-MM-DD`, in the machine's loca
 
 Done when you have both days and, where the words were ambiguous, the reading you set aside.
 
-## 3. Run `taigent tickets`
+## 2. Run `taigent tickets`
 
-Run `npx taigent tickets --from <first day> --to <last day> --json`, alone in its own shell call; add `--project <slug>` when the user named one project. Exit 2 or 5: show the error and stop; for `not logged in`, an expired stored login or a refused login, name `taiga-setup` as the fix.
+Run `npx taigent tickets --from <first day> --to <last day> --json`, alone in its own shell call; add `--project <slug>` when the user named one project. Exit 2 or 5: show the error and stop; for `not logged in`, an expired stored login or a refused login, name `taiga-setup` as the fix, and also when npx cannot run taigent at all.
 
 Done when you hold its JSON.
 
-## 4. Report
+## 3. Report
 
 Build the report from the JSON alone: every count, sum, due status, plan hour and order comes from it as printed, and fields it lacks stay out. Write it in the user's language (headings and labels included; progress groups and due status names stay as printed). Dates as `DD/MM`, times in local time. A ticket reads `#<ref>` within its project's section and `<project slug>#<ref>` elsewhere. An effort with `effortSource` `points` reads `<effort>h*`, a null one `—`.
 
-1. **Header**: `# <tickets of> <user.username> — <period>` (e.g. `Tuần 16/11 – 22/11/2026`), then one line: the days (Monday–Sunday for a week), today (`today`), local time, and when it was made (`generatedAt`). The user asked about someone else: say the report covers `user.username` only. The reading set aside in step 2, when there was one.
+1. **Header**: `# <tickets of> <user.username> — <period>` (e.g. `Tuần 16/11 – 22/11/2026`), then one line: the days (Monday–Sunday for a week), today (`today`), local time, and when it was made (`generatedAt`). The user asked about someone else: say the report covers `user.username` only. The reading set aside in step 1, when there was one.
 2. **Summary**, four bullets from `summary`:
    - tickets in total, and their count per progress group (`byProgress`, groups with 0 left out).
    - finished (`finished.total`) with their count per due status, plus `finished.withoutFinishingDay` when not 0; not finished (`notFinished.total`) with their count per due status (statuses with 0 left out).

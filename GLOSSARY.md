@@ -26,12 +26,44 @@ _Avoid_: Ticket (reserved for a user story assigned to you), card
 A bug or other problem planned as a backlog item and filed in Taiga's issues module; it stands apart from the epic → story → task tree.
 _Avoid_: Ticket, bug (when the issue's type is not Bug)
 
+**Hand-made item**:
+An epic, story, task or issue on Taiga that no backlog item is bound to, because someone created it there rather than through Taigent.
+_Avoid_: Legacy item, untracked item
+
+**Adopt**:
+To bind a hand-made item to a new backlog item, so the work on Taiga stays and is managed from then on like the items Taigent created.
+_Avoid_: Import (nothing is copied or created again), claim (means taking a ticket for yourself), link (reserved for an epic's stories)
+
+**Snapshot**:
+A read-only copy of a project's epics and open stories, tasks and issues as they stood on Taiga at one moment, read for context while planning.
+_Avoid_: Mirror, cache, export
+
+**Baseline**:
+The values of a backlog item as Taigent last wrote them to Taiga or took them from it; Taiga and the backlog item are each compared with it to tell who changed what.
+_Avoid_: Cache, last state, snapshot (a snapshot is the whole project as read for planning)
+
+**Remote edit**:
+A change made on Taiga to a backlog item since its baseline, while the backlog item kept its baseline values; Taiga's version wins and the backlog item takes it before anything else is written, unless the user deliberately keeps the backlog item's.
+_Avoid_: Drift, conflict
+
+**Both edited**:
+A backlog item changed both on Taiga and in the backlog since its baseline, differently; the user merges the two before anything is written.
+_Avoid_: Conflict (reserved for Taiga refusing a write because the item changed meanwhile)
+
+**Unknown origin**:
+A backlog item on Taiga with no baseline whose Taiga version differs from the backlog's, so nobody can tell which side changed.
+_Avoid_: Unknown item, untracked item
+
+**Blocked item**:
+A backlog item Taigent leaves untouched until the user settles it: a remote edit, both edited, or unknown origin.
+_Avoid_: Conflict, locked item
+
 **Review**:
 The Business Analyst's or Product Owner's check of the planned backlog items before they are applied to Taiga, kept in the project's `review.yaml` as verdicts and comments per item.
 _Avoid_: Approval (a review is not consent to apply)
 
 **Verdict**:
-A reviewer's decision on one backlog item: approved, or changes requested. Only the reviewer sets it.
+A reviewer's decision on one backlog item: approved, or changes requested. Only the reviewer decides it; an agent records it only on the reviewer's explicit word, never on its own judgment.
 
 **Stale verdict**:
 A verdict given on an earlier version of the item: what apply would write for it has changed since, so it must be reviewed again.
@@ -122,8 +154,12 @@ _Avoid_: Stale tickets (it is about due dates, not about how long a status has s
 
 ### Dashboards
 
+**Dashboard**:
+The metrics of one project reported for a role, on request. It is a report, not a screen.
+_Avoid_: Screen, panel
+
 **Role**:
-What you do on the project, chosen by you: Developer, Product Owner or Business Analyst. It decides which dashboard you see first; it is not your role on the Taiga project.
+What you do on the project, chosen by you: Developer, Product Owner or Business Analyst. It decides which metrics the dashboard reports first; it is not your role on the Taiga project.
 _Avoid_: Taiga role, membership role (those are the project's own role names)
 
 **Bug**:

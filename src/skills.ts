@@ -1,11 +1,13 @@
 // Skills: the Taigent skills (every `taiga-*` skill plus `ask-taigent` and `prd-to-taiga`) have one source,
-// `.agents/skills/` (read by Codex). `.claude/skills/` holds byte-identical copies for Claude Code; `taigent init`
-// copies both from the running package into another repository. Only Taigent skill directories are compared or
-// written; other skills (e.g. the vendored mattpocock ones) are never touched.
+// `.agents/skills/` (read by Codex). `.claude/skills/` holds byte-identical copies for Claude Code. `taigent setup` and
+// `setup --project` copy them from the running package, each `SKILL.md` stamped with that taigent's version
+// (`metadata.taigent-version`, `stampSkillVersion`); the sources and their repository copies carry none. Only Taigent
+// skill directories are compared or written; other skills (e.g. the vendored mattpocock ones) are never touched.
 
-import { cp, readdir, readFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { isFileNotFound } from './guards.ts';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { parse as parseYaml } from 'yaml';
+import { isFileNotFound, isRecord } from './guards.ts';
 
 const SKILL_PREFIX = 'taiga-';
 /** Taigent skills whose names lack the `taiga-` prefix. */
@@ -15,6 +17,13 @@ const UNPREFIXED_SKILLS: readonly string[] = ['ask-taigent', 'prd-to-taiga'];
 export const SKILLS_SOURCE = '.agents/skills';
 /** Generated copy for Claude Code, relative to the repository root. */
 export const SKILLS_TARGET = '.claude/skills';
+
+/** The Agent Skills `metadata` key of the taigent version that installed a skill. */
+const VERSION_KEY = 'taigent-version';
+
+/** What a copy holds for one source file (`file`: its path inside the skill directory); the source bytes by default. */
+export type SkillContent = (file: string, source: Buffer) => Buffer;
+const verbatim: SkillContent = (_file, source) => source;
 
 export interface SkillDifference {
   skill: string;
@@ -57,8 +66,8 @@ export interface SkillsSyncReport {
 /** The source skills directory does not exist under the given root. */
 export class SkillsSourceMissingError extends Error {}
 
-/** Taigent skill directory names under `dir` (empty when `dir` does not exist). */
-async function listSkills(dir: string): Promise<string[]> {
+/** Taigent skill directory names under `dir`, sorted (empty when `dir` does not exist). */
+export async function listSkills(dir: string): Promise<string[]> {
   try {
     const entries = await readdir(dir, { withFileTypes: true });
     return entries
@@ -85,8 +94,8 @@ async function listFiles(dir: string): Promise<string[]> {
   }
 }
 
-/** Every file of `skill` in `sourceDir` or `targetDir`, compared. */
-async function compareSkill(skill: string, sourceDir: string, targetDir: string): Promise<SkillFile[]> {
+/** Every file of `skill` in `sourceDir` or `targetDir`, compared; a source file as `content` makes it. */
+async function compareSkill(skill: string, sourceDir: string, targetDir: string, content: SkillContent): Promise<SkillFile[]> {
   const [sourceFiles, targetFiles] = await Promise.all([listFiles(join(sourceDir, skill)), listFiles(join(targetDir, skill))]);
   const files: SkillFile[] = [];
   for (const file of sourceFiles) {
@@ -95,7 +104,7 @@ async function compareSkill(skill: string, sourceDir: string, targetDir: string)
       continue;
     }
     const [source, target] = await Promise.all([readFile(join(sourceDir, skill, file)), readFile(join(targetDir, skill, file))]);
-    files.push({ skill, file, status: source.equals(target) ? 'same' : 'changed' });
+    files.push({ skill, file, status: content(file, source).equals(target) ? 'same' : 'changed' });
   }
   for (const file of targetFiles) {
     if (!sourceFiles.includes(file)) files.push({ skill, file, status: 'extra' });
@@ -103,25 +112,70 @@ async function compareSkill(skill: string, sourceDir: string, targetDir: string)
   return files;
 }
 
-/** Compares every Taigent skill of `sourceDir` with its copy in `targetDir`, file by file (either may be absent). */
-export async function compareSkillDirs(sourceDir: string, targetDir: string): Promise<SkillDirsComparison> {
+/**
+ * Compares every Taigent skill of `sourceDir` with its copy in `targetDir`, file by file (either may be absent); the
+ * copy of a source file should hold what `content` makes of it (the source bytes by default).
+ */
+export async function compareSkillDirs(sourceDir: string, targetDir: string, content: SkillContent = verbatim): Promise<SkillDirsComparison> {
   const [skills, targetSkills] = await Promise.all([listSkills(sourceDir), listSkills(targetDir)]);
   const names = [...new Set([...skills, ...targetSkills])].sort();
-  const files = (await Promise.all(names.map((skill) => compareSkill(skill, sourceDir, targetDir)))).flat();
+  const files = (await Promise.all(names.map((skill) => compareSkill(skill, sourceDir, targetDir, content)))).flat();
   return { skills, files };
 }
 
 /**
- * Makes every Taigent skill of `targetDir` identical to `sourceDir`, from their comparison: skills with a difference
- * are replaced, skills gone from the source are removed. Other skills are never touched.
+ * Makes every Taigent skill of `targetDir` what `content` makes of `sourceDir` (identical by default), from their
+ * comparison: skills with a difference are replaced, skills gone from the source are removed. Other skills are never
+ * touched.
  */
-export async function copySkills(sourceDir: string, targetDir: string, comparison: SkillDirsComparison): Promise<Omit<SkillsSyncReport, 'skills'>> {
+export async function copySkills(sourceDir: string, targetDir: string, comparison: SkillDirsComparison, content: SkillContent = verbatim): Promise<Omit<SkillsSyncReport, 'skills'>> {
   const outOfSync = [...new Set(comparison.files.filter(({ status }) => status !== 'same').map(({ skill }) => skill))];
   const synced = outOfSync.filter((skill) => comparison.skills.includes(skill));
   const removed = outOfSync.filter((skill) => !comparison.skills.includes(skill));
   for (const skill of outOfSync) await rm(join(targetDir, skill), { recursive: true, force: true });
-  for (const skill of synced) await cp(join(sourceDir, skill), join(targetDir, skill), { recursive: true });
+  for (const { skill, file, status } of comparison.files) {
+    if (status === 'extra' || !synced.includes(skill)) continue;
+    const target = join(targetDir, skill, file);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, content(file, await readFile(join(sourceDir, skill, file))));
+  }
   return { synced, removed };
+}
+
+/** The YAML frontmatter of a `SKILL.md`: the whole `---` block, its line ending and its body. */
+const FRONTMATTER = /^---(\r?\n)([\s\S]*?)\r?\n---(?=\r?\n|$)/;
+
+/**
+ * A skill's `SKILL.md` text with `metadata.taigent-version` set to `version` (a string, as Agent Skills requires) in its
+ * frontmatter: added at the end of the frontmatter, or first in an existing block-style `metadata` map. The sources
+ * carry no version (`test/skills.test.ts`); everything else stays byte for byte, line endings included.
+ */
+export function stampSkillVersion(text: string, version: string): string {
+  const match = FRONTMATTER.exec(text);
+  if (!match) throw new Error('SKILL.md has no YAML frontmatter');
+  const [frontmatter, eol, body] = [match[0], match[1]!, match[2]!];
+  const lines = body.split(/\r?\n/);
+  const entry = `  ${VERSION_KEY}: ${JSON.stringify(version)}`;
+  const metadata = lines.findIndex((line) => /^metadata\s*:/.test(line));
+  if (metadata === -1) lines.push('metadata:', entry);
+  else if (/^metadata\s*:\s*(?:#.*)?$/.test(lines[metadata]!)) lines.splice(metadata + 1, 0, entry);
+  else throw new Error('SKILL.md has a metadata value that is not a block map');
+  return `---${eol}${lines.join(eol)}${eol}---${text.slice(frontmatter.length)}`;
+}
+
+/** The `metadata.taigent-version` of a `SKILL.md` text; undefined when it has none (installed before versions) or no readable frontmatter. */
+export function skillVersion(text: string): string | undefined {
+  const match = FRONTMATTER.exec(text);
+  if (!match) return undefined;
+  let frontmatter: unknown;
+  try {
+    frontmatter = parseYaml(match[2]!);
+  } catch {
+    return undefined;
+  }
+  const metadata = isRecord(frontmatter) ? frontmatter.metadata : undefined;
+  const version = isRecord(metadata) ? metadata[VERSION_KEY] : undefined;
+  return typeof version === 'string' ? version : undefined;
 }
 
 /** `compareSkillDirs` of `<root>/.agents/skills` and `<root>/.claude/skills`; the source must exist. */

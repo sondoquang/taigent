@@ -15,6 +15,7 @@
     "bin/",
     "dist/",
     "docs/cli.md",
+    "docs/headless.md",
     "docs/taiga/",
     "docs/telegram-reply.md",
     ".agents/skills/ask-taigent/",
@@ -29,7 +30,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepare": "npm run build",
+    "prepack": "npm run build",
     "taigent": "node bin/taigent.js",
     "test": "node --test \"test/**/*.test.ts\"",
     "test:live": "node --test \"test/live/*.live.ts\"",

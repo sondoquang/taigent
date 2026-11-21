@@ -8,6 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { errorMessage, isRecord } from '../guards.ts';
 import { ISSUE_VALUE_FIELDS, ITEM_TYPES, type IssueValueField, type ItemType } from '../items.ts';
 import { Secrets } from '../secrets.ts';
+import { mapLimited, TAIGA_CONCURRENCY } from './concurrency.ts';
 
 /** Thrown for any Taiga/network failure. Maps to ExitCode.Taiga. Never contains credentials. */
 export class TaigaError extends Error {
@@ -112,9 +113,17 @@ export interface TaigaItem {
   version: number;
   project: number;
   subject: string;
-  description: string;
+  /**
+   * Undefined when the item was read from a list (`GET /userstories?project=`, …): taiga-back's list serializers
+   * leave the description out, only the detail (`GET /userstories/{id}`) has it; `describeItems` reads it.
+   */
+  description: string | undefined;
   /** Tag names (Taiga stores them lowercased). */
   tags: string[];
+  /** Name of the item's status (`status_extra_info.name`), null when Taiga sends none. */
+  status: string | null;
+  /** Whether the item's status is closed (`status_extra_info.is_closed`, else the item's own `is_closed`). */
+  isClosed: boolean;
 }
 
 export interface TaigaTask extends TaigaItem {
@@ -181,14 +190,17 @@ function parseItem(raw: unknown, what: string): TaigaItem {
   if (!isRecord(raw)) throw new TaigaError(`unexpected Taiga response: ${what} is not an object`);
   // Taiga returns tags as [name, color|null] pairs.
   const tags = Array.isArray(raw.tags) ? raw.tags.map((tag) => String(Array.isArray(tag) ? tag[0] : tag)) : [];
+  const status = isRecord(raw.status_extra_info) ? raw.status_extra_info : {};
   return {
     id: field(raw, 'id', 'number', what),
     ref: field(raw, 'ref', 'number', what),
     version: field(raw, 'version', 'number', what),
     project: field(raw, 'project', 'number', what),
     subject: field(raw, 'subject', 'string', what),
-    description: typeof raw.description === 'string' ? raw.description : '',
+    description: typeof raw.description === 'string' ? raw.description : undefined,
     tags,
+    status: typeof status.name === 'string' ? status.name : null,
+    isClosed: typeof status.is_closed === 'boolean' ? status.is_closed : raw.is_closed === true,
   };
 }
 
@@ -369,6 +381,8 @@ export interface TaigaAssignedStory {
 export interface TaigaStory {
   id: number;
   ref: number;
+  /** OCC version, for a later edit (`editStory`, e.g. by `taigent sprint add`). */
+  version: number;
   subject: string;
   /** Its status's id, and the status's name and closed flag as the story embeds them. */
   statusId: number | null;
@@ -443,6 +457,15 @@ export interface TaigaMilestone {
   closedPoints: number;
 }
 
+/** A new sprint (`POST /milestones`, taiga-back MilestoneViewSet); Taiga derives its slug from the name. */
+export interface NewMilestone {
+  project: number;
+  name: string;
+  /** First and last day, YYYY-MM-DD. */
+  estimated_start: string;
+  estimated_finish: string;
+}
+
 /** A sprint's counts (`GET /milestones/{id}/stats`): stories closed and tasks whose status is closed. */
 export interface TaigaMilestoneStats {
   totalStories: number;
@@ -482,9 +505,13 @@ export interface TaigaHistoryEntry {
   description: boolean;
 }
 
-/** What `taigent status`, `taigent comment` and `taigent due` change on a story: its status (by id), due date and/or a comment. */
+/**
+ * What `taigent status`, `taigent comment` and `taigent due` change on a story: its status (by id), due date and/or a
+ * comment; `taigent sprint add` its sprint (milestone id).
+ */
 export interface StoryEdit {
   status?: number;
+  milestone?: number;
   /** YYYY-MM-DD (`due_date`). */
   dueDate?: string;
   /** Taiga records it as a comment in the story's history. */
@@ -521,6 +548,7 @@ function parseStory(raw: unknown): TaigaStory {
   return {
     id: field(r, 'id', 'number', what),
     ref: field(r, 'ref', 'number', what),
+    version: field(r, 'version', 'number', what),
     subject: field(r, 'subject', 'string', what),
     statusId: typeof r.status === 'number' ? r.status : null,
     status: field(record(r.status_extra_info, `${what}.status_extra_info`), 'name', 'string', `${what} status`),
@@ -845,6 +873,29 @@ export class TaigaClient {
     return parseList(raw, TAIGA_ITEM[type].what, (item) => parseItemOf(type, item));
   }
 
+  /** One item, as Taiga's detail endpoint returns it (with its description, which lists leave out). */
+  getItem(type: 'task', id: number): Promise<TaigaTask>;
+  getItem(type: 'issue', id: number): Promise<TaigaIssue>;
+  getItem(type: ItemType, id: number): Promise<TaigaItem>;
+  async getItem(type: ItemType, id: number): Promise<TaigaItem> {
+    return parseItemOf(type, await this.#request('GET', `/${TAIGA_ITEM[type].collection}/${id}`));
+  }
+
+  /**
+   * `items` (read by `listItems`) with the description of each `wanted` one that has none, read from its detail,
+   * TAIGA_CONCURRENCY at a time; the other items are left as they are.
+   */
+  async describeItems<T extends TaigaItem>(type: ItemType, items: readonly T[], wanted: (item: T) => boolean): Promise<T[]> {
+    const missing = items.filter((item) => item.description === undefined && wanted(item));
+    const details = await mapLimited(missing, TAIGA_CONCURRENCY, (item) => this.getItem(type, item.id));
+    const descriptions = new Map<number, string>();
+    for (const detail of details) {
+      if (detail.description === undefined) throw new TaigaError(`unexpected Taiga response: ${TAIGA_ITEM[type].what} #${detail.ref} has no description`);
+      descriptions.set(detail.id, detail.description);
+    }
+    return items.map((item) => (descriptions.has(item.id) ? { ...item, description: descriptions.get(item.id)! } : item));
+  }
+
   /** The issue types, severities or priorities a project defines, in Taiga's order. */
   async listIssueValues(valueField: IssueValueField, projectId: number): Promise<TaigaIssueValue[]> {
     const { collection, what } = TAIGA_ISSUE_VALUES[valueField];
@@ -993,6 +1044,11 @@ export class TaigaClient {
     return parseList(await this.#request('GET', '/milestones', { query: { project: projectId } }), 'milestone', parseMilestone);
   }
 
+  /** Creates a sprint (`POST /milestones`); only `taigent sprint create` writes sprints. */
+  async createMilestone(milestone: NewMilestone): Promise<TaigaMilestone> {
+    return parseMilestone(await this.#request('POST', '/milestones', { body: milestone }));
+  }
+
   async getMilestoneStats(milestoneId: number): Promise<TaigaMilestoneStats> {
     const what = 'milestone stats';
     const r = record(await this.#request('GET', `/milestones/${milestoneId}/stats`), what);
@@ -1004,10 +1060,9 @@ export class TaigaClient {
     };
   }
 
-  /** Changes a story's status and/or due date and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
-  async editStory(id: number, { status, dueDate, comment }: StoryEdit, version: number): Promise<void> {
-    const body = { ...(status === undefined ? {} : { status }), ...(dueDate === undefined ? {} : { due_date: dueDate }), ...(comment === undefined ? {} : { comment }) };
-    await this.#patch(`/${TAIGA_ITEM.story.collection}/${id}`, body, version);
+  /** Changes a story's status, sprint and/or due date and/or adds a comment (`PATCH /userstories/{id}` with its `version`, OCC). */
+  async editStory(id: number, { dueDate, ...edit }: StoryEdit, version: number): Promise<void> {
+    await this.#patch(`/${TAIGA_ITEM.story.collection}/${id}`, { ...edit, ...(dueDate === undefined ? {} : { due_date: dueDate }) }, version);
   }
 
   async listProjectTemplates(): Promise<TaigaProjectTemplate[]> {

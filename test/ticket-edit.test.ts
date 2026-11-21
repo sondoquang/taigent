@@ -101,7 +101,7 @@ test('comment adds the words after the ref as one comment to your ticket', async
   assert.equal(mine.status_name, 'In progress');
 });
 
-test('comment takes a text after -- as is, even one that starts with a dash or spans lines (what Taigent Desktop sends)', async (t) => {
+test('comment takes a text after -- as is, even one that starts with a dash or spans lines', async (t) => {
   const h = await startHarness(t);
   const { mine } = seed(h.fake);
   const text = '--yes là tôi đã test\n- bước 2 xong';

@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import type { ApplyReport } from '../src/executor.ts';
 import type { ManifestIssue } from '../src/manifest/errors.ts';
 import type { Plan } from '../src/planner.ts';
-import type { FakeIssue, FakeIssueValue, FakeState } from './support/fake-taiga.ts';
+import { valueId } from './support/backlog.ts';
+import type { FakeIssue, FakeState } from './support/fake-taiga.ts';
 import { OFFLINE, startHarness, writes, type Harness } from './support/harness.ts';
 
 interface ErrorOutput {
@@ -104,13 +105,6 @@ test('validate rejects an issues value that is not a list', async (t) => {
   assert.deepEqual(result.json<ErrorOutput>().error.issues?.map((i) => [i.path, i.rule]), [['issues', 'type']]);
 });
 
-/** Id of the value named `name` in one of the project's issue value lists on the fake. */
-function valueId(h: Harness, list: 'issueStatuses' | 'issueTypes' | 'severities' | 'priorities', project: number, name: string): number {
-  const value = (h.fake.state[list] as FakeIssueValue[]).find((v) => v.project === project && v.name === name);
-  assert.ok(value, `no ${list} value "${name}" in project ${project}`);
-  return value.id;
-}
-
 function issueByKey(state: FakeState, key: string): FakeIssue {
   const issue = state.issues.find((i) => i.tags.includes(`src:${key.toLowerCase()}`));
   assert.ok(issue, `no issue ${key} on the fake`);
@@ -174,7 +168,13 @@ test('apply creates each issue tagged src:<key> with the ids of its type, severi
     ],
   );
   const sso = issueByKey(h.fake.state, 'ASK-SSO');
-  assert.deepEqual((await h.readState('demo'))!.items['ASK-SSO'], { type: 'issue', id: sso.id, ref: sso.ref, version: 1 });
+  assert.deepEqual((await h.readState('demo'))!.items['ASK-SSO'], {
+    type: 'issue',
+    id: sso.id,
+    ref: sso.ref,
+    version: 1,
+    baseline: { subject: 'Do we support single sign-on?', description: '', tags: [], custom_attributes: {}, type: 'Question', severity: 'Minor', priority: 'Low' },
+  });
 
   // The src: tag is the identity: a re-run, even without state.json, plans nothing.
   await h.deleteState('demo');

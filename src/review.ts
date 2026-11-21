@@ -1,20 +1,35 @@
 // Review of a backlog before apply: `taiga/<slug>/review.yaml` holds each item's verdict (approved / changes) and
 // the comments of the Business Analyst / Product Owner, and `buildPreview` shows the backlog exactly as apply would
-// write it, with that review. Offline: no Taiga access. The file is committed with the manifests; Taigent Desktop and
-// people write verdicts and comments, the agent answers comments (`resolved` + `reply`) by editing the manifests.
+// write it, with that review. Offline: no Taiga access. The file is committed with the manifests; `taigent review`
+// (`recordReview`) is the one way it is written: the reviewer's verdicts and comments, and the agent's answers to the
+// comments (`resolved` + `reply`). Nobody edits it by hand. An entry whose key the backlog no longer declares (the item
+// was removed, or renamed before apply) is ignored and left in the file: `validate` accepts it, `preview` lists it in
+// `summary.unknownReviewKeys`, and the item under its new key is reviewed again.
 
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { stringify } from 'yaml';
 import { sha256, writeAtomic } from './files.ts';
 import { isRecord } from './guards.ts';
-import type { IssueValueField, ItemType } from './items.ts';
-import { type AttributeValue, type Backlog, backlogKeys, type Scenario, type StorySpec } from './manifest/backlog.ts';
-import { checkKeyReference, KEY_PATTERN } from './manifest/conventions.ts';
+import { ITEM_TYPES, type IssueValueField, type ItemType } from './items.ts';
+import {
+  backlogKeyOf,
+  blockedFields,
+  manifestManagedValues,
+  snapshotManagedValues,
+  type BlockedKind,
+  type ManagedField,
+  type ManifestItem,
+  type SnapshotItems,
+} from './managed.ts';
+import { type AttributeValue, type Backlog, BACKLOG_FILE, type Scenario, type StorySpec } from './manifest/backlog.ts';
+import { KEY_PATTERN } from './manifest/conventions.ts';
 import { ManifestError, type ManifestIssue } from './manifest/errors.ts';
+import { SNAPSHOT_FILE } from './manifest/layout.ts';
 import { loadManifests } from './manifest/manifests.ts';
-import { readState, STATE_FILE } from './manifest/state.ts';
+import { readState, recordedBaseline, STATE_FILE, type StateFile } from './manifest/state.ts';
 import { readManifestYaml } from './manifest/yaml.ts';
+import { readSnapshotFile, type Snapshot, type SnapshotItem } from './snapshot.ts';
 import { storyDescription } from './story-template.ts';
 
 export const REVIEW_FILE = 'review.yaml';
@@ -64,18 +79,12 @@ function isText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '';
 }
 
-/** Every key review.yaml may name: the epic tree's and the issues'. */
-export function reviewKeys(backlog: Backlog): Set<string> {
-  const keys = backlogKeys(backlog);
-  for (const issue of backlog.issues) keys.add(issue.key);
-  return keys;
-}
-
 /**
- * Reads and validates review.yaml at `path`; a missing file is an empty review. With `keys` (the backlog's item keys),
- * an item key not in the backlog is an issue too (rule `key-reference`). Throws ManifestError listing every issue.
+ * Reads and validates review.yaml at `path`; a missing file is an empty review. Item keys are checked for their format
+ * only: one the backlog does not declare is ignored by `buildPreview`, never an issue. Throws ManifestError listing
+ * every issue.
  */
-export async function loadReview(path: string, keys?: ReadonlySet<string>): Promise<Review> {
+export async function loadReview(path: string): Promise<Review> {
   let doc: unknown;
   try {
     doc = await readManifestYaml(path);
@@ -103,7 +112,6 @@ export async function loadReview(path: string, keys?: ReadonlySet<string>): Prom
   for (const [key, raw] of Object.entries(rawItems)) {
     const at = `items.${key}`;
     if (!KEY_PATTERN.test(key)) issue(at, 'key-format', `item key ${key} must be uppercase letters/digits in dash-separated groups`);
-    else if (keys) checkKeyReference(key, at, issue, keys);
     if (!isRecord(raw)) {
       issue(at, 'type', 'item review must be a mapping');
       continue;
@@ -191,10 +199,13 @@ export async function saveReview(path: string, review: Review): Promise<void> {
   await writeAtomic(path, stringify({ items }, { lineWidth: 0 }));
 }
 
-/** Sets (or, with `verdict` undefined, clears) the verdict of item `key`, recording the digest it was given on. Pure. */
-export function setVerdict(review: Review, key: string, verdict: Verdict | undefined, digest: string, by: string, at: string): Review {
+/**
+ * Sets (or, with `verdict` undefined, clears) the verdict of item `key`, recording the digest it was given on and, when
+ * given, who gave it. Pure.
+ */
+export function setVerdict(review: Review, key: string, verdict: Verdict | undefined, digest: string, by: string | undefined, at: string): Review {
   const comments = review.items[key]?.comments ?? [];
-  const item: ItemReview = verdict === undefined ? { comments } : { verdict, digest, by, at, comments };
+  const item: ItemReview = verdict === undefined ? { comments } : { verdict, digest, ...(by !== undefined && { by }), at, comments };
   return { items: { ...review.items, [key]: item } };
 }
 
@@ -208,33 +219,71 @@ export function addComment(review: Review, key: string, text: string, by: string
   return { items: { ...review.items, [key]: { ...current, comments: [...current.comments, comment] } } };
 }
 
-/**
- * Follows re-keyed (`from` → `to`) and removed (`from` → undefined) items: review.yaml may only name keys of the
- * backlog (rule `key-reference`). A re-keyed item keeps its comments but loses its verdict, so it is reviewed again
- * (its digest leaves the key out); a removed item's review goes. Returns `review` itself when no key it names
- * changed. Pure.
- */
-export function rekeyReview(review: Review, keys: Record<string, string | undefined>): Review {
-  const items = { ...review.items };
-  let changed = false;
-  for (const [from, to] of Object.entries(keys)) {
-    const entry = items[from];
-    if (!entry || from === to) continue;
-    delete items[from];
-    if (to !== undefined && entry.comments.length > 0) items[to] = { comments: entry.comments };
-    changed = true;
-  }
-  return changed ? { items } : review;
+/** Marks comment `id` of item `key` resolved with `reply`; undefined when the item has no such comment. Pure. */
+export function resolveComment(review: Review, key: string, id: string, reply: string): Review | undefined {
+  const current = review.items[key];
+  if (!current?.comments.some((comment) => comment.id === id)) return undefined;
+  const comments = current.comments.map((comment) => (comment.id === id ? { ...comment, resolved: true, reply } : comment));
+  return { items: { ...review.items, [key]: { ...current, comments } } };
 }
 
-/** `rekeyReview` on review.yaml of the project directory `dir`, saved only when it changed. Returns whether it did. */
-export async function rekeyReviewFile(dir: string, keys: Record<string, string | undefined>): Promise<boolean> {
+// ---- taigent review -----------------------------------------------------------------------------
+
+/** A `taigent review` run refused for its key or comment id; nothing was written. */
+export class ReviewError extends Error {}
+
+/**
+ * `by` of the comments `taigent review` writes. review.yaml records no reviewer or role, but a comment's `by` is
+ * required, so every comment written by the CLI is by this generic author.
+ */
+export const REVIEW_AUTHOR = 'reviewer';
+
+export type ReviewAction =
+  | { action: 'approve'; key: string }
+  | { action: 'request-changes'; key: string; text?: string }
+  | { action: 'comment'; key: string; text: string }
+  | { action: 'resolve'; key: string; id: string; reply: string };
+
+export interface ReviewResult {
+  key: string;
+  /** The item's current digest, the one a verdict is given on. */
+  digest: string;
+  /** The item's review after the write. */
+  review: ItemReview;
+  /** The comment added or resolved. */
+  comment?: ReviewComment;
+}
+
+/**
+ * Records one review action in review.yaml of project `slug` (manifests in `dir`): a verdict on the item's current
+ * digest, a new comment, or a resolved comment with its reply. Offline. A key the backlog does not declare, or a comment
+ * id the item lacks, throws ReviewError before anything is written; invalid manifests throw ManifestError.
+ */
+export async function recordReview(dir: string, slug: string, change: ReviewAction, at: string = new Date().toISOString()): Promise<ReviewResult> {
+  const item = previewItems(await buildPreview(dir, slug)).find((candidate) => candidate.key === change.key);
+  if (!item) throw new ReviewError(`${change.key} is not an item of the ${BACKLOG_FILE} of project ${slug}; nothing was written`);
+
   const path = join(dir, REVIEW_FILE);
-  const current = await loadReview(path);
-  const next = rekeyReview(current, keys);
-  if (next === current) return false;
-  await saveReview(path, next);
-  return true;
+  let review = await loadReview(path);
+  let commentId: string | undefined;
+  if (change.action === 'resolve') {
+    const resolved = resolveComment(review, change.key, change.id, change.reply);
+    if (!resolved) throw new ReviewError(`${change.key} has no review comment ${change.id}; nothing was written`);
+    review = resolved;
+    commentId = change.id;
+  } else {
+    const verdict = change.action === 'approve' ? 'approved' : 'changes';
+    if (change.action !== 'comment') review = setVerdict(review, change.key, verdict, item.digest, undefined, at);
+    const text = change.action === 'approve' ? undefined : change.text;
+    if (text !== undefined) {
+      review = addComment(review, change.key, text, REVIEW_AUTHOR, at);
+      commentId = review.items[change.key]!.comments.at(-1)!.id;
+    }
+  }
+  await saveReview(path, review);
+  const itemReview = review.items[change.key]!;
+  const comment = itemReview.comments.find((candidate) => candidate.id === commentId);
+  return { key: change.key, digest: item.digest, review: itemReview, ...(comment && { comment }) };
 }
 
 // ---- Preview ------------------------------------------------------------------------------------
@@ -250,8 +299,15 @@ export interface PreviewItem {
   customAttributes: Record<string, AttributeValue>;
   /** Key of the epic (story) or story (task) the item belongs to; absent for epics and issues. */
   parent?: string;
-  /** Id/ref on Taiga, from state.json; absent while the item is new. */
+  /** Id/ref on Taiga, from state.json; absent while the item is new or not adopted yet. */
   applied?: { id: number; ref: number };
+  /** The item's manifest `ref` while state.json does not record its key yet: apply adopts that hand-made item. */
+  adopt?: { ref: number };
+  /**
+   * How plan would block the item against Taiga as snapshot.json holds it (`Preview.snapshot`), with the fields that
+   * tell why; absent when it would not, or without a snapshot.
+   */
+  blocked?: { kind: BlockedKind; fields: ManagedField[] };
   /** `itemDigest` of this item. */
   digest: string;
   review: {
@@ -291,8 +347,10 @@ export interface PreviewSummary {
   stories: number;
   tasks: number;
   issues: number;
-  /** Items not in state.json yet. */
+  /** Items neither in state.json nor adopting a hand-made item. new + adopt + applied = items. */
   new: number;
+  /** Items with a `ref` not in state.json yet: apply adopts the hand-made item. */
+  adopt: number;
   applied: number;
   /** Non-stale verdicts; a stale verdict counts in `stale` only. approved + changes + unreviewed + stale = items. */
   approved: number;
@@ -300,15 +358,24 @@ export interface PreviewSummary {
   unreviewed: number;
   stale: number;
   openComments: number;
+  /** Items with `blocked`, by kind; all 0 without a snapshot. */
+  blocked: Record<BlockedKind, number>;
   /** Keys in review.yaml that the backlog does not declare (their reviews are not shown). */
   unknownReviewKeys: string[];
 }
 
 export interface Preview {
   project: { slug: string; name?: string };
+  /** snapshot.json, when `taigent snapshot` wrote one: when it read Taiga. */
+  snapshot?: { readAt: string };
   summary: PreviewSummary;
   epics: PreviewEpic[];
   issues: PreviewIssue[];
+}
+
+/** Every item of `preview` in manifest order: each epic, its stories and their tasks, then the issues. */
+export function previewItems(preview: Preview): PreviewItem[] {
+  return [...preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]), ...preview.issues];
 }
 
 /** What apply writes for an item, the input of `itemDigest`; `values` only for issues. */
@@ -338,25 +405,29 @@ export function itemDigest(item: DigestFields): string {
 
 /**
  * The backlog of project `slug` (manifests in `dir`, backlog.yaml required) as apply would write it, with each item's
- * Taiga id from state.json and its review from review.yaml. Offline.
+ * Taiga id from state.json, its review from review.yaml and, when `taigent snapshot` wrote snapshot.json, how plan
+ * would block it against Taiga as that snapshot holds it. Offline.
  */
 export async function buildPreview(dir: string, slug: string): Promise<Preview> {
   const { manifests } = await loadManifests(dir, slug, { require: ['backlog'] });
   const backlog = manifests.backlog!;
   const state = await readState(join(dir, STATE_FILE), { id: 0, slug });
   const review = await loadReview(join(dir, REVIEW_FILE));
+  const snapshot = await readSnapshotFile(join(dir, SNAPSHOT_FILE));
+  const blockedBy = snapshot && snapshotComparison(snapshot, backlog, state);
 
   const summary: PreviewSummary = {
-    epics: 0, stories: 0, tasks: 0, issues: 0, new: 0, applied: 0, approved: 0, changes: 0, unreviewed: 0, stale: 0, openComments: 0, unknownReviewKeys: [],
+    epics: 0, stories: 0, tasks: 0, issues: 0, new: 0, adopt: 0, applied: 0, approved: 0, changes: 0, unreviewed: 0, stale: 0, openComments: 0,
+    blocked: { 'remote-edit': 0, 'both-edited': 0, unknown: 0 }, unknownReviewKeys: [],
   };
   const keys = new Set<string>();
 
   function previewItem<T extends ItemType>(
-    type: T,
-    spec: { key: string; subject: string; tags: string[]; customAttributes: Record<string, AttributeValue> },
+    entry: Extract<ManifestItem, { type: T }>,
     description: string,
     { parent, values }: Pick<DigestFields, 'parent' | 'values'> = {},
   ): PreviewItem & { type: T } {
+    const { type, item: spec } = entry;
     keys.add(spec.key);
     const fields: DigestFields = {
       subject: spec.subject,
@@ -367,25 +438,30 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
       ...(values !== undefined && { values }),
     };
     const digest = itemDigest(fields);
-    const entry = state.items[spec.key];
-    const applied = entry && entry.type === type ? { id: entry.id, ref: entry.ref } : undefined;
+    const stateEntry = state.items[spec.key];
+    const applied = stateEntry && stateEntry.type === type ? { id: stateEntry.id, ref: stateEntry.ref } : undefined;
+    const adopt = !stateEntry && spec.ref !== undefined ? { ref: spec.ref } : undefined;
+    const blocked = blockedBy?.(entry);
     const itemReview = review.items[spec.key];
     const comments = itemReview?.comments ?? [];
     const verdict = itemReview?.verdict;
     const stale = verdict !== undefined && itemReview!.digest !== digest;
     const openComments = comments.filter((comment) => !comment.resolved).length;
 
-    summary[applied ? 'applied' : 'new']++;
+    summary[applied ? 'applied' : adopt ? 'adopt' : 'new']++;
+    if (blocked) summary.blocked[blocked.kind]++;
     if (verdict === undefined) summary.unreviewed++;
     else if (stale) summary.stale++;
     else summary[verdict]++;
     summary.openComments += openComments;
 
     return {
-      type,
+      type: type as T,
       key: spec.key,
       ...fields,
       ...(applied && { applied }),
+      ...(adopt && { adopt }),
+      ...(blocked && { blocked }),
       digest,
       review: {
         ...(verdict !== undefined && { verdict }),
@@ -400,13 +476,13 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
 
   const epics: PreviewEpic[] = backlog.epics.map((epic) => {
     summary.epics++;
-    const item = previewItem('epic', epic, epic.description);
+    const item = previewItem({ type: 'epic', item: epic }, epic.description);
     const stories = epic.stories.map((story): PreviewStory => {
       summary.stories++;
-      const storyItem = previewItem('story', story, storyDescription(story), { parent: epic.key });
+      const storyItem = previewItem({ type: 'story', item: story, epic: epic.key }, storyDescription(story), { parent: epic.key });
       const tasks = story.tasks.map((task) => {
         summary.tasks++;
-        return previewItem('task', task, task.description, { parent: story.key });
+        return previewItem({ type: 'task', item: task, story: story.key }, task.description, { parent: story.key });
       });
       return { ...storyItem, format: story.format, scenarios: story.format === 'user-story' ? story.scenarios : [], spec: story.spec, tasks };
     });
@@ -415,12 +491,55 @@ export async function buildPreview(dir: string, slug: string): Promise<Preview> 
   const issues = backlog.issues.map((issue): PreviewIssue => {
     summary.issues++;
     const values = { type: issue.type, severity: issue.severity, priority: issue.priority };
-    return { ...previewItem('issue', issue, issue.description, { values }), values };
+    return { ...previewItem({ type: 'issue', item: issue }, issue.description, { values }), values };
   });
   summary.unknownReviewKeys = Object.keys(review.items).filter((key) => !keys.has(key)).sort();
 
   const name = manifests.project?.name;
-  return { project: { slug, ...(name !== undefined && { name }) }, summary, epics, issues };
+  return { project: { slug, ...(name !== undefined && { name }) }, ...(snapshot && { snapshot: { readAt: snapshot.readAt } }), summary, epics, issues };
+}
+
+/**
+ * How plan would block each backlog item against Taiga as `snapshot` holds it (`blockedFields`, the comparison plan
+ * makes): its Taiga counterpart is the snapshot item tagged with its key (the oldest, as in plan), else, for an item
+ * adopting one by `ref` with the baseline `taigent adopt` recorded, that item; undefined without one. An item adopted
+ * without that baseline is never blocked, as in plan; nor is one closed on Taiga, which the snapshot leaves out, nor
+ * one the snapshot read before taigent last wrote it (a version below state.json's): its baseline is newer.
+ */
+function snapshotComparison(snapshot: Snapshot, backlog: Backlog, state: Pick<StateFile, 'items' | 'adopted'>): (entry: ManifestItem) => PreviewItem['blocked'] {
+  const lists: { [T in ItemType]: SnapshotItems[T][] } = { epic: snapshot.epics, story: snapshot.stories, task: snapshot.tasks, issue: snapshot.issues };
+  const tagged = {} as { [T in ItemType]: Map<string, SnapshotItems[T]> };
+  const byRef = {} as { [T in ItemType]: Map<number, SnapshotItems[T]> };
+  for (const type of ITEM_TYPES) {
+    const byKey = new Map<string, SnapshotItem>();
+    for (const item of [...lists[type]].sort((a, b) => a.id - b.id)) if (item.key !== null && !byKey.has(item.key)) byKey.set(item.key, item);
+    (tagged as Record<ItemType, Map<string, SnapshotItem>>)[type] = byKey;
+    (byRef as Record<ItemType, Map<number, SnapshotItem>>)[type] = new Map(lists[type].map((item: SnapshotItem) => [item.ref, item]));
+  }
+  const keyByTagOrRef = backlogKeyOf(backlog);
+  // A closed story is left out of the snapshot, yet a task of the backlog may sit in it: only state.json still knows
+  // which backlog story that ref is. Every epic is in the snapshot, closed ones too.
+  const closedStories = new Map(Object.entries(state.items).flatMap(([key, entry]) => (entry.type === 'story' ? [[entry.ref, key] as const] : [])));
+  const backlogKey = (type: 'epic' | 'story', ref: number): string | undefined => {
+    const item = byRef[type].get(ref);
+    if (!item) return type === 'story' ? closedStories.get(ref) : undefined;
+    return keyByTagOrRef(type, ref, item.key);
+  };
+
+  return (entry) => {
+    const { key, ref } = entry.item;
+    let item: SnapshotItem | undefined = tagged[entry.type].get(key);
+    let recorded = state.items[key];
+    if (!item) {
+      recorded = state.adopted[key];
+      item = ref === undefined ? undefined : byRef[entry.type].get(ref);
+      if (!item || item.key !== null || recorded === undefined) return undefined;
+    }
+    const baseline = recordedBaseline(recorded, entry.type, item.id);
+    if (baseline && item.version < recorded!.version) return undefined;
+    const want = manifestManagedValues(entry);
+    return blockedFields(want, snapshotManagedValues(entry.type, item as SnapshotItems[typeof entry.type], want, baseline, backlogKey), baseline);
+  };
 }
 
 // ---- Markdown -----------------------------------------------------------------------------------
@@ -455,9 +574,22 @@ function shortTime(at: string): string {
 
 const TYPE_LABEL: Record<ItemType, string> = { epic: 'Epic', story: 'Story', task: 'Task', issue: 'Issue' };
 
-function renderItem(item: PreviewItem | PreviewIssue, level: number): string[] {
+const BLOCKED_LABEL: Record<BlockedKind, string> = {
+  'remote-edit': 'remote edit on Taiga',
+  'both-edited': 'both edited: on Taiga and in the manifest, differently',
+  unknown: 'unknown: differs from Taiga, no baseline',
+};
+
+/** `2026-11-03T08:15:00.000Z` (snapshot.json's readAt, UTC) → `2026-11-03 08:15 UTC`. */
+function snapshotTime(readAt: string): string {
+  return `${shortTime(readAt)} UTC`;
+}
+
+/** `readAt`: the snapshot's, when there is one. */
+function renderItem(item: PreviewItem | PreviewIssue, level: number, readAt: string | undefined): string[] {
   const lines = [`${'#'.repeat(level)} ${TYPE_LABEL[item.type]} ${item.key}: ${item.subject}`, ''];
-  const facts = [item.applied ? `on Taiga #${item.applied.ref}` : 'new (not on Taiga yet)'];
+  const facts = [item.applied ? `on Taiga #${item.applied.ref}` : item.adopt ? `adopt #${item.adopt.ref} (hand-made on Taiga)` : 'new (not on Taiga yet)'];
+  if (item.blocked && readAt !== undefined) facts.push(`**${BLOCKED_LABEL[item.blocked.kind]}** (snapshot ${snapshotTime(readAt)}): ${item.blocked.fields.join(', ')}`);
   if ('values' in item) facts.push(`type: ${item.values.type}`, `severity: ${item.values.severity}`, `priority: ${item.values.priority}`);
   if (item.tags.length > 0) facts.push(`tags: ${item.tags.map((tag) => `\`${tag}\``).join(', ')}`);
   const attributes = Object.entries(item.customAttributes);
@@ -503,28 +635,42 @@ export function renderPreviewMarkdown(preview: Preview): string {
     `| Tasks | ${summary.tasks} |`,
     `| Issues | ${summary.issues} |`,
     `| New (not on Taiga yet) | ${summary.new} |`,
+    `| To adopt (hand-made on Taiga) | ${summary.adopt} |`,
     `| On Taiga (state.json) | ${summary.applied} |`,
     `| Approved | ${summary.approved} |`,
     `| Changes requested | ${summary.changes} |`,
     `| Not reviewed | ${summary.unreviewed} |`,
     `| Stale review (item changed since) | ${summary.stale} |`,
     `| Open comments | ${summary.openComments} |`,
-    '',
   ];
+  if (preview.snapshot) {
+    lines.push(
+      `| Edited on Taiga (remote edit) | ${summary.blocked['remote-edit']} |`,
+      `| Both edited (Taiga and the manifest, differently) | ${summary.blocked['both-edited']} |`,
+      `| Unknown (no baseline, differs from Taiga) | ${summary.blocked.unknown} |`,
+      '',
+      `Taiga as \`taigent snapshot\` read it at ${snapshotTime(preview.snapshot.readAt)} (${SNAPSHOT_FILE}): \`plan\` blocks the items ` +
+        `marked remote edit, both edited or unknown until ${BACKLOG_FILE} settles them. Run \`taigent snapshot --project ${project.slug}\` again for a newer copy.`,
+    );
+  } else {
+    lines.push('', `No ${SNAPSHOT_FILE}: run \`taigent snapshot --project ${project.slug}\` to see the items edited on Taiga since apply.`);
+  }
+  lines.push('');
   if (summary.unknownReviewKeys.length > 0) {
-    lines.push(`**Warning:** ${REVIEW_FILE} reviews keys the backlog does not declare: ${summary.unknownReviewKeys.join(', ')}`, '');
+    lines.push(`**Warning:** ${REVIEW_FILE} reviews keys the backlog does not declare, ignored (removed items, or keys renamed before apply, whose items are reviewed again under their new key): ${summary.unknownReviewKeys.join(', ')}`, '');
   }
   if (preview.epics.length === 0 && preview.issues.length === 0) lines.push('_The backlog has no items._', '');
+  const readAt = preview.snapshot?.readAt;
   for (const epic of preview.epics) {
-    lines.push(...renderItem(epic, 2));
+    lines.push(...renderItem(epic, 2, readAt));
     for (const story of epic.stories) {
-      lines.push(...renderItem(story, 3));
-      for (const task of story.tasks) lines.push(...renderItem(task, 4));
+      lines.push(...renderItem(story, 3, readAt));
+      for (const task of story.tasks) lines.push(...renderItem(task, 4, readAt));
     }
   }
   if (preview.issues.length > 0) {
     lines.push('## Issues', '');
-    for (const issue of preview.issues) lines.push(...renderItem(issue, 3));
+    for (const issue of preview.issues) lines.push(...renderItem(issue, 3, readAt));
   }
   return `${lines.join('\n').trimEnd()}\n`;
 }

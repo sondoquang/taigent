@@ -1,0 +1,321 @@
+// Baseline and remote edits: apply records in state.json the managed values it last wrote or accepted for each item;
+// plan compares the manifest (M) and Taiga (T) against that baseline (B) and blocks items whose Taiga values changed
+// behind taigent's back. One test per row of the three-way table (spec #53), plus the migration of an older state.json
+// and the fields that never block.
+
+import assert from 'node:assert/strict';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { ExitCode } from '../src/exit-codes.ts';
+import type { BlockedItem, Plan } from '../src/planner.ts';
+import { applied } from './support/backlog.ts';
+import type { FakeEpic } from './support/fake-taiga.ts';
+import { startHarness, writes, type Harness } from './support/harness.ts';
+
+/** One epic AUTH; `subject` replaces its subject. */
+function backlog(subject = 'Authentication', extra = ''): string {
+  return `epics:
+  - key: AUTH
+    subject: ${subject}
+    description: Users can sign in.
+    tags: [type:feature, area:auth]
+${extra}`;
+}
+
+const BASELINE = { subject: 'Authentication', description: 'Users can sign in.', tags: ['type:feature', 'area:auth'], custom_attributes: {} };
+
+interface BlockedError {
+  error: { kind: string; message: string; blocked: BlockedItem[] };
+}
+
+/** Applies backlog() to an empty project, so AUTH exists on Taiga with a baseline. Returns the epic on the fake. */
+async function appliedEpic(h: Harness): Promise<FakeEpic> {
+  await applied(h, backlog());
+  return h.fake.state.epics[0]!;
+}
+
+/** Seeds AUTH on the fake as an older taigent created it (tagged, values `subject`), with no state.json. */
+function seeded(h: Harness, subject = 'Authentication'): FakeEpic {
+  const project = h.fake.addProject({ slug: 'demo' });
+  return h.fake.addEpic({ project: project.id, subject, description: 'Users can sign in.', tags: ['type:feature', 'area:auth', 'src:auth'] });
+}
+
+test('apply records the baseline of each item it creates in state.json', async (t) => {
+  const h = await startHarness(t);
+  const epic = await appliedEpic(h);
+
+  assert.deepEqual((await h.readState('demo'))?.items.AUTH, { type: 'epic', id: epic.id, ref: epic.ref, version: epic.version, baseline: BASELINE });
+});
+
+test('baseline present, Taiga and manifest unchanged: skip, nothing blocked', async (t) => {
+  const h = await startHarness(t);
+  await appliedEpic(h);
+  h.fake.requests.length = 0;
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+
+  assert.equal(plan.code, 0, plan.stderr);
+  const { operations, blocked } = plan.json<Plan>();
+  assert.deepEqual(operations.map((op) => [op.action, op.key]), [['skip', 'AUTH']]);
+  assert.deepEqual(blocked, []);
+});
+
+test('items applied with a description plan as unchanged although Taiga lists them without one: read from their detail', async (t) => {
+  const h = await startHarness(t);
+  await applied(
+    h,
+    `epics:
+  - key: AUTH
+    subject: Authentication
+    description: Users can sign in.
+    stories:
+      - key: AUTH-LOGIN
+        subject: User can log in
+        use_case: { as_a: user, i_want_to: log in, so_that: I see my projects }
+        description: With a password.
+        scenarios:
+          - { scenario: Sign in, given: [I am signed out], when: I submit my password, then: I see my projects }
+        tasks:
+          - key: AUTH-LOGIN-API
+            subject: Login endpoint
+            description: POST /login returns a session.
+issues:
+  - key: LOGIN-500
+    subject: Login fails with a long password
+    description: Steps to reproduce.
+    type: Bug
+    severity: Normal
+    priority: Normal
+`,
+  );
+  const project = h.fake.state.projects[0]!;
+  const handMade = h.fake.addUserStory({ project: project.id, subject: 'Hand-made story', description: 'Not in the backlog.', tags: [] });
+  h.fake.requests.length = 0;
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+
+  assert.equal(plan.code, 0, plan.stderr);
+  const { operations, blocked } = plan.json<Plan>();
+  assert.deepEqual(blocked, []);
+  assert.deepEqual(operations.map((op) => [op.action, op.key]), [['skip', 'AUTH'], ['skip', 'AUTH-LOGIN'], ['skip', 'AUTH-LOGIN-API'], ['skip', 'LOGIN-500']]);
+  // One detail read per compared item, none for the hand-made story the plan only lists.
+  const details = h.fake.requests.filter((r) => r.method === 'GET' && /^\/(epics|userstories|tasks|issues)\/\d+$/.test(r.path)).map((r) => r.path);
+  const ids = { epic: h.fake.state.epics[0]!.id, story: h.fake.state.userStories.find((s) => s.id !== handMade.id)!.id, task: h.fake.state.tasks[0]!.id, issue: h.fake.state.issues[0]!.id };
+  assert.deepEqual(details.sort(), [`/epics/${ids.epic}`, `/issues/${ids.issue}`, `/tasks/${ids.task}`, `/userstories/${ids.story}`]);
+});
+
+test('baseline present, manifest changed: update, and apply moves the baseline to the written values', async (t) => {
+  const h = await startHarness(t);
+  const epic = await appliedEpic(h);
+  await h.writeManifest('demo', 'backlog.yaml', backlog('Sign-in'));
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, 3, plan.stderr);
+  const { operations, blocked } = plan.json<Plan>();
+  assert.deepEqual(operations.map((op) => [op.action, op.key, op.action === 'update' ? Object.keys(op.changes) : []]), [['update', 'AUTH', ['subject']]]);
+  assert.deepEqual(blocked, []);
+
+  const apply = await h.taigent(['apply', '--project', 'demo', '--yes']);
+  assert.equal(apply.code, 0, apply.stderr);
+  assert.equal(epic.subject, 'Sign-in');
+  assert.deepEqual((await h.readState('demo'))?.items.AUTH?.baseline, { ...BASELINE, subject: 'Sign-in' });
+});
+
+test('baseline present, Taiga changed, manifest unchanged: blocked as a remote edit; apply --yes exits 6 and writes nothing', async (t) => {
+  const h = await startHarness(t);
+  const epic = await appliedEpic(h);
+  h.fake.editItem(epic, { subject: 'Login' });
+  // Another change apply would make, to show that a blocked item stops the whole apply.
+  await h.writeManifest('demo', 'backlog.yaml', backlog('Authentication', '  - key: BILLING\n    subject: Billing\n'));
+  const before = await h.readState('demo');
+  h.fake.requests.length = 0;
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
+  const json = plan.json<Plan>();
+  assert.deepEqual(json.blocked, [
+    { kind: 'remote-edit', type: 'epic', key: 'AUTH', id: epic.id, ref: epic.ref, fields: { subject: { baseline: 'Authentication', taiga: 'Login', manifest: 'Authentication' } } },
+  ]);
+  assert.deepEqual(json.operations.map((op) => [op.action, op.key]), [['create', 'BILLING']]);
+  const text = await h.taigent(['plan', '--project', 'demo']);
+  assert.equal(text.code, ExitCode.Blocked);
+  assert.match(text.stdout, /remote edit epic AUTH .*subject/);
+
+  const apply = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
+  assert.equal(apply.code, ExitCode.Blocked, apply.stderr);
+  const { error } = apply.json<BlockedError>();
+  assert.equal(error.kind, 'blocked');
+  assert.deepEqual(error.blocked, json.blocked);
+  assert.match(apply.stderr, /AUTH/);
+  assert.deepEqual(writes(h.fake), []);
+  assert.equal(epic.subject, 'Login');
+  assert.equal(h.fake.state.epics.length, 1);
+  assert.deepEqual(await h.readState('demo'), before);
+});
+
+test('an item of state.json found on Taiga without its src: tag is blocked as a remote edit of its tags, never created again', async (t) => {
+  const h = await startHarness(t);
+  const epic = await appliedEpic(h);
+  h.fake.editItem(epic, { tags: ['type:feature', 'area:auth'] });
+  h.fake.requests.length = 0;
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
+  const json = plan.json<Plan>();
+  assert.deepEqual(json.operations, []);
+  assert.deepEqual(json.blocked, [
+    {
+      kind: 'remote-edit',
+      type: 'epic',
+      key: 'AUTH',
+      id: epic.id,
+      ref: epic.ref,
+      fields: { tags: { baseline: ['type:feature', 'area:auth', 'src:auth'], taiga: ['type:feature', 'area:auth'], manifest: ['type:feature', 'area:auth', 'src:auth'] } },
+    },
+  ]);
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, ExitCode.Blocked);
+  const pull = await h.taigent(['pull', '--project', 'demo', '--json']);
+  assert.equal(pull.code, ExitCode.Validation, pull.stderr);
+  assert.match(pull.stderr, /AUTH.*src:auth/);
+  assert.deepEqual(writes(h.fake), []);
+  assert.equal(h.fake.state.epics.length, 1);
+
+  // Settled by naming the item's ref: apply adopts it again, which adds the tag back.
+  await h.writeManifest('demo', 'backlog.yaml', backlog().replace('  - key: AUTH\n', `  - key: AUTH\n    ref: ${epic.ref}\n`));
+  const adopt = await h.taigent(['apply', '--project', 'demo', '--yes', '--json']);
+  assert.equal(adopt.code, ExitCode.Ok, adopt.stderr);
+  assert.deepEqual(epic.tags, ['type:feature', 'area:auth', 'src:auth']);
+});
+
+test('baseline present, Taiga and manifest changed the same way: skip, and apply refreshes the baseline', async (t) => {
+  const h = await startHarness(t);
+  const epic = await appliedEpic(h);
+  h.fake.editItem(epic, { subject: 'Login' });
+  await h.writeManifest('demo', 'backlog.yaml', backlog('Login'));
+  h.fake.requests.length = 0;
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, 0, plan.stderr);
+  const { operations, blocked } = plan.json<Plan>();
+  assert.deepEqual(operations.map((op) => [op.action, op.key]), [['skip', 'AUTH']]);
+  assert.deepEqual(blocked, []);
+
+  const apply = await h.taigent(['apply', '--project', 'demo', '--yes']);
+  assert.equal(apply.code, 0, apply.stderr);
+  assert.deepEqual(writes(h.fake), []);
+  assert.deepEqual((await h.readState('demo'))?.items.AUTH?.baseline, { ...BASELINE, subject: 'Login' });
+});
+
+test('baseline present, Taiga and manifest changed differently: blocked as both edited with all three versions', async (t) => {
+  const h = await startHarness(t);
+  const epic = await appliedEpic(h);
+  h.fake.editItem(epic, { subject: 'Login' });
+  await h.writeManifest('demo', 'backlog.yaml', backlog('Sign-in'));
+  h.fake.requests.length = 0;
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
+  const { operations, blocked } = plan.json<Plan>();
+  assert.deepEqual(operations, []);
+  assert.deepEqual(blocked, [
+    { kind: 'both-edited', type: 'epic', key: 'AUTH', id: epic.id, ref: epic.ref, fields: { subject: { baseline: 'Authentication', taiga: 'Login', manifest: 'Sign-in' } } },
+  ]);
+
+  const apply = await h.taigent(['apply', '--project', 'demo', '--yes']);
+  assert.equal(apply.code, ExitCode.Blocked);
+  assert.deepEqual(writes(h.fake), []);
+  assert.equal(epic.subject, 'Login');
+});
+
+test('no baseline, manifest equal to Taiga: skip, and apply records the baseline without writing to Taiga', async (t) => {
+  const h = await startHarness(t);
+  const epic = seeded(h);
+  await h.writeManifest('demo', 'backlog.yaml', backlog());
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, 0, plan.stderr);
+  assert.deepEqual(plan.json<Plan>().blocked, []);
+
+  const apply = await h.taigent(['apply', '--project', 'demo', '--yes']);
+  assert.equal(apply.code, 0, apply.stderr);
+  assert.deepEqual(writes(h.fake), []);
+  assert.deepEqual((await h.readState('demo'))?.items.AUTH, { type: 'epic', id: epic.id, ref: epic.ref, version: epic.version, baseline: BASELINE });
+});
+
+test('no baseline, manifest different from Taiga: blocked as unknown with both versions', async (t) => {
+  const h = await startHarness(t);
+  const epic = seeded(h, 'Login');
+  await h.writeManifest('demo', 'backlog.yaml', backlog());
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
+  assert.deepEqual(plan.json<Plan>().blocked, [
+    { kind: 'unknown', type: 'epic', key: 'AUTH', id: epic.id, ref: epic.ref, fields: { subject: { taiga: 'Login', manifest: 'Authentication' } } },
+  ]);
+
+  const apply = await h.taigent(['apply', '--project', 'demo', '--yes']);
+  assert.equal(apply.code, ExitCode.Blocked);
+  assert.deepEqual(writes(h.fake), []);
+  assert.equal(await h.readState('demo'), undefined);
+});
+
+test('an older state.json without baselines is migrated by apply when the manifest equals Taiga', async (t) => {
+  const h = await startHarness(t);
+  const epic = seeded(h);
+  await h.writeManifest('demo', 'backlog.yaml', backlog());
+  const project = h.fake.state.projects[0]!;
+  await writeFile(
+    join(h.manifestsDir, 'demo', 'state.json'),
+    `${JSON.stringify({ project: { id: project.id, slug: 'demo' }, items: { AUTH: { type: 'epic', id: epic.id, ref: epic.ref, version: epic.version } } }, null, 2)}\n`,
+  );
+
+  const apply = await h.taigent(['apply', '--project', 'demo', '--yes']);
+  assert.equal(apply.code, 0, apply.stderr);
+  assert.deepEqual(writes(h.fake), []);
+  assert.deepEqual((await h.readState('demo'))?.items.AUTH?.baseline, BASELINE);
+
+  // From now on an edit on Taiga is told apart from a manifest change.
+  h.fake.editItem(epic, { subject: 'Login' });
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+  assert.equal(plan.code, ExitCode.Blocked, plan.stderr);
+  assert.deepEqual(plan.json<Plan>().blocked.map((item) => [item.kind, item.key]), [['remote-edit', 'AUTH']]);
+});
+
+test('status, assignee, points and tags without a prefix changed on Taiga never block', async (t) => {
+  const h = await startHarness(t);
+  h.fake.addProject({ slug: 'demo' });
+  await h.writeManifest(
+    'demo',
+    'backlog.yaml',
+    `epics:
+  - key: AUTH
+    subject: Authentication
+    stories:
+      - key: AUTH-LOGIN
+        subject: User can log in
+        use_case: { as_a: user, i_want_to: log in, so_that: I see my projects }
+        scenarios:
+          - { scenario: Wrong password, given: [I am on the sign-in page], when: I submit a wrong password, then: I see an error }
+        tags: [type:feature]
+        tasks:
+          - key: AUTH-LOGIN-API
+            subject: Login endpoint
+`,
+  );
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
+  const [story] = h.fake.state.userStories;
+  const [task] = h.fake.state.tasks;
+  const user = h.fake.user.id;
+  h.fake.editItem(story!, { status: 2, assigned_to: user, assigned_users: [user], points: { '1': 3 }, tags: [...story!.tags, 'frontend'] });
+  h.fake.editItem(task!, { status: 2, assigned_to: user, tags: [...task!.tags, 'backend'] });
+  h.fake.editItem(h.fake.state.epics[0]!, { status: 2, assigned_to: user, tags: [...h.fake.state.epics[0]!.tags, 'q3'] });
+
+  const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
+
+  assert.equal(plan.code, 0, plan.stderr);
+  const json = plan.json<Plan>();
+  assert.deepEqual(json.blocked, []);
+  assert.deepEqual(json.summary, { create: 0, update: 0, adopt: 0, link: 0, skip: 3 });
+});

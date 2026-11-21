@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0007
+---
+
 # Taigent Desktop là nơi làm việc chính; mọi thao tác ghi lên Taiga vẫn chỉ qua CLI
 
 Muốn dùng taigent, người dùng phải cài skill rồi mở Claude Code hoặc Codex. Taigent Desktop vì vậy mở rộng ADR 0002 từ

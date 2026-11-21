@@ -25,6 +25,9 @@
 //   their defaults (`New`, `Bug`, `Normal`, `Normal`). An issue created without one of them gets the project's
 //   default (taiga-back `Issue.save`); an id that does not exist is a 400, one of another project a 403
 //   (`IssueViewSet.pre_conditions_on_save`).
+// - The epic, user story, task and issue lists (and the stories a sprint embeds) leave out `description`, like
+//   taiga-back's list serializers (`EpicListSerializer`, `UserStoryListSerializer`, …); only the detail
+//   (`GET /{epics,userstories,tasks,issues}/{id}`) and the create/edit responses carry it.
 
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -136,6 +139,8 @@ export interface FakeEpic {
   tags: string[];
   status: number | null;
   assigned_to: number | null;
+  /** Whether the epic's status is closed (absent: open); set it with `editItem`. */
+  is_closed?: boolean;
 }
 
 /** Points estimate: role id → points id ("dictionary of points" in the Taiga API docs). */
@@ -914,7 +919,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   }
 
   /** Creates an epic, user story, task or issue with the next project ref and its (empty) custom attribute values. */
-  function addItem<T extends FakeItem>(itemType: FakeCustomAttributeType, input: FakeItemInput, extra: Omit<T, keyof FakeEpic>): T {
+  function addItem<T extends FakeItem>(itemType: FakeCustomAttributeType, input: FakeItemInput, extra: Omit<T, Exclude<keyof FakeEpic, 'is_closed'>>): T {
     const project = state.projects.find((p) => p.id === input.project);
     if (!project) throw new Error(`fake taiga: no project ${input.project}`);
     const item = {
@@ -989,7 +994,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       ...milestone,
       total_points: points(stories),
       closed_points: points(stories.filter((s) => s.is_closed)),
-      user_stories: stories.map(itemJson),
+      user_stories: stories.map((story) => listJson(itemJson(story))),
     };
   }
 
@@ -998,7 +1003,8 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
    * `MilestoneViewSet.stats`: stories by `is_closed`, tasks by their status's `is_closed`. Its `total_points` (points
    * per role) is left out: the report takes points from the milestone itself.
    */
-  function routeMilestones(req: IncomingMessage, method: string, path: string, query: URLSearchParams, userId: number): Reply | undefined {
+  function routeMilestones(req: IncomingMessage, method: string, path: string, query: URLSearchParams, body: unknown, userId: number): Reply | undefined {
+    if (path === '/milestones' && method === 'POST') return createMilestone(body, userId);
     if (method !== 'GET') return undefined;
     if (path === '/milestones') {
       const projectId = queryNumber(query, 'project');
@@ -1027,6 +1033,30 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     };
   }
 
+  /**
+   * `POST /milestones` (taiga-back MilestoneViewSet/MilestoneValidator): `project`, `name`, `estimated_start` and
+   * `estimated_finish` required, the name unique in its project, the start not after the finish; the slug is derived
+   * server-side. Unknown fields are rejected, like everywhere in the fake.
+   */
+  function createMilestone(body: unknown, userId: number): Reply {
+    const data = requireObject(body);
+    const errors: Record<string, string[]> = {};
+    unknownFields(data, { project: true, name: true, estimated_start: true, estimated_finish: true, disponibility: true, order: true }, errors);
+    if (data.project === undefined) errors.project = ['This field is required.'];
+    else if (!Number.isInteger(data.project) || !visibleProject(data.project, userId)) errors.project = [`Invalid pk "${String(data.project)}" - object does not exist.`];
+    if (typeof data.name !== 'string' || data.name.trim() === '') errors.name = ['This field is required.'];
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    for (const field of ['estimated_start', 'estimated_finish'] as const) {
+      if (data[field] === undefined) errors[field] = ['This field is required.'];
+      else if (typeof data[field] !== 'string' || !day.test(data[field])) errors[field] = ['Date has wrong format. Use one of these formats instead: YYYY-MM-DD.'];
+    }
+    if (Object.keys(errors).length > 0) throw fieldErrors(errors);
+    const input = { project: data.project as number, name: data.name as string, estimated_start: data.estimated_start as string, estimated_finish: data.estimated_finish as string };
+    if (state.milestones.some((m) => m.project === input.project && m.name === input.name)) throw fieldErrors({ name: ['Name duplicated for the project'] });
+    if (input.estimated_start > input.estimated_finish) throw fieldErrors({ estimated_start: ['The estimated start must be previous to the estimated finish.'] });
+    return { status: 201, body: milestoneJson(addMilestone(input)) };
+  }
+
   function addIssue(input: Parameters<FakeTaiga['addIssue']>[0]): FakeIssue {
     const project = state.projects.find((p) => p.id === input.project);
     if (!project) throw new Error(`fake taiga: no project ${input.project}`);
@@ -1043,7 +1073,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       finished_date: isClosed ? now : null,
       created_date: now,
       modified_date: now,
-    } as Omit<FakeIssue, keyof FakeEpic>);
+    } as Omit<FakeIssue, Exclude<keyof FakeEpic, 'is_closed'>>);
   }
 
   /** Tags of the project (`tags_colors`): explicit colors plus tags used by items (null color), like taiga-back. */
@@ -1615,6 +1645,12 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
         errors.user_story = [`Invalid pk "${String(data.user_story)}" - object does not exist.`];
       }
     }
+    if (data.milestone !== undefined && data.milestone !== null) {
+      const projectId = existing?.project ?? data.project;
+      if (!state.milestones.some((m) => m.id === data.milestone && m.project === projectId)) {
+        errors.milestone = [`Invalid pk "${String(data.milestone)}" - object does not exist.`];
+      }
+    }
     let tags: string[] | undefined;
     if (data.tags !== undefined) {
       try {
@@ -1693,7 +1729,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       if (method === 'GET') {
         const projectId = queryNumber(query, 'project');
         const issues = state.issues.filter((i) => visibleProject(i.project, userId) && (projectId === undefined || i.project === projectId) && hasTags(i, query));
-        return paginate(req, query, issues.map(issueJson));
+        return paginate(req, query, issues.map((issue) => listJson(issueJson(issue))));
       }
       if (method === 'POST') {
         const { data, tags } = validateItemPayload(body, ISSUE_FIELDS, userId);
@@ -1716,6 +1752,11 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     }
 
     const one = /^\/issues\/(\d+)$/.exec(path);
+    if (one && method === 'GET') {
+      const issue = state.issues.find((i) => i.id === Number(one[1]) && visibleProject(i.project, userId));
+      if (!issue) throw notFound();
+      return { status: 200, body: issueJson(issue) };
+    }
     if (one && method === 'PATCH') {
       const issue = state.issues.find((i) => i.id === Number(one[1]) && visibleProject(i.project, userId));
       if (!issue) throw notFound();
@@ -1758,11 +1799,11 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
   /**
    * An item as taiga-back serializes it: tags as [name, color] pairs, plus the embedded project and status
    * (`project_extra_info`, `status_extra_info`). Status names follow the default templates: a closed story is `Done`,
-   * a closed task `Closed`, anything open `New`; a story's `status_name` overrides them.
+   * a closed task or epic `Closed`, anything open `New`; a story's `status_name` overrides them.
    */
   function itemJson(item: FakeItem): Json {
     const project = state.projects.find((p) => p.id === item.project)!;
-    const closed = 'is_closed' in item && item.is_closed;
+    const closed = item.is_closed === true;
     const { status_name: statusName, ...fields } = item as typeof item & { status_name?: string | null };
     const defaultName = closed ? ('finish_date' in item ? 'Done' : 'Closed') : 'New';
     return {
@@ -1771,6 +1812,12 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
       project_extra_info: { id: project.id, slug: project.slug, name: project.name },
       status_extra_info: { name: statusName ?? defaultName, is_closed: closed },
     };
+  }
+
+  /** An item as taiga-back's list serializers return it: its detail without `description`. */
+  function listJson(item: Json): Json {
+    const { description: _description, ...listed } = item;
+    return listed;
   }
 
   /** The assignee filter on stories (`assigned_users`, checked against a Taiga 6 instance). */
@@ -1810,7 +1857,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
         const stories = state.userStories.filter(
           (s) => visibleProject(s.project, userId) && (projectId === undefined || s.project === projectId) && hasTags(s, query) && isAssigned(s, query),
         );
-        return paginate(req, query, stories.map(itemJson));
+        return paginate(req, query, stories.map((story) => listJson(itemJson(story))));
       }
       if (method === 'POST') {
         const { data, tags } = validateItemPayload(body, USER_STORY_FIELDS, userId);
@@ -1838,7 +1885,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
             (storyId === undefined || task.user_story === storyId) &&
             hasTags(task, query),
         );
-        return paginate(req, query, tasks.map(itemJson));
+        return paginate(req, query, tasks.map((task) => listJson(itemJson(task))));
       }
       if (method === 'POST') {
         const { data, tags } = validateItemPayload(body, TASK_FIELDS, userId);
@@ -1857,6 +1904,11 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     }
 
     const itemPath = /^\/(epics|userstories|tasks)\/(\d+)$/.exec(path);
+    if (itemPath && method === 'GET') {
+      const item = itemsOf(ITEM_KINDS[itemPath[1] as ItemSegment].itemType).find((i) => i.id === Number(itemPath[2]) && visibleProject(i.project, userId));
+      if (!item) throw notFound();
+      return { status: 200, body: itemJson(item) };
+    }
     if (itemPath && method === 'PATCH') {
       const { itemType, fields } = ITEM_KINDS[itemPath[1] as ItemSegment];
       const item = itemsOf(itemType).find((i) => i.id === Number(itemPath[2]) && visibleProject(i.project, userId));
@@ -2029,7 +2081,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
         const projectId = queryNumber(query, 'project');
         const epics = state.epics
           .filter((e) => visibleProject(e.project, userId) && (projectId === undefined || e.project === projectId) && hasTags(e, query))
-          .map(itemJson);
+          .map((epic) => listJson(itemJson(epic)));
         return paginate(req, query, epics);
       }
       if (method === 'POST') return createEpic(body, userId);
@@ -2041,7 +2093,7 @@ export async function startFakeTaiga(): Promise<FakeTaiga> {
     if (valuesReply) return valuesReply;
     const reply =
       routeStoriesAndTasks(req, method, path, query, body, userId) ??
-      routeMilestones(req, method, path, query, userId) ??
+      routeMilestones(req, method, path, query, body, userId) ??
       routeIssues(req, method, path, query, body, userId) ??
       routeHistory(req, method, path, query, userId) ??
       routeApplicationTokens(req, method, path, query, body, userId);

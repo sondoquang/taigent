@@ -7,7 +7,7 @@
 import { localDay } from '../days.ts';
 import type { ItemType } from '../items.ts';
 import type { Scenario } from '../manifest/backlog.ts';
-import type { Preview, PreviewItem, PreviewStory, ReviewComment } from '../review.ts';
+import { type Preview, previewItems, type PreviewItem, type PreviewStory, type ReviewComment } from '../review.ts';
 import type { TaigaHistoryEntry, TaigaHistoryStatus, TaigaStatus } from '../taiga/client.ts';
 import type { MetricsContext, UnavailableMetric } from './context.ts';
 import { inPeriod, type Period } from './periods.ts';
@@ -154,8 +154,7 @@ function manifestMetrics(preview: Preview, work: WorkItem[]): Required<Omit<Busi
   const incomplete = stories.flatMap(({ epic, story, incomplete }) => (incomplete ? [{ ...backlogRef(story), epic: epic.key, ...incomplete }] : []));
   const complete = new Set(stories.filter(({ incomplete }) => incomplete === undefined).map(({ story }) => story.key));
   const uncovered = preview.epics.filter((epic) => !epic.stories.some((story) => complete.has(story.key)));
-  // Every item in manifest order: each epic, its stories and their tasks, then the issues.
-  const items = [...preview.epics.flatMap((epic) => [epic, ...epic.stories.flatMap((story) => [story, ...story.tasks])]), ...preview.issues];
+  const items = previewItems(preview);
   return {
     notApplied: stories.filter(({ story }) => story.applied === undefined || !onTaiga.has(story.applied.id)).length,
     acceptanceCriteria: { stories: stories.length, complete: complete.size, rate: rate(complete.size, stories.length), incomplete },

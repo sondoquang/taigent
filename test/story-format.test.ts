@@ -294,7 +294,7 @@ test('a legacy story already on Taiga is left alone: plan reports No changes, wi
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
   assert.equal(plan.code, 0, plan.stderr);
-  assert.deepEqual(plan.json<Plan>().summary, { create: 0, update: 0, link: 0, skip: 2 });
+  assert.deepEqual(plan.json<Plan>().summary, { create: 0, update: 0, adopt: 0, link: 0, skip: 2 });
   const text = await h.taigent(['plan', '--project', 'demo']);
   assert.equal(text.code, 0, text.stderr);
   assert.match(text.stdout, /No changes/);
@@ -303,14 +303,14 @@ test('a legacy story already on Taiga is left alone: plan reports No changes, wi
   assert.deepEqual(writes(h.fake), []);
 });
 
-test('state.json is only a cache: a legacy story it lists but missing on Taiga is still refused', async (t) => {
+test('state.json is only a cache: a legacy story it lists but deleted on Taiga is still refused', async (t) => {
   const h = await startHarness(t);
   const story = seedLegacy(h);
   await h.writeManifest('demo', 'backlog.yaml', LEGACY);
   assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
   assert.equal((await h.readState('demo'))?.items['AUTH-LOGIN']?.id, story.id);
-  // Someone strips the identity tag on Taiga: the story is no longer taigent's, whatever state.json says.
-  h.fake.editItem(story, { tags: [] });
+  // Someone deletes the story on Taiga: plan would create it again, and never in the legacy format, whatever state.json says.
+  h.fake.state.userStories.splice(h.fake.state.userStories.indexOf(story), 1);
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
 
@@ -321,6 +321,9 @@ test('state.json is only a cache: a legacy story it lists but missing on Taiga i
 test('a legacy story on Taiga whose subject changes is updated, not refused', async (t) => {
   const h = await startHarness(t);
   const story = seedLegacy(h);
+  // Apply as-is first: it records the baseline, so the manifest change below is told apart from a remote edit.
+  await h.writeManifest('demo', 'backlog.yaml', LEGACY);
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
   await h.writeManifest('demo', 'backlog.yaml', LEGACY.replace('subject: User can log in', 'subject: User can sign in'));
 
   const plan = await h.taigent(['plan', '--project', 'demo', '--json']);
@@ -338,6 +341,8 @@ test('a legacy story on Taiga whose subject changes is updated, not refused', as
 test('converting a legacy story on Taiga to use_case + scenarios updates its description', async (t) => {
   const h = await startHarness(t);
   const story = seedLegacy(h);
+  await h.writeManifest('demo', 'backlog.yaml', LEGACY);
+  assert.equal((await h.taigent(['apply', '--project', 'demo', '--yes'])).code, 0);
   await h.writeManifest('demo', 'backlog.yaml', `epics:
   - key: AUTH
     subject: Authentication
