@@ -29,11 +29,11 @@ tools/taiga/run-skill.sh --output-format text codex taiga-plan-backlog docs/spec
 
 Options go before the agent. The **repository is the current directory**: run the wrapper from the repository root,
 wherever the script itself lives (`tools/taiga/` of this repository, or `node_modules/taigent/tools/taiga/` in a
-repository set up by `taigent init`). It reads that repository's `.agents/skills/` and
-`tools/taiga/allowlist.txt` (the one `init` installed), the agent starts there (where `.mcp.json`,
+repository set up by `taigent setup --project`). It reads that repository's `.agents/skills/` and
+`tools/taiga/allowlist.txt` (the one `setup --project` installed), the agent starts there (where `.mcp.json`,
 `.codex/config.toml` and the skills live), and the wrapper exits with the agent's exit code. Wrapper errors (unknown
 option, output format, agent or skill; missing arguments; no `tools/taiga/allowlist.txt` in the current directory, or
-for `omp` no `tools/taiga/omp-guard.mjs`, whose messages name `npx taigent init`; agent not on `PATH`) print
+for `omp` no `tools/taiga/omp-guard.mjs`, whose messages name `npx taigent setup --project`; agent not on `PATH`) print
 `run-skill: <reason>` to stderr and exit 2.
 Log in first with `npx taigent login` in your own terminal, on the machine that runs the wrapper (or, on a machine
 without an OS credential store, set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD`); the `taiga-setup` skill
@@ -112,7 +112,7 @@ the Codex shell hook. Codex gets the MCP tool names as `enabled_tools`; for the 
 `Bash(…)`/`PowerShell(…)` rules of the file on every command, and `.codex/rules/taigent.rules` repeats the taigent
 commands in Codex's rule language, which cannot read files (`test/headless.test.ts` fails when the two lists differ).
 
-`taigent init` installs the allowlist, the OMP guard, the hook and the rule into another repository at these same
+`taigent setup --project` installs the allowlist, the OMP guard, the hook and the rule into another repository at these same
 paths, with the Taigent skills and the MCP entries (`docs/cli.md` §Using the skills in another project); re-running
 it after a taigent upgrade brings them up to date.
 

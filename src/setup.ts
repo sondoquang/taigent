@@ -1,8 +1,9 @@
-// Init: installs into a repository everything Taigent needs, taken from the running taigent package: the Taigent
-// skills (.agents/skills and the .claude/skills copy), the `taiga` MCP server entries (.mcp.json, .codex/config.toml),
-// the headless kit, the `.gitignore` lines of the local copies (BA preview, snapshot) and the `taigent` devDependency pinned to
-// this version's git tag. Offline; never runs npm or logs in. Only Taigent's own files and entries are written: other
-// skills, servers, keys, ignore lines and dependencies stay as they are.
+// Setup: installs Taigent from the running taigent package. `setupProject` installs into a repository everything Taigent
+// needs: the Taigent skills (.agents/skills and the .claude/skills copy), the `taiga` MCP server entries (.mcp.json,
+// .codex/config.toml), the headless kit, the `.gitignore` lines of the local copies (BA preview, snapshot) and the
+// `taigent` devDependency pinned to this npm version. Offline; never runs npm or logs in. Only Taigent's own files and
+// entries are written: other skills, servers, keys, ignore lines and dependencies stay as they are. Every file is read
+// and merged before the first write (`FilePlan`), so a file that cannot be merged leaves everything untouched.
 
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -44,33 +45,33 @@ const TAIGA_SUBTABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(?:taiga|"taiga"|'tai
 
 /**
  * `.gitignore` lines of the local copies: the BA preview working copies (`taiga-apply-backlog` carries their edits into
- * `backlog.yaml`) and the snapshot of `taigent snapshot`. An older install gets the lines it lacks on the next init.
+ * `backlog.yaml`) and the snapshot of `taigent snapshot`. An older install gets the lines it lacks on the next setup.
  */
 const GITIGNORE_COMMENT = '# Taigent: local copies, never committed (the BA preview, whose edits taiga-apply-backlog carries into backlog.yaml; the snapshot of taigent snapshot)';
 const GITIGNORE_LINES: readonly string[] = ['taiga/*/preview.md', 'taiga/*/.preview/', 'taiga/*/snapshot.json'];
 
-export type InitStatus = 'created' | 'updated' | 'unchanged' | 'removed';
+export type SetupStatus = 'created' | 'updated' | 'unchanged' | 'removed';
 
-export interface InitFile {
+export interface SetupFile {
   /** Relative to the repository root, `/`-separated. */
   path: string;
-  status: InitStatus;
+  status: SetupStatus;
 }
 
-export interface InitReport {
-  /** Every file init wrote, would write (dry run), removed or found up to date, sorted by path. */
-  files: InitFile[];
+export interface SetupReport {
+  /** Every file setup wrote, would write (dry run), removed or found up to date, sorted by path. */
+  files: SetupFile[];
 }
 
-/** A file init cannot merge into (not JSON/TOML, or not the expected shape), or the wrong directory. Nothing is written. */
-export class InitError extends Error {}
+/** A file setup cannot merge into (not JSON/TOML, or not the expected shape), or the wrong directory. Nothing is written. */
+export class SetupError extends Error {}
 
-const SKILL_STATUS: Record<SkillFile['status'], InitStatus> = { missing: 'created', changed: 'updated', extra: 'removed', same: 'unchanged' };
+const SKILL_STATUS: Record<SkillFile['status'], SetupStatus> = { missing: 'created', changed: 'updated', extra: 'removed', same: 'unchanged' };
 
-/** The `devDependencies` value of `taigent`: the git tag of the running version. */
+/** The `devDependencies` value of `taigent`: the npm version of the running taigent, pinned exactly. */
 async function taigentDependency(): Promise<string> {
   const { version } = JSON.parse(await readFile(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version: string };
-  return `github:sondoquang/taigent#v${version}`;
+  return version;
 }
 
 /** The bytes of `path`, or undefined when there is no such file. */
@@ -83,22 +84,22 @@ async function readExisting(path: string): Promise<Buffer | undefined> {
   }
 }
 
-/** `text` parsed as a JSON object, or an InitError naming `file`. */
+/** `text` parsed as a JSON object, or a SetupError naming `file`. */
 function parseJsonObject(file: string, text: string): Record<string, unknown> {
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch (error) {
-    throw new InitError(`cannot merge into ${file}: not valid JSON (${errorMessage(error)}); fix it, then run init again`);
+    throw new SetupError(`cannot merge into ${file}: not valid JSON (${errorMessage(error)}); fix it, then run taigent setup again`);
   }
-  if (!isRecord(value)) throw new InitError(`cannot merge into ${file}: not a JSON object`);
+  if (!isRecord(value)) throw new SetupError(`cannot merge into ${file}: not a JSON object`);
   return value;
 }
 
-/** The object field `key` of `object` (undefined when absent), or an InitError naming `file`. */
+/** The object field `key` of `object` (undefined when absent), or a SetupError naming `file`. */
 function objectField(file: string, object: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
   const value = object[key];
-  if (value !== undefined && !isRecord(value)) throw new InitError(`cannot merge into ${file}: "${key}" is not an object`);
+  if (value !== undefined && !isRecord(value)) throw new SetupError(`cannot merge into ${file}: "${key}" is not an object`);
   return value;
 }
 
@@ -148,7 +149,7 @@ function parseCodexToml(text: string): Record<string, unknown> {
   try {
     return parseToml(text);
   } catch (error) {
-    throw new InitError(`cannot merge into .codex/config.toml: not valid TOML (${errorMessage(error)}); fix it, then run init again`);
+    throw new SetupError(`cannot merge into .codex/config.toml: not valid TOML (${errorMessage(error)}); fix it, then run taigent setup again`);
   }
 }
 
@@ -185,7 +186,7 @@ function mergeCodexToml(text: string | undefined): string {
   let merged: string;
   if (start === undefined) {
     if (current !== undefined) {
-      throw new InitError('cannot merge into .codex/config.toml: it defines mcp_servers.taiga other than as a [mcp_servers.taiga] table; remove that definition, then run init again');
+      throw new SetupError('cannot merge into .codex/config.toml: it defines mcp_servers.taiga other than as a [mcp_servers.taiga] table; remove that definition, then run taigent setup again');
     }
     const body = text.trimEnd();
     merged = `${body}${body === '' ? '' : `${eol}${eol}`}${table.join(eol)}${eol}`;
@@ -203,52 +204,73 @@ function mergeCodexToml(text: string | undefined): string {
     check = undefined;
   }
   if (!isDeepStrictEqual(check, CODEX_ENTRY)) {
-    throw new InitError('cannot merge into .codex/config.toml: the [mcp_servers.taiga] table could not be replaced safely; replace it by hand with the entry of docs/cli.md, then run init again');
+    throw new SetupError('cannot merge into .codex/config.toml: the [mcp_servers.taiga] table could not be replaced safely; replace it by hand with the entry of docs/cli.md, then run taigent setup again');
   }
   return merged;
 }
 
 /**
- * Installs Taigent into the repository at `root` (with `dryRun`, only reports what it would do). Every file is read and
- * merged before the first write, so a file that cannot be merged leaves the repository untouched.
+ * The files one setup writes under `root`: each one is planned (compared with what is there) before any is written, so
+ * a SetupError while planning leaves `root` untouched. The Taigent skill directories are planned whole.
  */
-export async function initRepository(root: string, { dryRun }: { dryRun: boolean }): Promise<InitReport> {
-  if ((await realpath(root)) === (await realpath(PACKAGE_ROOT))) {
-    throw new InitError('init installs taigent into another repository; this is the running taigent itself');
+class FilePlan {
+  readonly files: SetupFile[] = [];
+  private readonly writes: { path: string; content: string | Buffer }[] = [];
+  private readonly skillCopies: { dir: string; comparison: Awaited<ReturnType<typeof compareSkillDirs>> }[] = [];
+
+  private readonly root: string;
+
+  constructor(root: string) {
+    this.root = root;
   }
-  const files: InitFile[] = [];
-  const writes: { path: string; content: string | Buffer }[] = [];
-  const plan = async (path: string, content: string | Buffer) => {
-    const current = await readExisting(join(root, path));
+
+  /** The text of `path` under the root, or undefined when there is no such file. */
+  async text(path: string): Promise<string | undefined> {
+    return (await readExisting(join(this.root, path)))?.toString('utf8');
+  }
+
+  /** Plans writing `content` to `path` (relative to the root, `/`-separated). */
+  async file(path: string, content: string | Buffer): Promise<void> {
+    const current = await readExisting(join(this.root, path));
     if (current?.equals(Buffer.from(content))) {
-      files.push({ path, status: 'unchanged' });
+      this.files.push({ path, status: 'unchanged' });
       return;
     }
-    files.push({ path, status: current === undefined ? 'created' : 'updated' });
-    writes.push({ path, content });
-  };
-
-  const skillsSource = join(PACKAGE_ROOT, SKILLS_SOURCE);
-  const skillCopies = await Promise.all(
-    [SKILLS_SOURCE, SKILLS_TARGET].map(async (dir) => ({ dir, comparison: await compareSkillDirs(skillsSource, join(root, dir)) })),
-  );
-  for (const { dir, comparison } of skillCopies) {
-    for (const { skill, file, status } of comparison.files) files.push({ path: `${dir}/${skill}/${file}`, status: SKILL_STATUS[status] });
+    this.files.push({ path, status: current === undefined ? 'created' : 'updated' });
+    this.writes.push({ path, content });
   }
-  for (const path of HEADLESS_KIT) await plan(path, await readFile(join(PACKAGE_ROOT, path)));
-  const text = async (path: string) => (await readExisting(join(root, path)))?.toString('utf8');
-  await plan('.mcp.json', mergeMcpJson(await text('.mcp.json')));
-  await plan('.codex/config.toml', mergeCodexToml(await text('.codex/config.toml')));
-  await plan('package.json', mergePackageJson(await text('package.json'), await taigentDependency()));
-  await plan('.gitignore', mergeGitignore(await text('.gitignore')));
 
-  if (!dryRun) {
-    for (const { dir, comparison } of skillCopies) await copySkills(skillsSource, join(root, dir), comparison);
-    for (const { path, content } of writes) {
-      await mkdir(dirname(join(root, path)), { recursive: true });
-      await writeFile(join(root, path), content);
+  /** Plans copying the Taigent skills of the running taigent into `dir` (relative to the root). */
+  async skills(dir: string): Promise<void> {
+    const comparison = await compareSkillDirs(join(PACKAGE_ROOT, SKILLS_SOURCE), join(this.root, dir));
+    this.skillCopies.push({ dir, comparison });
+    for (const { skill, file, status } of comparison.files) this.files.push({ path: `${dir}/${skill}/${file}`, status: SKILL_STATUS[status] });
+  }
+
+  /** Writes every planned change (unless `dryRun`) and returns the report. */
+  async commit(dryRun: boolean): Promise<SetupReport> {
+    if (!dryRun) {
+      for (const { dir, comparison } of this.skillCopies) await copySkills(join(PACKAGE_ROOT, SKILLS_SOURCE), join(this.root, dir), comparison);
+      for (const { path, content } of this.writes) {
+        await mkdir(dirname(join(this.root, path)), { recursive: true });
+        await writeFile(join(this.root, path), content);
+      }
     }
+    return { files: [...this.files].sort((a, b) => (a.path < b.path ? -1 : 1)) };
   }
-  files.sort((a, b) => (a.path < b.path ? -1 : 1));
-  return { files };
+}
+
+/** Installs Taigent into the repository at `root` (`setup --project`; with `dryRun`, only reports what it would do). */
+export async function setupProject(root: string, { dryRun }: { dryRun: boolean }): Promise<SetupReport> {
+  if ((await realpath(root)) === (await realpath(PACKAGE_ROOT))) {
+    throw new SetupError('setup --project installs taigent into another repository; this is the running taigent itself');
+  }
+  const plan = new FilePlan(root);
+  for (const dir of [SKILLS_SOURCE, SKILLS_TARGET]) await plan.skills(dir);
+  for (const path of HEADLESS_KIT) await plan.file(path, await readFile(join(PACKAGE_ROOT, path)));
+  await plan.file('.mcp.json', mergeMcpJson(await plan.text('.mcp.json')));
+  await plan.file('.codex/config.toml', mergeCodexToml(await plan.text('.codex/config.toml')));
+  await plan.file('package.json', mergePackageJson(await plan.text('package.json'), await taigentDependency()));
+  await plan.file('.gitignore', mergeGitignore(await plan.text('.gitignore')));
+  return plan.commit(dryRun);
 }
