@@ -7,7 +7,7 @@ import { parse as parseToml } from 'smol-toml';
 import { OFFLINE, runTaigent, startHarness, type Harness } from './support/harness.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
-const VERSION = (JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string }).version;
+const DEPENDENCY = 'github:sondoquang/taigent';
 
 type Status = 'created' | 'updated' | 'unchanged' | 'removed';
 interface SetupReport {
@@ -50,7 +50,7 @@ async function tree(dir: string): Promise<string[]> {
   }
 }
 
-test('setup --project on an empty folder creates the skills, the MCP entries, the headless kit and the devDependency pinned to the npm version', async (t) => {
+test('setup --project on an empty folder creates the skills, the MCP entries, the headless kit and the devDependency from GitHub', async (t) => {
   const h = await startHarness(t);
 
   const result = await setup(h, ['--json']);
@@ -75,7 +75,7 @@ test('setup --project on an empty folder creates the skills, the MCP entries, th
 
   assert.deepEqual(JSON.parse(await read(h, '.mcp.json')), { mcpServers: { taiga: MCP_ENTRY } });
   assert.deepEqual(toml(await read(h, '.codex/config.toml')), { mcp_servers: { taiga: CODEX_ENTRY } });
-  assert.deepEqual(JSON.parse(await read(h, 'package.json')), { devDependencies: { taigent: VERSION } });
+  assert.deepEqual(JSON.parse(await read(h, 'package.json')), { devDependencies: { taigent: DEPENDENCY } });
   assert.deepEqual((await read(h, '.gitignore')).split('\n').filter((line) => line && !line.startsWith('#')), IGNORES);
   assert.deepEqual(h.fake.requests, []);
 });
@@ -151,7 +151,7 @@ test('setup --project keeps other skills, MCP servers, settings and dependencies
     name: 'app',
     scripts: { test: 'vitest' },
     dependencies: { react: '^19.0.0' },
-    devDependencies: { vitest: '^3.0.0', taigent: VERSION },
+    devDependencies: { vitest: '^3.0.0', taigent: DEPENDENCY },
   });
   // Only the missing lines are added, in the file's own line endings; every other line stays.
   assert.equal(await read(h, '.gitignore'), `node_modules/\r\ntaiga/*/preview.md  \r\ndist/\r\n\r\n${IGNORE_COMMENT}\r\ntaiga/*/.preview/\r\ntaiga/*/snapshot.json\r\n`);
