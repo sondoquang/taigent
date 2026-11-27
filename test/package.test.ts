@@ -1,5 +1,6 @@
-// The npm package: what `npm i -g taigent` installs must run without compiling and hold everything `taigent setup --project`
-// copies and every doc the shipped skills and headless kit cite. Checked on the real `npm pack` file list.
+// The package: what `npm install -D github:sondoquang/taigent` (or, once published, `npm i -g taigent`) installs must hold
+// the CLI build, everything `taigent setup --project` copies and every doc the shipped skills and headless kit cite.
+// Checked on the real `npm pack` file list.
 
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -16,7 +17,7 @@ const PACKAGE = JSON.parse(await readFile(join(REPO_ROOT, 'package.json'), 'utf8
 /** Files `setup --project` writes that it generates rather than copies from the package. */
 const GENERATED = ['.mcp.json', '.codex/config.toml', 'package.json', '.gitignore'];
 
-/** `npm pack --dry-run` of the repository (runs `prepack`): the paths the published tarball holds. */
+/** `npm pack --dry-run` of the repository (runs `prepare`): the paths the package holds. */
 async function packedFiles(): Promise<string[]> {
   const npm = process.env.npm_execpath;
   const args = ['pack', '--dry-run', '--json'];
@@ -27,9 +28,9 @@ async function packedFiles(): Promise<string[]> {
   return pack.files.map(({ path }) => path.replaceAll('\\', '/'));
 }
 
-test('installing from npm never compiles: no install-time script, the build runs before packing', () => {
-  for (const script of ['preinstall', 'install', 'postinstall', 'prepare']) assert.equal(PACKAGE.scripts[script], undefined, script);
-  assert.equal(PACKAGE.scripts.prepack, 'npm run build');
+test('npm builds the CLI when it installs taigent from GitHub or packs it, and runs no other install script', () => {
+  for (const script of ['preinstall', 'install', 'postinstall']) assert.equal(PACKAGE.scripts[script], undefined, script);
+  assert.equal(PACKAGE.scripts.prepare, 'npm run build');
 });
 
 test('the package holds the CLI build, everything setup --project copies and every doc the shipped skills and kit cite', async (t) => {

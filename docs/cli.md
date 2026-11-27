@@ -6,8 +6,9 @@ read-only).
 
 ## Running
 
-Requires Node.js 24+. In the repository it runs the TypeScript sources directly; installed from npm
-(`npm i -g taigent`) it runs the build in `dist/`, compiled before publishing (see [Releasing](#releasing)).
+Requires Node.js 24+. In the repository it runs the TypeScript sources directly; installed as a package
+(`npm install -D github:sondoquang/taigent`) it runs the build in `dist/`, compiled by the `prepare` script when npm
+installs it (see [Using the skills in another project](#using-the-skills-in-another-project)).
 
 ```sh
 npm install
@@ -362,7 +363,7 @@ command prints the same operations, writes nothing and exits 2 when there are ch
   [Setup: skill versions and duplicates](#setup-skill-versions-and-duplicates).
 - `taigent setup --project [--dry-run] [--json]`: installs Taigent into the repository at the working directory, from
   the running taigent: the Taigent skills, the Taiga MCP server entries, the headless kit and the `taigent`
-  devDependency pinned to its npm version. `--project` takes no value here. Writes at once (no `--yes`), then logs in,
+  devDependency `github:sondoquang/taigent`. `--project` takes no value here. Writes at once (no `--yes`), then logs in,
   checks and reports like `setup`. See [Using the skills in another project](#using-the-skills-in-another-project).
 - `taigent validate [--project <slug>] [--json]`: checks every manifest present in `taiga/<slug>/` (all project
   directories without `--project`) against the schema and the conventions, and `review.yaml` when present (see
@@ -1655,7 +1656,10 @@ execpolicy rule `.codex/rules/taigent.rules` and, in headless runs, the shell ho
 ### Installing for the user
 
 The CLI skills run `npx taigent`, which runs the taigent a project pins (its `node_modules`), else the global one, so
-after a global install they work in any directory, a project without `package.json` included. One machine needs:
+after a global install they work in any directory, a project without `package.json` included. taigent is not on npm
+yet ([Releasing](#releasing)), and npm cannot install it globally from GitHub: a global install of a git package
+prepares it without its devDependencies, so its build fails. Until the first release, install it per project
+([Using the skills in another project](#using-the-skills-in-another-project)). Once released, one machine needs:
 
 ```sh
 npm i -g taigent                          # the CLI and the docs the skills cite, already built
@@ -1795,9 +1799,8 @@ reads both lists from `setup --dry-run --json` and gives each client's fix.
 A project can install Taigent for its whole team: each member then needs only `npm install` and a login. At its root:
 
 ```sh
-npm i -g taigent                          # the CLI and the docs the skills cite, already built
-npx taigent setup --project               # the skills, the MCP entries, the headless kit; pins taigent to its version
-npm install                               # installs the pinned version
+npm install -D github:sondoquang/taigent   # the CLI and the docs the skills cite, built on install (needs git)
+npx taigent setup --project               # the skills, the MCP entries, the headless kit; taigent from GitHub
 ```
 
 `taigent setup --project [--dry-run] [--json]` installs into the repository at the working directory everything Taigent needs,
@@ -1808,7 +1811,7 @@ taken from the running taigent:
 | `.agents/skills/<skill>/`, `.claude/skills/<skill>/` | The Taigent skills (`taiga-*`, `prd-to-taiga`, `ask-taigent`), each `SKILL.md` stamped with the running version ([Setup: skill versions and duplicates](#setup-skill-versions-and-duplicates)). A Taigent skill that differs is replaced; one the running taigent does not ship is removed |
 | `mcpServers.taiga` of `.mcp.json`, `[mcp_servers.taiga]` of `.codex/config.toml` | The Taiga MCP server, `node node_modules/taigent/bin/taigent.js mcp`: the entries of `taiga-setup`, no secrets |
 | `tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`, `.codex/hooks/taigent-shell-guard.mjs`, `.codex/rules/taigent.rules` | The headless kit, where `run-skill`, the OMP guard and the Codex shell guard look for it ([docs/headless.md](headless.md)) |
-| `devDependencies.taigent` of `package.json` | `<version>`, the npm version of the running taigent, pinned exactly (moved out of `dependencies`). A missing `package.json` is created |
+| `devDependencies.taigent` of `package.json` | `github:sondoquang/taigent`, the GitHub repository (moved out of `dependencies`): `package-lock.json` records the commit npm installed, and `npm install -D github:sondoquang/taigent` moves it to the latest commit of `master`. A missing `package.json` is created |
 | `.gitignore` | `taiga/*/preview.md` and `taiga/*/.preview/` (the BA preview working copies) and `taiga/*/snapshot.json` (the snapshot of [`snapshot`](#snapshot)), never committed, appended under a `# Taigent:` comment when missing: an older install gets the lines it lacks, never a second copy. A missing `.gitignore` is created |
 
 Running it again is safe. Other skills, MCP servers, keys, ignore lines and dependencies stay as they are: `.mcp.json` and
@@ -1824,9 +1827,10 @@ not have); the text form lists the files that change. Then it logs in, checks an
 `node node_modules/taigent/bin/taigent.js mcp` from the project root, so before `npm install` it is not run (`skipped`,
 exit 0) and says to run `npm install`, then `npx taigent setup --project` again.
 
-The pin is the running version as published on npm (`0.1.0` for 0.1.0; see [Releasing](#releasing)). The published package
-holds `dist/`, compiled from `src/` by the `prepack` script (`tsconfig.build.json`), so installing it compiles nothing:
-under `node_modules` Node strips no types, so `bin/taigent.js` runs `dist/` there and the TypeScript sources
+npm installs `github:sondoquang/taigent` from a clone of the repository: it installs its devDependencies there and runs
+the `prepare` script, which compiles `src/` to `dist/` (`tsconfig.build.json`), then packs it. The same script builds
+`dist/` before `npm pack` and `npm publish` ([Releasing](#releasing)); a package installed from npm runs no install
+script. Under `node_modules` Node strips no types, so `bin/taigent.js` runs `dist/` there and the TypeScript sources
 everywhere else. The package (`files` in `package.json`) ships `bin/`, `dist/`, `docs/cli.md`, `docs/headless.md`,
 `docs/taiga/` and `docs/telegram-reply.md` (the docs the skills and `run-skill` cite, read from
 `node_modules/taigent/`) and what `setup --project` installs: the Taigent skills of `.agents/skills/`, `tools/taiga/` (with
@@ -2016,7 +2020,7 @@ npm version 0.2.0 -m "chore: release %s"   # bumps package.json and package-lock
 git push --follow-tags
 ```
 
-`npm pack --dry-run` lists what the tarball holds; `prepack` builds `dist/` first.
+`npm pack --dry-run` lists what the tarball holds; `prepare` builds `dist/` first.
 
 Human steps on npmjs.com, once (an agent cannot do them):
 

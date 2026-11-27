@@ -30,7 +30,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepack": "npm run build",
+    "prepare": "npm run build",
     "taigent": "node bin/taigent.js",
     "test": "node --test \"test/**/*.test.ts\"",
     "test:live": "node --test \"test/live/*.live.ts\"",

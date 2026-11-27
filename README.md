@@ -6,39 +6,36 @@ the Taiga MCP server for reading.
 
 ## Use it
 
-Five steps, a few minutes. You need **Node.js 24 or later** (`node --version`) and a Taiga account.
+Five steps, a few minutes. You need **Node.js 24 or later** (`node --version`), **git** (`git --version`) and a Taiga
+account.
 
 ### 1. Install
 
-```sh
-npm i -g taigent
-taigent setup
-```
-
-The first command installs the `taigent` CLI from npm, already built. `taigent setup` then finds Claude Code, Codex
-and OMP in your home directory and adds, for each one, the Taigent skills to its user skills folder
-(`~/.claude/skills/`, `~/.agents/skills/`) and the `taiga` MCP server (`taigent mcp`, no password) to its user config
-(`~/.claude.json`, `~/.codex/config.toml`, `~/.omp/agent/mcp.json`), so every project you open has them. It keeps
-your other skills, servers and settings, and lists every file it wrote (`--dry-run` shows them first). Run it in
-**your own terminal**: when you have no Taiga login yet, it then logs you in (step 2's questions), and it checks the
-login and the MCP server (`Login: …`, `MCP server: ok …`). Run by an agent, it never asks for a password: it says to
-run `taigent login` yourself.
-
-**For a whole team instead**, install Taigent into the project, from its root folder:
+From your project's root folder:
 
 ```sh
+npm install -D github:sondoquang/taigent
 npx taigent setup --project
-npm install
 ```
 
-This adds the Taigent skills to `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code), the `taiga` MCP server
-to `.mcp.json` and `.codex/config.toml`, the headless kit (`tools/taiga/allowlist.txt`, `tools/taiga/omp-guard.mjs`,
-`.codex/hooks/`, `.codex/rules/`), the `.gitignore` lines of the BA preview working copies (`taiga/*/preview.md`,
-`taiga/*/.preview/`), and pins `taigent` in `package.json` to its npm version, which `npm install` installs.
+The first command installs the `taigent` CLI and the Taiga MCP server into `node_modules` (nothing system-wide): npm
+fetches taigent from GitHub and builds it, and creates `package.json` if the project has none. `taigent setup
+--project` then adds the Taigent skills to `.agents/skills/` (Codex) and `.claude/skills/` (Claude Code), the `taiga`
+MCP server to `.mcp.json` and `.codex/config.toml`, the headless kit (`tools/taiga/allowlist.txt`,
+`tools/taiga/omp-guard.mjs`, `.codex/hooks/`, `.codex/rules/`), the `.gitignore` lines of the BA preview working copies
+(`taiga/*/preview.md`, `taiga/*/.preview/`), and `taigent` in `devDependencies` as `github:sondoquang/taigent`
+(`package-lock.json` records the commit). It keeps your other skills, servers and settings, and lists every file it
+wrote (`--dry-run` shows them first). Run it in **your own terminal**: when you have no Taiga login yet, it then logs
+you in (step 2's questions), and it checks the login and the MCP server (`Login: …`, `MCP server: ok …`). Run by an
+agent, it never asks for a password: it says to run `npx taigent login` yourself.
+
+`taigent setup` without `--project` installs the skills and the MCP server for you, in every project, from a global
+`npm i -g taigent`. That needs taigent on npm, where it is not published yet: npm cannot build it in a global install
+from GitHub.
 
 ### 2. Log in to Taiga
 
-Skip this when `taigent setup` already logged you in. Otherwise open **your own terminal**: not inside Claude Code or
+Skip this when `taigent setup --project` already logged you in. Otherwise open **your own terminal**: not inside Claude Code or
 Codex, and not with Claude Code's `!`. Then run:
 
 ```sh
@@ -65,13 +62,10 @@ Credentials: stored login (refresh-token, in Windows Credential Manager)
 
 ### 3. Connect your agent to Taiga
 
-`taigent setup` (step 1) registered the `taiga` server for you: restart Claude Code, Codex or OMP and it is there
-(`/mcp` in Claude Code shows `taiga` as connected).
-
-With `setup --project`, the server is in `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex) instead. Start
-`claude` in the project and answer **yes** when it asks to use the `taiga` server; Codex reads `.codex/config.toml`
-once you trust the project. None of the files `setup --project` wrote holds a password, so commit them: teammates then
-only run `npm install` and skip this step.
+`taigent setup --project` (step 1) put the `taiga` server in `.mcp.json` (Claude Code) and `.codex/config.toml`
+(Codex). Start `claude` in the project and answer **yes** when it asks to use the `taiga` server; Codex reads
+`.codex/config.toml` once you trust the project. None of the files step 1 wrote holds a password, so commit them
+(`package-lock.json` too): teammates then only run `npm install` and skip this step.
 
 ### 4. Check everything
 
@@ -183,6 +177,7 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
 | You see | Do this |
 |---|---|
 | `node` missing, or a version below 24 | Install Node.js 24 or later, then redo step 1 |
+| `npm install -D github:…` fails with a git error | Install git (`git --version`), then redo step 1 |
 | `not logged in to Taiga` | Step 2, in your own terminal |
 | `taigent login reads your password from a terminal` | You ran it through an agent or a pipe: run it in your own terminal |
 | `the stored login … has expired or was revoked` | Unused for 8 days: run `npx taigent login` again |
@@ -206,10 +201,10 @@ notify eod'` removes one. macOS or Linux: `crontab -e` and add (on Linux, cron h
 - No credential store (CI, headless Linux)? Set `TAIGA_API_URL`, `TAIGA_USERNAME` and `TAIGA_PASSWORD` (or
   `TAIGA_TOKEN`) in the environment or a git-ignored `.env` (see `.env.example`). They take precedence over the stored
   login.
-- Update later with `npm i -g taigent@latest`, then `taigent setup` (it updates the skills), or in a project
-  `npx taigent setup --project` (it updates the skills and the pin) and `npm install`. Every skill setup installs
-  carries its taigent version: setup names the skills older than it, and the skills or `taiga` servers installed both
-  for you and in the project, with the copy each agent uses (it never removes one;
+- Update later with `npm install -D github:sondoquang/taigent` (the latest commit of `master`), then
+  `npx taigent setup --project` (it updates the skills); commit the changed files, and teammates run `npm install`.
+  Every skill setup installs carries its taigent version: setup names the skills older than it, and the skills or
+  `taiga` servers installed both for you and in the project, with the copy each agent uses (it never removes one;
   [§ Setup: skill versions and duplicates](docs/cli.md#setup-skill-versions-and-duplicates)).
 - Details: [docs/cli.md](docs/cli.md) (commands, credentials, manifests, exit codes) and
   [§ Login and the MCP server](docs/cli.md#login-and-the-mcp-server).

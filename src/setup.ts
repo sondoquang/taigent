@@ -3,7 +3,7 @@
 // as the global `taigent mcp`. `setupProject` (`setup --project`) installs into a repository everything Taigent needs:
 // the Taigent skills (.agents/skills and the .claude/skills copy), the `taiga` MCP server entries (.mcp.json,
 // .codex/config.toml) run from node_modules, the headless kit, the `.gitignore` lines of the local copies (BA preview,
-// snapshot) and the `taigent` devDependency pinned to this npm version. Every skill it installs carries this version
+// snapshot) and the `taigent` devDependency from GitHub (`TAIGENT_DEPENDENCY`). Every skill it installs carries this version
 // (`metadata.taigent-version`). Offline; never runs npm or logs in. Only Taigent's own files and entries are written:
 // other skills, servers, keys, ignore lines and dependencies stay as they are. Every file is read and merged before the
 // first write (`FilePlan`), so a file that cannot be merged leaves everything untouched. `checkInstall` then reports, for
@@ -225,11 +225,17 @@ export class SetupError extends Error {}
 
 const SKILL_STATUS: Record<SkillFile['status'], SetupStatus> = { missing: 'created', changed: 'updated', extra: 'removed', same: 'unchanged' };
 
-/** The npm version of the running taigent: the `taigent` devDependency `setup --project` pins and the version stamped into the skills. */
+/** The version of the running taigent (its `package.json`), stamped into the skills. */
 async function taigentVersion(): Promise<string> {
   const { version } = JSON.parse(await readFile(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as { version: string };
   return version;
 }
+
+/**
+ * The `taigent` devDependency `setup --project` writes: the GitHub repository, which npm clones and builds (`prepare`)
+ * and whose commit it records in package-lock.json. taigent is not on npm yet.
+ */
+const TAIGENT_DEPENDENCY = 'github:sondoquang/taigent';
 
 /** A skill file as setup installs it: its `SKILL.md` stamped with `version`, every other file as it is. */
 function stamped(version: string): SkillContent {
@@ -439,7 +445,7 @@ export async function setupProject(root: string, { dryRun }: { dryRun: boolean }
   for (const path of HEADLESS_KIT) await plan.file(path, await readFile(join(PACKAGE_ROOT, path)));
   await plan.merge('.mcp.json', (text, file) => mergeMcpJson(file, text, PROJECT_SERVER.json));
   await plan.merge('.codex/config.toml', (text, file) => mergeCodexToml(file, text, PROJECT_SERVER.codex));
-  await plan.merge('package.json', (text) => mergePackageJson(text, version));
+  await plan.merge('package.json', (text) => mergePackageJson(text, TAIGENT_DEPENDENCY));
   await plan.merge('.gitignore', mergeGitignore);
   return plan.commit(dryRun);
 }

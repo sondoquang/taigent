@@ -75,8 +75,8 @@ Commands:
             than this taigent and skills or servers installed both for you and in the working directory, with the
             copy each client uses (never removes one)
   setup --project  Install Taigent into the repository at the working directory, from this taigent: the Taigent
-            skills, the taiga MCP server entries, the headless kit and the taigent devDependency pinned to this
-            version; then log in, check and report like setup (no MCP check before npm install)
+            skills, the taiga MCP server entries, the headless kit and the taigent devDependency from GitHub
+            (github:sondoquang/taigent); then log in, check and report like setup (no MCP check before npm install)
   validate  Check manifests (and review.yaml) against the conventions, offline (all projects without --project)
   preview   Show the backlog as apply would write it, with its review (review.yaml), as one Markdown page; offline
   review approve|request-changes|comment|resolve <key> ...   Record the review of backlog item <key> in review.yaml,
